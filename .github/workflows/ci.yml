@@ -11,7 +11,7 @@ jobs:
     name: Build & Test (Windows)
     runs-on:
       group: Default
-      labels: [windows]
+      labels: [Windows]
 
     steps:
       - uses: actions/checkout@v4
@@ -41,7 +41,7 @@ jobs:
     name: Build & Test (Linux)
     runs-on:
       group: Default
-      labels: [linux]
+      labels: [Linux]
 
     steps:
       - uses: actions/checkout@v4

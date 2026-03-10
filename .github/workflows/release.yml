@@ -13,7 +13,7 @@ jobs:
     name: Build Windows Release
     runs-on:
       group: Default
-      labels: [windows]
+      labels: [Windows]
 
     steps:
       - uses: actions/checkout@v4
@@ -68,7 +68,7 @@ jobs:
     name: Build Linux Release
     runs-on:
       group: Default
-      labels: [linux]
+      labels: [Linux]
 
     steps:
       - uses: actions/checkout@v4
@@ -165,7 +165,7 @@ jobs:
     needs: [build-windows, build-linux]  # Add build-macos when enabled
     runs-on:
       group: Default
-      labels: [linux]
+      labels: [Linux]
 
     steps:
       - name: Download all artifacts
