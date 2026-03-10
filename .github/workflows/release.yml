@@ -13,7 +13,7 @@ jobs:
     name: Build Windows Release
     runs-on:
       group: Default
-      labels: [self-hosted]
+      labels: [Windows]
 
     steps:
       - uses: actions/checkout@v4
@@ -30,7 +30,6 @@ jobs:
       - name: Run tests
         working-directory: src
         run: dotnet test --configuration Release --verbosity normal
-        continue-on-error: true  # No test projects yet — will pass once tests are added
 
       - name: Publish (Windows x64, self-contained)
         working-directory: src
@@ -65,44 +64,50 @@ jobs:
           name: windows-release
           path: publish/moist-*.zip
 
-  # build-linux:
-  #   name: Build Linux Release
-  #   runs-on: ubuntu-latest
-  #
-  #   steps:
-  #     - uses: actions/checkout@v4
-  #
-  #     - name: Setup .NET 8
-  #       uses: actions/setup-dotnet@v4
-  #       with:
-  #         dotnet-version: 8.0.x
-  #
-  #     - name: Restore dependencies
-  #       working-directory: src
-  #       run: dotnet restore
-  #
-  #     - name: Publish (Linux x64, self-contained)
-  #       working-directory: src
-  #       run: >
-  #         dotnet publish Moist.App/Moist.App.csproj
-  #         --configuration Release
-  #         --runtime linux-x64
-  #         --self-contained true
-  #         -p:PublishSingleFile=true
-  #         -p:IncludeNativeLibrariesForSelfExtract=true
-  #         -p:EnableCompressionInSingleFile=true
-  #         --output ../publish/linux-x64
-  #
-  #     - name: Create tar.gz archive
-  #       run: |
-  #         cd publish/linux-x64
-  #         tar -czf ../moist-${{ github.ref_name }}-linux-x64.tar.gz *
-  #
-  #     - name: Upload Linux artifacts
-  #       uses: actions/upload-artifact@v4
-  #       with:
-  #         name: linux-release
-  #         path: publish/moist-*-linux-*.tar.gz
+  build-linux:
+    name: Build Linux Release
+    runs-on:
+      group: Default
+      labels: [Linux]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Restore dependencies
+        working-directory: src
+        run: dotnet restore
+
+      - name: Run tests
+        working-directory: src
+        run: dotnet test --configuration Release --verbosity normal
+
+      - name: Publish (Linux x64, self-contained)
+        working-directory: src
+        run: >
+          dotnet publish Moist.App/Moist.App.csproj
+          --configuration Release
+          --runtime linux-x64
+          --self-contained true
+          -p:PublishSingleFile=true
+          -p:IncludeNativeLibrariesForSelfExtract=true
+          -p:EnableCompressionInSingleFile=true
+          --output ../publish/linux-x64
+
+      - name: Create tar.gz archive
+        run: |
+          cd publish/linux-x64
+          tar -czf ../moist-${{ github.ref_name }}-linux-x64.tar.gz *
+
+      - name: Upload Linux artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-release
+          path: publish/moist-*-linux-*.tar.gz
 
   # build-macos:
   #   name: Build macOS Release
@@ -157,8 +162,10 @@ jobs:
 
   create-release:
     name: Create GitHub Release
-    needs: [build-windows]  # Add build-linux, build-macos when enabled
-    runs-on: ubuntu-latest
+    needs: [build-windows, build-linux]  # Add build-macos when enabled
+    runs-on:
+      group: Default
+      labels: [Linux]
 
     steps:
       - name: Download all artifacts

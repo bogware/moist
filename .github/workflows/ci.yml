@@ -7,13 +7,11 @@ on:
     branches: [main]
 
 jobs:
-  build-and-test:
-    name: Build & Test (${{ matrix.os }})
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
-    runs-on: ${{ matrix.os }}
+  build-and-test-windows:
+    name: Build & Test (Windows)
+    runs-on:
+      group: Default
+      labels: [Windows]
 
     steps:
       - uses: actions/checkout@v4
@@ -38,3 +36,61 @@ jobs:
       - name: Run tests
         working-directory: src
         run: dotnet test --no-build --configuration Debug --verbosity normal
+
+  build-and-test-linux:
+    name: Build & Test (Linux)
+    runs-on:
+      group: Default
+      labels: [Linux]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Restore dependencies
+        working-directory: src
+        run: dotnet restore
+
+      - name: Build (Debug)
+        working-directory: src
+        run: dotnet build --no-restore --configuration Debug
+
+      - name: Build (Release)
+        working-directory: src
+        run: dotnet build --no-restore --configuration Release
+
+      - name: Run tests
+        working-directory: src
+        run: dotnet test --no-build --configuration Debug --verbosity normal
+
+  # build-and-test-macos:
+  #   name: Build & Test (macOS)
+  #   runs-on: macos-latest
+  #
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #
+  #     - name: Setup .NET 8
+  #       uses: actions/setup-dotnet@v4
+  #       with:
+  #         dotnet-version: 8.0.x
+  #
+  #     - name: Restore dependencies
+  #       working-directory: src
+  #       run: dotnet restore
+  #
+  #     - name: Build (Debug)
+  #       working-directory: src
+  #       run: dotnet build --no-restore --configuration Debug
+  #
+  #     - name: Build (Release)
+  #       working-directory: src
+  #       run: dotnet build --no-restore --configuration Release
+  #
+  #     - name: Run tests
+  #       working-directory: src
+  #       run: dotnet test --no-build --configuration Debug --verbosity normal
