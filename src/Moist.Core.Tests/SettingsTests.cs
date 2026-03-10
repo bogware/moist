@@ -13,7 +13,7 @@ public class SettingsTests
         Assert.Equal("ffprobe", settings.FFprobePath);
         Assert.Equal(1, settings.MaxConcurrentJobs);
         Assert.True(settings.DeleteTempFiles);
-        Assert.Equal("Dark", settings.Theme);
+        Assert.Equal("moist Dark", settings.Theme);
         Assert.Equal("ffmpeg-x265", settings.DefaultVideoEncoder);
         Assert.Equal("ffmpeg-audio-opus", settings.DefaultAudioEncoder);
     }
