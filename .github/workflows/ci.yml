@@ -43,6 +43,9 @@ jobs:
       group: Default
       labels: [Linux]
 
+    env:
+      DOTNET_INSTALL_DIR: ${{ github.workspace }}/.dotnet
+
     steps:
       - uses: actions/checkout@v4
 
