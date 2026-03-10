@@ -189,8 +189,8 @@ dotnet test                              # runs xUnit tests in Moist.Core.Tests
 
 ## CI/CD
 
-- **CI** (`.github/workflows/ci.yml`): Runs on push/PR to `main`. Matrix build across Ubuntu, Windows, macOS with .NET 8. Builds Debug + Release, runs xUnit tests.
-- **Release** (`.github/workflows/release.yml`): Triggered on `v*` tags. Produces self-contained Windows x64 builds. Creates GitHub releases with ZIP artifacts.
+- **CI** (`.github/workflows/ci.yml`): Runs on push/PR to `main`. Builds Debug + Release and runs xUnit tests on Windows and Linux using self-hosted runners (runner group `Default`, labels `windows`/`linux`). macOS job is commented out (uses `macos-latest` GitHub runner when enabled).
+- **Release** (`.github/workflows/release.yml`): Triggered on `v*` tags. Produces self-contained and framework-dependent Windows x64 builds (ZIP) and self-contained Linux x64 builds (tar.gz) using self-hosted runners. macOS builds are commented out. Creates GitHub releases with all artifacts.
 
 ## Data Persistence
 
