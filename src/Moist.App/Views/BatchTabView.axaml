@@ -1,0 +1,84 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:Moist.App.ViewModels"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             mc:Ignorable="d" d:DesignWidth="1100" d:DesignHeight="700"
+             x:Class="Moist.App.Views.BatchTabView"
+             x:DataType="vm:BatchTabViewModel"
+             DragDrop.AllowDrop="True">
+
+    <DockPanel Margin="16">
+        <!-- Header Controls -->
+        <StackPanel DockPanel.Dock="Top" Spacing="12" Margin="0,0,0,12">
+            <TextBlock Text="Batch Encoding" FontWeight="Bold" FontSize="16"/>
+            <TextBlock Text="Drag and drop multiple video files, or click Browse to add them. All files will be encoded with the current Encode tab settings."
+                       TextWrapping="Wrap" Opacity="0.6" FontSize="12"/>
+
+            <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="8">
+                <Button Content="Add Files..." Name="BrowseFilesButton" Click="BrowseFiles_Click"/>
+                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="12" VerticalAlignment="Center">
+                    <CheckBox Content="Use source directory for output"
+                              IsChecked="{Binding UseSourceDirectory}"/>
+                    <TextBox Text="{Binding OutputDirectory}"
+                             Watermark="Output directory (if not using source)"
+                             IsEnabled="{Binding !UseSourceDirectory}"
+                             Width="300"/>
+                </StackPanel>
+                <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8">
+                    <TextBlock Text="Suffix:" VerticalAlignment="Center"/>
+                    <TextBox Text="{Binding OutputSuffix}" Width="100"/>
+                    <Button Content="Refresh Paths" Command="{Binding RefreshOutputPathsCommand}"/>
+                </StackPanel>
+            </Grid>
+        </StackPanel>
+
+        <!-- Action Buttons -->
+        <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" Spacing="8" Margin="0,12,0,0"
+                    HorizontalAlignment="Right">
+            <Button Content="Clear All" Command="{Binding ClearAllCommand}"/>
+            <Button Content="Add All to Queue" Command="{Binding AddAllToQueueCommand}"
+                    Padding="24,8" FontSize="14" Classes="accent"/>
+        </StackPanel>
+
+        <!-- Drop Zone / File List -->
+        <Border Classes="section" Name="BatchDropZone">
+            <Panel>
+                <!-- Empty State -->
+                <StackPanel IsVisible="{Binding !Items.Count}"
+                            VerticalAlignment="Center" HorizontalAlignment="Center" Spacing="8">
+                    <TextBlock Text="Drop video files here"
+                               FontSize="20" Opacity="0.3" HorizontalAlignment="Center"/>
+                    <TextBlock Text="or click Add Files above"
+                               FontSize="14" Opacity="0.2" HorizontalAlignment="Center"/>
+                </StackPanel>
+
+                <!-- File List -->
+                <DataGrid ItemsSource="{Binding Items}"
+                          AutoGenerateColumns="False"
+                          CanUserReorderColumns="True"
+                          CanUserResizeColumns="True"
+                          GridLinesVisibility="Horizontal"
+                          IsReadOnly="True"
+                          IsVisible="{Binding Items.Count}">
+                    <DataGrid.Columns>
+                        <DataGridTextColumn Header="File" Binding="{Binding FileName}" Width="250"/>
+                        <DataGridTextColumn Header="Input Path" Binding="{Binding InputFile}" Width="*"/>
+                        <DataGridTextColumn Header="Output Path" Binding="{Binding OutputFile}" Width="*"/>
+                        <DataGridTextColumn Header="Status" Binding="{Binding Status}" Width="80"/>
+                        <DataGridTemplateColumn Header="" Width="60">
+                            <DataGridTemplateColumn.CellTemplate>
+                                <DataTemplate x:DataType="vm:BatchItemViewModel">
+                                    <Button Content="X" Padding="4,2"
+                                            Command="{Binding $parent[DataGrid].((vm:BatchTabViewModel)DataContext).RemoveItemCommand}"
+                                            CommandParameter="{Binding}"
+                                            HorizontalAlignment="Center"/>
+                                </DataTemplate>
+                            </DataGridTemplateColumn.CellTemplate>
+                        </DataGridTemplateColumn>
+                    </DataGrid.Columns>
+                </DataGrid>
+            </Panel>
+        </Border>
+    </DockPanel>
+</UserControl>

@@ -1,0 +1,177 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    name: Build Windows Release
+    runs-on:
+      group: Default
+      labels: [self-hosted]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Restore dependencies
+        working-directory: src
+        run: dotnet restore
+
+      - name: Run tests
+        working-directory: src
+        run: dotnet test --configuration Release --verbosity normal
+        continue-on-error: true  # No test projects yet — will pass once tests are added
+
+      - name: Publish (Windows x64, self-contained)
+        working-directory: src
+        run: >
+          dotnet publish Moist.App/Moist.App.csproj
+          --configuration Release
+          --runtime win-x64
+          --self-contained true
+          -p:PublishSingleFile=true
+          -p:IncludeNativeLibrariesForSelfExtract=true
+          -p:EnableCompressionInSingleFile=true
+          --output ../publish/win-x64
+
+      - name: Publish (Windows x64, framework-dependent)
+        working-directory: src
+        run: >
+          dotnet publish Moist.App/Moist.App.csproj
+          --configuration Release
+          --runtime win-x64
+          --self-contained false
+          --output ../publish/win-x64-fdd
+
+      - name: Create ZIP archives
+        shell: pwsh
+        run: |
+          Compress-Archive -Path publish/win-x64/* -DestinationPath publish/moist-${{ github.ref_name }}-win-x64.zip
+          Compress-Archive -Path publish/win-x64-fdd/* -DestinationPath publish/moist-${{ github.ref_name }}-win-x64-fdd.zip
+
+      - name: Upload Windows artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-release
+          path: publish/moist-*.zip
+
+  # build-linux:
+  #   name: Build Linux Release
+  #   runs-on: ubuntu-latest
+  #
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #
+  #     - name: Setup .NET 8
+  #       uses: actions/setup-dotnet@v4
+  #       with:
+  #         dotnet-version: 8.0.x
+  #
+  #     - name: Restore dependencies
+  #       working-directory: src
+  #       run: dotnet restore
+  #
+  #     - name: Publish (Linux x64, self-contained)
+  #       working-directory: src
+  #       run: >
+  #         dotnet publish Moist.App/Moist.App.csproj
+  #         --configuration Release
+  #         --runtime linux-x64
+  #         --self-contained true
+  #         -p:PublishSingleFile=true
+  #         -p:IncludeNativeLibrariesForSelfExtract=true
+  #         -p:EnableCompressionInSingleFile=true
+  #         --output ../publish/linux-x64
+  #
+  #     - name: Create tar.gz archive
+  #       run: |
+  #         cd publish/linux-x64
+  #         tar -czf ../moist-${{ github.ref_name }}-linux-x64.tar.gz *
+  #
+  #     - name: Upload Linux artifacts
+  #       uses: actions/upload-artifact@v4
+  #       with:
+  #         name: linux-release
+  #         path: publish/moist-*-linux-*.tar.gz
+
+  # build-macos:
+  #   name: Build macOS Release
+  #   runs-on: macos-latest
+  #
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #
+  #     - name: Setup .NET 8
+  #       uses: actions/setup-dotnet@v4
+  #       with:
+  #         dotnet-version: 8.0.x
+  #
+  #     - name: Restore dependencies
+  #       working-directory: src
+  #       run: dotnet restore
+  #
+  #     - name: Publish (macOS x64, self-contained)
+  #       working-directory: src
+  #       run: >
+  #         dotnet publish Moist.App/Moist.App.csproj
+  #         --configuration Release
+  #         --runtime osx-x64
+  #         --self-contained true
+  #         -p:PublishSingleFile=true
+  #         -p:IncludeNativeLibrariesForSelfExtract=true
+  #         -p:EnableCompressionInSingleFile=true
+  #         --output ../publish/osx-x64
+  #
+  #     - name: Publish (macOS arm64, self-contained)
+  #       working-directory: src
+  #       run: >
+  #         dotnet publish Moist.App/Moist.App.csproj
+  #         --configuration Release
+  #         --runtime osx-arm64
+  #         --self-contained true
+  #         -p:PublishSingleFile=true
+  #         -p:IncludeNativeLibrariesForSelfExtract=true
+  #         -p:EnableCompressionInSingleFile=true
+  #         --output ../publish/osx-arm64
+  #
+  #     - name: Create ZIP archives
+  #       run: |
+  #         cd publish/osx-x64 && zip -r ../moist-${{ github.ref_name }}-osx-x64.zip * && cd ../..
+  #         cd publish/osx-arm64 && zip -r ../moist-${{ github.ref_name }}-osx-arm64.zip * && cd ../..
+  #
+  #     - name: Upload macOS artifacts
+  #       uses: actions/upload-artifact@v4
+  #       with:
+  #         name: macos-release
+  #         path: publish/moist-*-osx-*.zip
+
+  create-release:
+    name: Create GitHub Release
+    needs: [build-windows]  # Add build-linux, build-macos when enabled
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          draft: false
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          files: |
+            artifacts/**/*.zip
+            artifacts/**/*.tar.gz

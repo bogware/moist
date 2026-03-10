@@ -1,0 +1,99 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:Moist.App.ViewModels"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             mc:Ignorable="d" d:DesignWidth="1100" d:DesignHeight="700"
+             x:Class="Moist.App.Views.SettingsTabView"
+             x:DataType="vm:SettingsTabViewModel">
+
+    <ScrollViewer>
+        <StackPanel Spacing="16" Margin="16" MaxWidth="900">
+
+            <!-- Tool Paths -->
+            <Border Classes="section">
+                <StackPanel Spacing="8">
+                    <TextBlock Text="Tool Paths" FontWeight="Bold" FontSize="16"/>
+                    <TextBlock Text="Browse for executables or enter the name if on PATH." Opacity="0.5" FontSize="12"/>
+
+                    <Grid ColumnDefinitions="120,*,Auto" RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto" RowSpacing="8" ColumnSpacing="8">
+                        <TextBlock Text="FFmpeg:" VerticalAlignment="Center"/>
+                        <TextBox Grid.Column="1" Text="{Binding FfmpegPath}"/>
+                        <Button Grid.Column="2" Content="Browse" Tag="ffmpeg" Click="BrowseToolPath_Click" Padding="8,4"/>
+
+                        <TextBlock Text="FFprobe:" VerticalAlignment="Center" Grid.Row="1"/>
+                        <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding FfprobePath}"/>
+                        <Button Grid.Row="1" Grid.Column="2" Content="Browse" Tag="ffprobe" Click="BrowseToolPath_Click" Padding="8,4"/>
+
+                        <TextBlock Text="mkvmerge:" VerticalAlignment="Center" Grid.Row="2"/>
+                        <TextBox Grid.Row="2" Grid.Column="1" Text="{Binding MkvMergePath}"/>
+                        <Button Grid.Row="2" Grid.Column="2" Content="Browse" Tag="mkvmerge" Click="BrowseToolPath_Click" Padding="8,4"/>
+
+                        <TextBlock Text="x264:" VerticalAlignment="Center" Grid.Row="3"/>
+                        <TextBox Grid.Row="3" Grid.Column="1" Text="{Binding X264Path}"/>
+                        <Button Grid.Row="3" Grid.Column="2" Content="Browse" Tag="x264" Click="BrowseToolPath_Click" Padding="8,4"/>
+
+                        <TextBlock Text="x265:" VerticalAlignment="Center" Grid.Row="4"/>
+                        <TextBox Grid.Row="4" Grid.Column="1" Text="{Binding X265Path}"/>
+                        <Button Grid.Row="4" Grid.Column="2" Content="Browse" Tag="x265" Click="BrowseToolPath_Click" Padding="8,4"/>
+
+                        <TextBlock Text="VapourSynth:" VerticalAlignment="Center" Grid.Row="5"/>
+                        <TextBox Grid.Row="5" Grid.Column="1" Text="{Binding VapourSynthPath}"/>
+                        <Button Grid.Row="5" Grid.Column="2" Content="Browse" Tag="vspipe" Click="BrowseToolPath_Click" Padding="8,4"/>
+                    </Grid>
+                </StackPanel>
+            </Border>
+
+            <!-- Appearance -->
+            <Border Classes="section">
+                <StackPanel Spacing="8">
+                    <TextBlock Text="Appearance" FontWeight="Bold" FontSize="16"/>
+                    <Grid ColumnDefinitions="180,*" RowDefinitions="Auto" ColumnSpacing="8">
+                        <TextBlock Text="Theme:" VerticalAlignment="Center"/>
+                        <ComboBox Grid.Column="1"
+                                  ItemsSource="{x:Static vm:SettingsTabViewModel.ThemeOptions}"
+                                  SelectedItem="{Binding SelectedTheme}"
+                                  Width="200" HorizontalAlignment="Left"/>
+                    </Grid>
+                    <TextBlock Text="Theme changes apply when you click Save Settings." Opacity="0.5" FontSize="11"/>
+                </StackPanel>
+            </Border>
+
+            <!-- General Settings -->
+            <Border Classes="section">
+                <StackPanel Spacing="8">
+                    <TextBlock Text="General" FontWeight="Bold" FontSize="16"/>
+
+                    <Grid ColumnDefinitions="180,*,Auto" RowDefinitions="Auto,Auto,Auto,Auto,Auto" RowSpacing="8" ColumnSpacing="8">
+                        <TextBlock Text="Max Concurrent Jobs:" VerticalAlignment="Center"/>
+                        <NumericUpDown Grid.Column="1" Value="{Binding MaxConcurrentJobs}"
+                                       Minimum="1" Maximum="32" Width="100" HorizontalAlignment="Left"/>
+
+                        <TextBlock Text="Auto-start queue:" VerticalAlignment="Center" Grid.Row="1"/>
+                        <CheckBox Grid.Row="1" Grid.Column="1" IsChecked="{Binding AutoStartQueue}"/>
+
+                        <TextBlock Text="Delete temp files:" VerticalAlignment="Center" Grid.Row="2"/>
+                        <CheckBox Grid.Row="2" Grid.Column="1" IsChecked="{Binding DeleteTempFiles}"/>
+
+                        <TextBlock Text="Output directory:" VerticalAlignment="Center" Grid.Row="3"/>
+                        <TextBox Grid.Row="3" Grid.Column="1" Text="{Binding DefaultOutputDirectory}"
+                                 Watermark="Same as input file"/>
+                        <Button Grid.Row="3" Grid.Column="2" Content="Browse" Tag="outputDir" Click="BrowseFolder_Click" Padding="8,4"/>
+
+                        <TextBlock Text="Temp directory:" VerticalAlignment="Center" Grid.Row="4"/>
+                        <TextBox Grid.Row="4" Grid.Column="1" Text="{Binding TempDirectory}"/>
+                        <Button Grid.Row="4" Grid.Column="2" Content="Browse" Tag="tempDir" Click="BrowseFolder_Click" Padding="8,4"/>
+                    </Grid>
+                </StackPanel>
+            </Border>
+
+            <!-- Save + Status -->
+            <StackPanel Orientation="Horizontal" Spacing="16" HorizontalAlignment="Right">
+                <TextBlock Text="{Binding SaveStatus}" VerticalAlignment="Center" Opacity="0.7" FontSize="12"/>
+                <Button Content="Save Settings"
+                        Command="{Binding SaveCommand}"
+                        Padding="24,8"/>
+            </StackPanel>
+        </StackPanel>
+    </ScrollViewer>
+</UserControl>

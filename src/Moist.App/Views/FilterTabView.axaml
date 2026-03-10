@@ -1,0 +1,259 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:Moist.App.ViewModels"
+             xmlns:filters="using:Moist.Filters"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             mc:Ignorable="d" d:DesignWidth="1100" d:DesignHeight="700"
+             x:Class="Moist.App.Views.FilterTabView"
+             x:DataType="vm:FilterTabViewModel">
+
+    <Grid ColumnDefinitions="280,*,320" Margin="16" ColumnSpacing="12">
+
+        <!-- LEFT PANEL: Filter Browser + Presets -->
+        <DockPanel>
+            <!-- Engine Selection -->
+            <StackPanel DockPanel.Dock="Top" Spacing="8" Margin="0,0,0,8">
+                <TextBlock Text="Filter Engine" FontWeight="Bold" FontSize="16"/>
+                <ComboBox ItemsSource="{Binding Engines}"
+                          SelectedItem="{Binding SelectedEngine}"
+                          DisplayMemberBinding="{Binding Name}"
+                          HorizontalAlignment="Stretch"/>
+            </StackPanel>
+
+            <!-- Search -->
+            <TextBox DockPanel.Dock="Top" Text="{Binding SearchText}"
+                     Watermark="Search filters..." Margin="0,0,0,4"/>
+
+            <!-- Category Filter -->
+            <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="4" Margin="0,0,0,8">
+                <ComboBox ItemsSource="{x:Static vm:FilterTabViewModel.AllCategories}"
+                          SelectedItem="{Binding SelectedCategory}"
+                          PlaceholderText="All Categories"
+                          Width="170"/>
+                <Button Content="Clear" Command="{Binding ClearCategoryFilterCommand}"
+                        Padding="8,4"/>
+            </StackPanel>
+
+            <!-- Presets Section -->
+            <Border DockPanel.Dock="Bottom"
+                    Classes="section" Padding="8" Margin="0,8,0,0"
+                    Height="180">
+                <DockPanel>
+                    <TextBlock DockPanel.Dock="Top" Text="Presets" FontWeight="SemiBold"
+                               Margin="0,0,0,4" FontSize="13"/>
+                    <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" Spacing="4" Margin="0,4,0,0">
+                        <Button Content="Apply" Command="{Binding ApplyPresetCommand}"
+                                CommandParameter="{Binding SelectedPreset}" Padding="8,4"/>
+                        <Button Content="Save Current..." Name="SavePresetButton"
+                                Click="SavePreset_Click" Padding="8,4"/>
+                        <Button Content="Delete" Command="{Binding DeletePresetCommand}"
+                                CommandParameter="{Binding SelectedPreset}" Padding="8,4"/>
+                    </StackPanel>
+                    <ListBox ItemsSource="{Binding FilteredPresets}"
+                             SelectedItem="{Binding SelectedPreset}">
+                        <ListBox.ItemTemplate>
+                            <DataTemplate x:DataType="filters:FilterPreset">
+                                <StackPanel Spacing="1">
+                                    <TextBlock Text="{Binding Name}" FontWeight="SemiBold" FontSize="12"/>
+                                    <TextBlock Text="{Binding Category}" FontSize="10" Opacity="0.5"/>
+                                </StackPanel>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+                </DockPanel>
+            </Border>
+
+            <!-- Available Filters List -->
+            <Border Classes="section" Padding="8">
+                <DockPanel>
+                    <TextBlock DockPanel.Dock="Top" Text="Available Filters" FontWeight="SemiBold"
+                               Margin="0,0,0,4" FontSize="13"/>
+                    <Button DockPanel.Dock="Bottom" Content="Add to Chain"
+                            Command="{Binding AddFilterCommand}"
+                            HorizontalAlignment="Stretch" Margin="0,4,0,0"
+                            HorizontalContentAlignment="Center"/>
+                    <ListBox ItemsSource="{Binding FilteredAvailableFilters}"
+                             SelectedItem="{Binding SelectedAvailableFilter}">
+                        <ListBox.ItemTemplate>
+                            <DataTemplate x:DataType="filters:FilterDefinition">
+                                <StackPanel Spacing="1" Margin="0,2">
+                                    <StackPanel Orientation="Horizontal" Spacing="8">
+                                        <TextBlock Text="{Binding Name}" FontWeight="SemiBold" FontSize="12"/>
+                                        <Border Background="#44888888" CornerRadius="3" Padding="4,1">
+                                            <TextBlock Text="{Binding Category}" FontSize="9" Opacity="0.7"/>
+                                        </Border>
+                                    </StackPanel>
+                                    <TextBlock Text="{Binding Description}" FontSize="10" Opacity="0.5"
+                                               TextTrimming="CharacterEllipsis" MaxLines="1"/>
+                                </StackPanel>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+                </DockPanel>
+            </Border>
+        </DockPanel>
+
+        <!-- CENTER: Filter Chain + Script Preview -->
+        <DockPanel Grid.Column="1">
+            <!-- Script Preview (Bottom) -->
+            <Border DockPanel.Dock="Bottom"
+                    Classes="section" Padding="8" Margin="0,8,0,0"
+                    Height="180">
+                <DockPanel>
+                    <TextBlock DockPanel.Dock="Top" Text="Generated Script" FontWeight="SemiBold"
+                               Margin="0,0,0,4" FontSize="13"/>
+                    <TextBox Text="{Binding ScriptPreview}"
+                             IsReadOnly="True"
+                             AcceptsReturn="True"
+                             TextWrapping="Wrap"
+                             FontFamily="Cascadia Code,Consolas,monospace"
+                             FontSize="12"/>
+                </DockPanel>
+            </Border>
+
+            <!-- Filter Chain (Main) -->
+            <Border Classes="section" Padding="8">
+                <DockPanel>
+                    <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="8" Margin="0,0,0,8">
+                        <TextBlock Text="Filter Chain" FontWeight="Bold" FontSize="16"
+                                   VerticalAlignment="Center"/>
+                        <TextBlock Text="{Binding AppliedFilters.Count, StringFormat=({0} filters)}"
+                                   VerticalAlignment="Center" Opacity="0.5" FontSize="12"/>
+                    </StackPanel>
+
+                    <!-- Chain Controls -->
+                    <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" Spacing="4" Margin="0,8,0,0">
+                        <Button Content="Up" Command="{Binding MoveFilterUpCommand}"
+                                CommandParameter="{Binding SelectedAppliedFilter}" Padding="8,4"/>
+                        <Button Content="Down" Command="{Binding MoveFilterDownCommand}"
+                                CommandParameter="{Binding SelectedAppliedFilter}" Padding="8,4"/>
+                        <Button Content="Remove" Command="{Binding RemoveFilterCommand}"
+                                CommandParameter="{Binding SelectedAppliedFilter}" Padding="8,4"/>
+                        <Button Content="Clear All" Command="{Binding ClearFiltersCommand}" Padding="8,4"/>
+                    </StackPanel>
+
+                    <!-- Chain List -->
+                    <ListBox ItemsSource="{Binding AppliedFilters}"
+                             SelectedItem="{Binding SelectedAppliedFilter}">
+                        <ListBox.ItemTemplate>
+                            <DataTemplate x:DataType="vm:AppliedFilterViewModel">
+                                <Grid ColumnDefinitions="*,Auto" Margin="0,2">
+                                    <StackPanel Spacing="1">
+                                        <StackPanel Orientation="Horizontal" Spacing="8">
+                                            <TextBlock Text="{Binding Name}" FontWeight="SemiBold" FontSize="13"/>
+                                            <Border Background="#44888888" CornerRadius="3" Padding="4,1">
+                                                <TextBlock Text="{Binding Category}" FontSize="9" Opacity="0.7"/>
+                                            </Border>
+                                        </StackPanel>
+                                        <!-- Show parameter summary -->
+                                        <ItemsControl ItemsSource="{Binding ParameterViewModels}">
+                                            <ItemsControl.ItemsPanel>
+                                                <ItemsPanelTemplate>
+                                                    <WrapPanel/>
+                                                </ItemsPanelTemplate>
+                                            </ItemsControl.ItemsPanel>
+                                            <ItemsControl.ItemTemplate>
+                                                <DataTemplate x:DataType="vm:FilterParameterViewModel">
+                                                    <TextBlock FontSize="10" Opacity="0.5" Margin="0,0,8,0">
+                                                        <Run Text="{Binding Name}"/><Run Text="="/><Run Text="{Binding Value}"/>
+                                                    </TextBlock>
+                                                </DataTemplate>
+                                            </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
+                                    </StackPanel>
+                                </Grid>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+                </DockPanel>
+            </Border>
+        </DockPanel>
+
+        <!-- RIGHT PANEL: Parameter Editor -->
+        <Border Grid.Column="2"
+                BorderBrush="{DynamicResource SystemControlForegroundBaseMediumLowBrush}"
+                BorderThickness="1" CornerRadius="4" Padding="12">
+            <DockPanel>
+                <TextBlock DockPanel.Dock="Top" Text="Parameters" FontWeight="Bold" FontSize="16"
+                           Margin="0,0,0,8"/>
+
+                <!-- No Filter Selected State -->
+                <TextBlock IsVisible="{Binding !SelectedAppliedFilter, Converter={x:Static ObjectConverters.IsNotNull}}"
+                           Text="Select a filter in the chain to edit its parameters"
+                           Opacity="0.3" FontSize="12" TextWrapping="Wrap"
+                           HorizontalAlignment="Center" VerticalAlignment="Center"/>
+
+                <!-- Parameter Editor for Selected Filter -->
+                <ScrollViewer IsVisible="{Binding SelectedAppliedFilter, Converter={x:Static ObjectConverters.IsNotNull}}">
+                    <StackPanel Spacing="4" DataContext="{Binding SelectedAppliedFilter}">
+                        <!-- Filter Header -->
+                        <TextBlock Text="{Binding Name}" FontWeight="SemiBold" FontSize="14"/>
+                        <TextBlock Text="{Binding Description}" FontSize="11" Opacity="0.5"
+                                   TextWrapping="Wrap" Margin="0,0,0,8"/>
+
+                        <!-- Parameter Controls -->
+                        <ItemsControl ItemsSource="{Binding ParameterViewModels}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate x:DataType="vm:FilterParameterViewModel">
+                                    <Border Margin="0,0,0,8"
+                                            Background="{DynamicResource SystemControlBackgroundChromeMediumLowBrush}"
+                                            CornerRadius="4" Padding="8">
+                                        <StackPanel Spacing="4">
+                                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                                <TextBlock Text="{Binding Name}" FontWeight="SemiBold" FontSize="12"/>
+                                                <TextBlock Text="{Binding Description}" FontSize="10"
+                                                           Opacity="0.5" VerticalAlignment="Center"/>
+                                            </StackPanel>
+
+                                            <!-- Int Parameter -->
+                                            <StackPanel IsVisible="{Binding IsInt}" Orientation="Horizontal" Spacing="8">
+                                                <NumericUpDown Value="{Binding IntValue}"
+                                                               Minimum="{Binding SliderMin}"
+                                                               Maximum="{Binding SliderMax}"
+                                                               Width="120"/>
+                                                <Slider Value="{Binding IntValue}"
+                                                        Minimum="{Binding SliderMin}"
+                                                        Maximum="{Binding SliderMax}"
+                                                        Width="140"/>
+                                            </StackPanel>
+
+                                            <!-- Double Parameter -->
+                                            <StackPanel IsVisible="{Binding IsDouble}" Orientation="Horizontal" Spacing="8">
+                                                <NumericUpDown Value="{Binding DoubleValue}"
+                                                               Minimum="{Binding SliderMin}"
+                                                               Maximum="{Binding SliderMax}"
+                                                               Increment="0.1"
+                                                               FormatString="F2"
+                                                               Width="120"/>
+                                                <Slider Value="{Binding DoubleValue}"
+                                                        Minimum="{Binding SliderMin}"
+                                                        Maximum="{Binding SliderMax}"
+                                                        Width="140"/>
+                                            </StackPanel>
+
+                                            <!-- Bool Parameter -->
+                                            <CheckBox IsVisible="{Binding IsBool}"
+                                                      IsChecked="{Binding BoolValue}"
+                                                      Content="{Binding Name}"/>
+
+                                            <!-- String Parameter -->
+                                            <TextBox IsVisible="{Binding IsString}"
+                                                     Text="{Binding StringValue}"/>
+
+                                            <!-- Choice Parameter -->
+                                            <ComboBox IsVisible="{Binding IsChoice}"
+                                                      ItemsSource="{Binding Options}"
+                                                      SelectedItem="{Binding SelectedOption}"
+                                                      HorizontalAlignment="Stretch"/>
+                                        </StackPanel>
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </StackPanel>
+                </ScrollViewer>
+            </DockPanel>
+        </Border>
+    </Grid>
+</UserControl>

@@ -1,0 +1,40 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Moist.Core", "Moist.Core\Moist.Core.csproj", "{633AB99B-81A1-4C44-8760-28CCBF6A4B36}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Moist.Filters", "Moist.Filters\Moist.Filters.csproj", "{AC22244F-0E34-4EF2-9510-0C8AC3922813}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Moist.App", "Moist.App\Moist.App.csproj", "{FEDB6F1D-397B-4550-86ED-08A7C35765DA}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Moist.Core.Tests", "Moist.Core.Tests\Moist.Core.Tests.csproj", "{F32BC551-E778-4998-B2F8-95BC170E25EA}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{633AB99B-81A1-4C44-8760-28CCBF6A4B36}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{633AB99B-81A1-4C44-8760-28CCBF6A4B36}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{633AB99B-81A1-4C44-8760-28CCBF6A4B36}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{633AB99B-81A1-4C44-8760-28CCBF6A4B36}.Release|Any CPU.Build.0 = Release|Any CPU
+		{AC22244F-0E34-4EF2-9510-0C8AC3922813}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{AC22244F-0E34-4EF2-9510-0C8AC3922813}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{AC22244F-0E34-4EF2-9510-0C8AC3922813}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{AC22244F-0E34-4EF2-9510-0C8AC3922813}.Release|Any CPU.Build.0 = Release|Any CPU
+		{FEDB6F1D-397B-4550-86ED-08A7C35765DA}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{FEDB6F1D-397B-4550-86ED-08A7C35765DA}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{FEDB6F1D-397B-4550-86ED-08A7C35765DA}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{FEDB6F1D-397B-4550-86ED-08A7C35765DA}.Release|Any CPU.Build.0 = Release|Any CPU
+		{F32BC551-E778-4998-B2F8-95BC170E25EA}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{F32BC551-E778-4998-B2F8-95BC170E25EA}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{F32BC551-E778-4998-B2F8-95BC170E25EA}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{F32BC551-E778-4998-B2F8-95BC170E25EA}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+EndGlobal

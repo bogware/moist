@@ -1,0 +1,88 @@
+<ResourceDictionary xmlns="https://github.com/avaloniaui"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <!-- ============================================================
+         moist Dark Theme — adapted from the damp UI/UX Design System
+         Blue-gray palette. No pure black, no pure white.
+         ============================================================ -->
+
+    <!-- ── Background Surfaces ── -->
+    <SolidColorBrush x:Key="MoistWindowBg"         Color="#FF212325"/>
+    <SolidColorBrush x:Key="MoistChildBg"          Color="#FF262829"/>
+    <SolidColorBrush x:Key="MoistPopupBg"          Color="#FA262829"/>
+    <SolidColorBrush x:Key="MoistTitleBg"          Color="#FF1C1C1F"/>
+    <SolidColorBrush x:Key="MoistTitleBgActive"    Color="#FF232328"/>
+    <SolidColorBrush x:Key="MoistMenuBarBg"        Color="#FF29292E"/>
+    <SolidColorBrush x:Key="MoistStatusBarBg"      Color="#FF1A1A1E"/>
+
+    <!-- ── Input Frames ── -->
+    <SolidColorBrush x:Key="MoistFrameBg"          Color="#FF333638"/>
+    <SolidColorBrush x:Key="MoistFrameBgHover"     Color="#FF404345"/>
+    <SolidColorBrush x:Key="MoistFrameBgActive"    Color="#FF474A4D"/>
+
+    <!-- ── Interactive: Buttons ── -->
+    <SolidColorBrush x:Key="MoistButtonBg"         Color="#FF384252"/>
+    <SolidColorBrush x:Key="MoistButtonBgHover"    Color="#FF47576B"/>
+    <SolidColorBrush x:Key="MoistButtonBgActive"   Color="#FF526685"/>
+
+    <!-- ── Interactive: Headers / Sections ── -->
+    <SolidColorBrush x:Key="MoistHeaderBg"         Color="#FF384252"/>
+    <SolidColorBrush x:Key="MoistHeaderBgHover"    Color="#FF47576B"/>
+    <SolidColorBrush x:Key="MoistHeaderBgActive"   Color="#FF4D617A"/>
+
+    <!-- ── Tabs ── -->
+    <SolidColorBrush x:Key="MoistTabBg"            Color="#FF2E2E33"/>
+    <SolidColorBrush x:Key="MoistTabBgHover"       Color="#FF596B85"/>
+    <SolidColorBrush x:Key="MoistTabBgActive"      Color="#FF40526B"/>
+
+    <!-- ── Controls ── -->
+    <SolidColorBrush x:Key="MoistSliderGrab"       Color="#FF597399"/>
+    <SolidColorBrush x:Key="MoistSliderGrabActive" Color="#FF6B8CB8"/>
+    <SolidColorBrush x:Key="MoistCheckMark"        Color="#FF7399CC"/>
+
+    <!-- ── Borders ── -->
+    <SolidColorBrush x:Key="MoistBorder"           Color="#804D4D4D"/>
+    <SolidColorBrush x:Key="MoistBorderSubtle"     Color="#40404040"/>
+    <SolidColorBrush x:Key="MoistBorderAccent"     Color="#FF40526B"/>
+
+    <!-- ── Text ── -->
+    <SolidColorBrush x:Key="MoistText"             Color="#FFE0E0E6"/>
+    <SolidColorBrush x:Key="MoistTextSecondary"    Color="#FF808085"/>
+    <SolidColorBrush x:Key="MoistTextDisabled"     Color="#FF606066"/>
+    <SolidColorBrush x:Key="MoistTextTitle"        Color="#FFC0C7D1"/>
+
+    <!-- ── Semantic: Success ── -->
+    <SolidColorBrush x:Key="MoistSuccessBg"        Color="#FF337333"/>
+    <SolidColorBrush x:Key="MoistSuccessBgHover"   Color="#FF408C40"/>
+    <SolidColorBrush x:Key="MoistSuccessBgActive"  Color="#FF4DA64D"/>
+    <SolidColorBrush x:Key="MoistSuccessText"      Color="#FF4DFF4D"/>
+
+    <!-- ── Semantic: Error ── -->
+    <SolidColorBrush x:Key="MoistErrorBg"          Color="#FF993333"/>
+    <SolidColorBrush x:Key="MoistErrorBgHover"     Color="#FFBF4040"/>
+    <SolidColorBrush x:Key="MoistErrorText"        Color="#FFFF4D4D"/>
+
+    <!-- ── Semantic: Accent / Info ── -->
+    <SolidColorBrush x:Key="MoistAccent"           Color="#FF80CCFF"/>
+    <SolidColorBrush x:Key="MoistAccentSubtle"     Color="#FF80BFFF"/>
+    <SolidColorBrush x:Key="MoistAccentBg"         Color="#FF335580"/>
+
+    <!-- ── Semantic: Selected ── -->
+    <SolidColorBrush x:Key="MoistSelectedBg"       Color="#FF33668C"/>
+    <SolidColorBrush x:Key="MoistSelectedBgHover"  Color="#FF407AA6"/>
+    <SolidColorBrush x:Key="MoistSelectedBgActive" Color="#FF4785B8"/>
+
+    <!-- ── Progress ── -->
+    <SolidColorBrush x:Key="MoistProgressFill"     Color="#FF4D8C4D"/>
+    <SolidColorBrush x:Key="MoistProgressBg"       Color="#FF2A2A2E"/>
+
+    <!-- ── Section panel ── -->
+    <SolidColorBrush x:Key="MoistSectionBg"        Color="#FF1E2024"/>
+    <SolidColorBrush x:Key="MoistSectionBorder"    Color="#FF3A3A40"/>
+
+    <!-- ── Geometry ── -->
+    <CornerRadius x:Key="MoistCornerRadius">2</CornerRadius>
+    <Thickness x:Key="MoistSectionPadding">16</Thickness>
+    <Thickness x:Key="MoistSectionMargin">0,0,0,12</Thickness>
+
+</ResourceDictionary>

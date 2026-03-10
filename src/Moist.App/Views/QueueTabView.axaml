@@ -1,0 +1,68 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:Moist.App.ViewModels"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             mc:Ignorable="d" d:DesignWidth="1100" d:DesignHeight="700"
+             x:Class="Moist.App.Views.QueueTabView"
+             x:DataType="vm:QueueTabViewModel">
+
+    <DockPanel Margin="16">
+        <!-- Queue Controls -->
+        <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="8" Margin="0,0,0,12">
+            <Button Content="Start Queue" Classes="accent"
+                    Command="{Binding StartQueueCommand}"
+                    IsEnabled="{Binding !IsRunning}"/>
+            <Button Content="Stop" Classes="danger"
+                    Command="{Binding StopQueueCommand}"
+                    IsEnabled="{Binding IsRunning}"/>
+            <Button Content="Clear Completed"
+                    Command="{Binding ClearCompletedCommand}"/>
+            <TextBlock Text="{Binding QueueStatus}"
+                       VerticalAlignment="Center" Margin="16,0,0,0"
+                       Opacity="0.7"/>
+        </StackPanel>
+
+        <!-- Job List -->
+        <DataGrid ItemsSource="{Binding Jobs}"
+                  AutoGenerateColumns="False"
+                  CanUserReorderColumns="True"
+                  CanUserResizeColumns="True"
+                  CanUserSortColumns="True"
+                  GridLinesVisibility="Horizontal"
+                  IsReadOnly="True">
+            <DataGrid.Columns>
+                <DataGridTextColumn Header="Name" Binding="{Binding Name}" Width="*"/>
+                <DataGridTextColumn Header="Type" Binding="{Binding JobType}" Width="100"/>
+                <DataGridTextColumn Header="Status" Binding="{Binding Status}" Width="100"/>
+                <DataGridTemplateColumn Header="Progress" Width="200">
+                    <DataGridTemplateColumn.CellTemplate>
+                        <DataTemplate x:DataType="vm:JobViewModel">
+                            <ProgressBar Value="{Binding Percentage}"
+                                         Minimum="0" Maximum="100"
+                                         Height="16" Margin="4"/>
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
+                <DataGridTextColumn Header="FPS" Binding="{Binding Fps}" Width="80"/>
+                <DataGridTextColumn Header="ETA" Binding="{Binding Eta}" Width="100"/>
+                <DataGridTemplateColumn Header="Actions" Width="120">
+                    <DataGridTemplateColumn.CellTemplate>
+                        <DataTemplate x:DataType="vm:JobViewModel">
+                            <StackPanel Orientation="Horizontal" Spacing="4" Margin="4">
+                                <Button Content="Cancel" Padding="4,2"
+                                        FontSize="11"
+                                        Command="{Binding $parent[DataGrid].((vm:QueueTabViewModel)DataContext).CancelJobCommand}"
+                                        CommandParameter="{Binding}"/>
+                                <Button Content="Remove" Padding="4,2"
+                                        FontSize="11"
+                                        Command="{Binding $parent[DataGrid].((vm:QueueTabViewModel)DataContext).RemoveJobCommand}"
+                                        CommandParameter="{Binding}"/>
+                            </StackPanel>
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
+            </DataGrid.Columns>
+        </DataGrid>
+    </DockPanel>
+</UserControl>

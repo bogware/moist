@@ -1,0 +1,495 @@
+using System.Collections.ObjectModel;
+using Avalonia.Media.Imaging;
+using CommunityToolkit.Mvvm.ComponentModel;
+using CommunityToolkit.Mvvm.Input;
+using Moist.App.Services;
+using Moist.Core.Encoders;
+using Moist.Core.Encoders.Audio;
+using Moist.Core.Encoders.Video;
+using Moist.Core.Jobs;
+using Moist.Core.Media;
+using Moist.Core.Muxers;
+using Moist.Core.Profiles;
+
+namespace Moist.App.ViewModels;
+
+public partial class EncodeTabViewModel : ViewModelBase, IDisposable
+{
+    private readonly AppServices _services;
+    private readonly FilterTabViewModel? _filterTab;
+
+    // Input
+    [ObservableProperty] private string _inputFile = string.Empty;
+    [ObservableProperty] private string _outputFile = string.Empty;
+    [ObservableProperty] private MediaFileInfo? _mediaInfo;
+
+    // Video encoder
+    [ObservableProperty] private EncoderInfo? _selectedVideoEncoder;
+    [ObservableProperty] private VideoEncodingMode _encodingMode = VideoEncodingMode.ConstantRateFactor;
+    [ObservableProperty] private double _quality = 23.0;
+    [ObservableProperty] private int _bitrate = 5000;
+    [ObservableProperty] private VideoPreset _preset = VideoPreset.Medium;
+    [ObservableProperty] private VideoTune _tune = VideoTune.None;
+    [ObservableProperty] private string _customVideoArgs = string.Empty;
+
+    // Audio encoder
+    [ObservableProperty] private EncoderInfo? _selectedAudioEncoder;
+    [ObservableProperty] private int _audioBitrate = 128;
+    [ObservableProperty] private AudioBitrateMode _audioBitrateMode = AudioBitrateMode.Vbr;
+
+    // Container
+    [ObservableProperty] private ContainerFormat _container = ContainerFormat.Mkv;
+
+    // Audio track selection
+    [ObservableProperty] private int _selectedAudioTrackIndex;
+    public ObservableCollection<string> AudioTrackLabels { get; } = [];
+
+    // Subtitle options
+    [ObservableProperty] private bool _copySubtitles = true;
+
+    // Preview
+    [ObservableProperty] private Bitmap? _previewImage;
+    [ObservableProperty] private double _previewPosition;
+    [ObservableProperty] private double _previewMaxPosition = 100;
+    [ObservableProperty] private bool _isPreviewLoading;
+
+    // Profiles
+    [ObservableProperty] private EncodingProfile? _selectedProfile;
+    public ObservableCollection<EncodingProfile> Profiles { get; } = [];
+
+    // Available options
+    public ObservableCollection<EncoderInfo> VideoEncoders { get; } = [];
+    public ObservableCollection<EncoderInfo> AudioEncoders { get; } = [];
+
+    // Static options for XAML binding
+    public static VideoEncodingMode[] EncodingModeOptions { get; } = Enum.GetValues<VideoEncodingMode>();
+    public static VideoPreset[] PresetOptions { get; } = Enum.GetValues<VideoPreset>();
+    public static VideoTune[] TuneOptions { get; } = Enum.GetValues<VideoTune>();
+    public static ContainerFormat[] ContainerOptions { get; } = Enum.GetValues<ContainerFormat>();
+
+    public string MediaInfoSummary => MediaInfo is null ? "" :
+        $"Duration: {MediaInfo.Duration:hh\\:mm\\:ss}  |  " +
+        (MediaInfo.Video is not null
+            ? $"Video: {MediaInfo.Video.Width}x{MediaInfo.Video.Height} @ {MediaInfo.Video.Framerate:F3} fps ({MediaInfo.Video.Codec})  |  "
+            : "") +
+        (MediaInfo.AudioStreams.Count > 0
+            ? $"Audio: {MediaInfo.AudioStreams[0].Codec} {MediaInfo.AudioStreams[0].Channels}ch ({MediaInfo.AudioStreams.Count} track(s))"
+            : "No audio");
+
+    // Drag-and-drop state
+    [ObservableProperty] private bool _isDragOver;
+
+    // Status / errors
+    [ObservableProperty] private string _statusMessage = string.Empty;
+    [ObservableProperty] private bool _hasError;
+
+    public EncodeTabViewModel(AppServices services, FilterTabViewModel? filterTab = null)
+    {
+        _services = services;
+        _filterTab = filterTab;
+
+        foreach (var enc in services.Encoders.GetVideoEncoders())
+            VideoEncoders.Add(enc);
+        foreach (var enc in services.Encoders.GetAudioEncoders())
+            AudioEncoders.Add(enc);
+
+        SelectedVideoEncoder = VideoEncoders.FirstOrDefault();
+        SelectedAudioEncoder = AudioEncoders.FirstOrDefault();
+
+        RefreshProfiles();
+    }
+
+    // === Drag-and-Drop ===
+
+    public async Task HandleDroppedFile(string filePath)
+    {
+        InputFile = filePath;
+        await AnalyzeInput();
+    }
+
+    // === File Analysis ===
+
+    [RelayCommand]
+    private async Task AnalyzeInput()
+    {
+        if (string.IsNullOrWhiteSpace(InputFile)) return;
+
+        if (!File.Exists(InputFile))
+        {
+            HasError = true;
+            StatusMessage = $"File not found: {InputFile}";
+            return;
+        }
+
+        HasError = false;
+        StatusMessage = "Analyzing...";
+
+        try
+        {
+            MediaInfo = await _services.MediaAnalyzer.AnalyzeAsync(InputFile);
+            OnPropertyChanged(nameof(MediaInfoSummary));
+
+            // Populate audio track selection
+            AudioTrackLabels.Clear();
+            for (int i = 0; i < MediaInfo.AudioStreams.Count; i++)
+            {
+                var a = MediaInfo.AudioStreams[i];
+                var label = $"Track {i + 1}: {a.Codec} {a.Channels}ch";
+                if (a.Language is not null) label += $" ({a.Language})";
+                if (a.Title is not null) label += $" — {a.Title}";
+                AudioTrackLabels.Add(label);
+            }
+            SelectedAudioTrackIndex = 0;
+
+            // Auto-generate output path
+            if (string.IsNullOrWhiteSpace(OutputFile))
+            {
+                var dir = string.IsNullOrEmpty(_services.Settings.DefaultOutputDirectory)
+                    ? Path.GetDirectoryName(InputFile)!
+                    : _services.Settings.DefaultOutputDirectory;
+                var name = Path.GetFileNameWithoutExtension(InputFile);
+                OutputFile = Path.Combine(dir, $"{name}_encoded{Container.GetExtension()}");
+            }
+
+            // Set preview max position from duration
+            if (MediaInfo.Duration.TotalSeconds > 0)
+            {
+                PreviewMaxPosition = MediaInfo.Duration.TotalSeconds;
+                PreviewPosition = MediaInfo.Duration.TotalSeconds * 0.1;
+            }
+
+            StatusMessage = $"Loaded: {MediaInfo.Video?.Width}x{MediaInfo.Video?.Height}, {MediaInfo.Duration:hh\\:mm\\:ss}";
+            await UpdatePreview();
+        }
+        catch (Exception ex)
+        {
+            MediaInfo = null;
+            OnPropertyChanged(nameof(MediaInfoSummary));
+            HasError = true;
+            StatusMessage = $"Analysis failed: {ex.Message}";
+        }
+    }
+
+    // === Video Preview ===
+
+    [RelayCommand]
+    private async Task UpdatePreview()
+    {
+        if (string.IsNullOrWhiteSpace(InputFile) || MediaInfo is null) return;
+
+        IsPreviewLoading = true;
+        try
+        {
+            var pos = TimeSpan.FromSeconds(PreviewPosition);
+            var framePath = await _services.PreviewService.ExtractFrameAsync(InputFile, pos);
+
+            if (framePath is not null && File.Exists(framePath))
+            {
+                var oldImage = PreviewImage;
+                // Load into MemoryStream so Bitmap doesn't reference a disposed FileStream
+                var memoryStream = new MemoryStream();
+                await using (var fileStream = File.OpenRead(framePath))
+                {
+                    await fileStream.CopyToAsync(memoryStream);
+                }
+                memoryStream.Seek(0, SeekOrigin.Begin);
+                PreviewImage = new Bitmap(memoryStream);
+                oldImage?.Dispose();
+                try { File.Delete(framePath); } catch { }
+            }
+        }
+        catch
+        {
+            PreviewImage = null;
+        }
+        finally
+        {
+            IsPreviewLoading = false;
+        }
+    }
+
+    partial void OnPreviewPositionChanged(double value)
+    {
+        _ = UpdatePreviewDebounced();
+    }
+
+    partial void OnContainerChanged(ContainerFormat value)
+    {
+        if (!string.IsNullOrWhiteSpace(OutputFile))
+        {
+            var dir = Path.GetDirectoryName(OutputFile) ?? "";
+            var name = Path.GetFileNameWithoutExtension(OutputFile);
+            OutputFile = Path.Combine(dir, $"{name}{value.GetExtension()}");
+        }
+    }
+
+    private CancellationTokenSource? _previewDebounce;
+    private async Task UpdatePreviewDebounced()
+    {
+        _previewDebounce?.Cancel();
+        _previewDebounce?.Dispose();
+        _previewDebounce = new CancellationTokenSource();
+        try
+        {
+            await Task.Delay(300, _previewDebounce.Token);
+            await UpdatePreview();
+        }
+        catch (OperationCanceledException) { }
+    }
+
+    // === Profiles ===
+
+    private void RefreshProfiles()
+    {
+        Profiles.Clear();
+        foreach (var p in _services.ProfileManager.GetAllProfiles())
+            Profiles.Add(p);
+    }
+
+    partial void OnSelectedProfileChanged(EncodingProfile? value)
+    {
+        if (value is null) return;
+        ApplyProfile(value);
+    }
+
+    private void ApplyProfile(EncodingProfile profile)
+    {
+        SelectedVideoEncoder = VideoEncoders.FirstOrDefault(e => e.Id == profile.VideoEncoderId)
+                               ?? VideoEncoders.FirstOrDefault();
+        EncodingMode = profile.VideoMode;
+        Quality = profile.VideoQuality;
+        Bitrate = profile.VideoBitrate;
+        Preset = profile.VideoPreset;
+        Tune = profile.VideoTune;
+        CustomVideoArgs = profile.VideoCustomArgs;
+
+        SelectedAudioEncoder = AudioEncoders.FirstOrDefault(e => e.Id == profile.AudioEncoderId)
+                               ?? AudioEncoders.FirstOrDefault();
+        AudioBitrateMode = profile.AudioBitrateMode;
+        AudioBitrate = profile.AudioBitrate;
+
+        Container = profile.Container;
+    }
+
+    [RelayCommand]
+    private void SaveProfile(string? profileName)
+    {
+        if (string.IsNullOrWhiteSpace(profileName)) return;
+
+        var profile = new EncodingProfile
+        {
+            Name = profileName,
+            VideoEncoderId = SelectedVideoEncoder?.Id ?? "ffmpeg-x265",
+            VideoMode = EncodingMode,
+            VideoQuality = Quality,
+            VideoBitrate = Bitrate,
+            VideoPreset = Preset,
+            VideoTune = Tune,
+            VideoCustomArgs = CustomVideoArgs,
+            AudioEncoderId = SelectedAudioEncoder?.Id ?? "ffmpeg-audio-opus",
+            AudioBitrateMode = AudioBitrateMode,
+            AudioBitrate = AudioBitrate,
+            Container = Container,
+        };
+
+        _services.ProfileManager.Save(profile);
+        RefreshProfiles();
+    }
+
+    [RelayCommand]
+    private void DeleteProfile()
+    {
+        if (SelectedProfile is null) return;
+        _services.ProfileManager.Delete(SelectedProfile.Name);
+        SelectedProfile = null;
+        RefreshProfiles();
+    }
+
+    // === Add to Queue ===
+
+    [RelayCommand]
+    private void AddToQueue()
+    {
+        if (string.IsNullOrWhiteSpace(InputFile) || string.IsNullOrWhiteSpace(OutputFile))
+            return;
+
+        if (!File.Exists(InputFile))
+        {
+            HasError = true;
+            StatusMessage = $"Input file not found: {InputFile}";
+            return;
+        }
+
+        try
+        {
+            // Validate the output path is legal
+            _ = Path.GetFullPath(OutputFile);
+        }
+        catch
+        {
+            HasError = true;
+            StatusMessage = $"Invalid output path: {OutputFile}";
+            return;
+        }
+
+        // Avoid overwriting existing files — auto-increment filename
+        var actualOutput = GetUniqueOutputPath(OutputFile);
+        if (actualOutput != OutputFile)
+        {
+            OutputFile = actualOutput;
+            StatusMessage = $"Output renamed to avoid overwrite: {Path.GetFileName(actualOutput)}";
+        }
+        else
+        {
+            StatusMessage = "Added to queue.";
+        }
+
+        HasError = false;
+        EnqueueFile(InputFile, OutputFile);
+    }
+
+    private static string GetUniqueOutputPath(string path)
+    {
+        if (!File.Exists(path)) return path;
+
+        var dir = Path.GetDirectoryName(path) ?? "";
+        var name = Path.GetFileNameWithoutExtension(path);
+        var ext = Path.GetExtension(path);
+
+        for (int i = 1; i < 1000; i++)
+        {
+            var candidate = Path.Combine(dir, $"{name}_{i}{ext}");
+            if (!File.Exists(candidate))
+                return candidate;
+        }
+
+        return path; // give up after 999 attempts
+    }
+
+    /// <summary>
+    /// Enqueue a file for encoding. Returns the mux job ID for tracking.
+    /// When called from batch, pass mediaInfo directly to avoid mutating shared EncodeTab state.
+    /// </summary>
+    public string EnqueueFile(string inputFile, string outputFile, MediaFileInfo? mediaInfo = null)
+    {
+        // Use provided mediaInfo (batch mode) or fall back to shared MediaInfo (single encode)
+        var info = mediaInfo ?? MediaInfo;
+
+        // Ensure temp and output directories exist
+        Directory.CreateDirectory(_services.Settings.TempDirectory);
+        var outputDir = Path.GetDirectoryName(outputFile);
+        if (!string.IsNullOrEmpty(outputDir))
+            Directory.CreateDirectory(outputDir);
+
+        var encoderId = SelectedVideoEncoder?.Id ?? "ffmpeg-x265";
+
+        // Create the correct settings subclass based on selected encoder
+        VideoEncoderSettings videoSettings = encoderId switch
+        {
+            "ffmpeg-x264" or "cli-x264" => new X264Settings(),
+            "ffmpeg-x265" or "cli-x265" => new X265Settings(),
+            "ffmpeg-svtav1" => new SvtAv1Settings(),
+            _ => new VideoEncoderSettings()
+        };
+        videoSettings.Mode = EncodingMode;
+        videoSettings.Quality = Quality;
+        videoSettings.Bitrate = Bitrate;
+        videoSettings.Preset = Preset;
+        videoSettings.Tune = Tune;
+        videoSettings.CustomArgs = CustomVideoArgs;
+
+        // Generate filter script from filter chain if configured
+        string? filterScript = null;
+        if (_filterTab?.SelectedEngine is not null && _filterTab.Chain.Filters.Count > 0)
+            filterScript = _filterTab.SelectedEngine.GenerateScript(_filterTab.Chain, inputFile);
+
+        var tempVideoFile = Path.Combine(
+            _services.Settings.TempDirectory,
+            $"moist_v_{Guid.NewGuid():N}_{Path.GetFileNameWithoutExtension(outputFile)}.mkv");
+
+        var videoJob = new VideoJob
+        {
+            Name = $"Video: {Path.GetFileName(inputFile)}",
+            InputFile = inputFile,
+            OutputFile = tempVideoFile,
+            EncoderId = encoderId,
+            Settings = videoSettings,
+            FilterScript = filterScript,
+            TotalFrames = info?.Video?.TotalFrames ?? 0,
+        };
+
+        var tempAudioFile = Path.Combine(
+            _services.Settings.TempDirectory,
+            $"moist_a_{Guid.NewGuid():N}_{Path.GetFileNameWithoutExtension(outputFile)}.mka");
+
+        var audioEncoderId = SelectedAudioEncoder?.Id ?? "ffmpeg-audio-opus";
+        AudioEncoderSettings audioSettings = audioEncoderId switch
+        {
+            "ffmpeg-audio-opus" => new OpusSettings(),
+            "ffmpeg-audio-aac" => new AacSettings(),
+            "ffmpeg-audio-flac" => new FlacSettings(),
+            _ => new AudioEncoderSettings()
+        };
+        audioSettings.BitrateMode = AudioBitrateMode;
+        audioSettings.Bitrate = AudioBitrate;
+
+        var audioJob = new AudioJob
+        {
+            Name = $"Audio: {Path.GetFileName(inputFile)}",
+            InputFile = inputFile,
+            OutputFile = tempAudioFile,
+            EncoderId = audioEncoderId,
+            Settings = audioSettings,
+            TotalDurationSeconds = info?.Duration.TotalSeconds ?? 0,
+            AudioStreamIndex = SelectedAudioTrackIndex,
+        };
+
+        // Build subtitle inputs if CopySubtitles is enabled
+        var subtitleInputs = new List<SubtitleTrackInput>();
+        if (CopySubtitles && info?.SubtitleStreams is { Count: > 0 } subs)
+        {
+            foreach (var sub in subs)
+            {
+                subtitleInputs.Add(new SubtitleTrackInput
+                {
+                    FilePath = inputFile,
+                    Language = sub.Language,
+                    TrackName = sub.Title,
+                    IsDefault = sub.IsDefault,
+                    IsForced = sub.IsForced,
+                });
+            }
+        }
+
+        var muxJob = new MuxJob
+        {
+            Name = $"Mux: {Path.GetFileName(outputFile)}",
+            InputFile = inputFile,
+            OutputFile = outputFile,
+            MuxerId = "ffmpeg-mux",
+            Container = Container,
+            VideoInput = tempVideoFile,
+            AudioInputs = [new AudioTrackInput { FilePath = tempAudioFile }],
+            SubtitleInputs = subtitleInputs,
+            DependsOn = [videoJob.Id, audioJob.Id],
+        };
+
+        muxJob.FilesToCleanup.Add(tempVideoFile);
+        muxJob.FilesToCleanup.Add(tempAudioFile);
+
+        _services.JobQueue.Enqueue(videoJob);
+        _services.JobQueue.Enqueue(audioJob);
+        _services.JobQueue.Enqueue(muxJob);
+
+        return muxJob.Id;
+    }
+
+    public void Dispose()
+    {
+        _previewDebounce?.Cancel();
+        _previewDebounce?.Dispose();
+        _previewDebounce = null;
+        PreviewImage?.Dispose();
+        PreviewImage = null;
+    }
+}

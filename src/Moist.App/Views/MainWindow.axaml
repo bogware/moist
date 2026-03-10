@@ -1,0 +1,78 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:Moist.App.ViewModels"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:views="using:Moist.App.Views"
+        mc:Ignorable="d" d:DesignWidth="1200" d:DesignHeight="800"
+        x:Class="Moist.App.Views.MainWindow"
+        x:DataType="vm:MainWindowViewModel"
+        Title="moist"
+        Width="1200" Height="800"
+        MinWidth="800" MinHeight="600">
+
+    <Design.DataContext>
+        <vm:MainWindowViewModel/>
+    </Design.DataContext>
+
+    <DockPanel>
+
+        <!-- ═══ Top: Branded Header Bar ═══ -->
+        <Border DockPanel.Dock="Top" Classes="titlebar">
+            <Grid ColumnDefinitions="Auto,Auto,*,Auto">
+                <TextBlock Classes="brand-title" Text="moist" VerticalAlignment="Center" Margin="4,0,0,0"/>
+                <TextBlock Grid.Column="1" Classes="brand-subtitle" Text="video encoder"
+                           VerticalAlignment="Center" Margin="8,2,0,0"/>
+
+                <!-- Startup warning -->
+                <TextBlock Grid.Column="2" Text="{Binding StartupError}"
+                           IsVisible="{Binding HasStartupError}"
+                           Foreground="#FFFF6666" FontSize="11"
+                           VerticalAlignment="Center" Margin="16,0"
+                           TextTrimming="CharacterEllipsis"/>
+
+                <Button Grid.Column="3" Content="About" Padding="10,4" FontSize="11"
+                        Name="AboutButton" Click="AboutButton_Click"
+                        VerticalAlignment="Center" Margin="0,0,4,0"/>
+            </Grid>
+        </Border>
+
+        <!-- ═══ Bottom: Status Bar ═══ -->
+        <Border DockPanel.Dock="Bottom" Classes="statusbar">
+            <Grid ColumnDefinitions="*,Auto">
+                <TextBlock Text="{Binding StatusText}" FontSize="12" Opacity="0.7" VerticalAlignment="Center"/>
+                <TextBlock Grid.Column="1" Classes="hint"
+                           VerticalAlignment="Center"
+                           Text="Ctrl+O Open  Ctrl+Q Queue  Ctrl+R Run  Ctrl+S Save  Ctrl+1-6 Tabs"/>
+            </Grid>
+        </Border>
+
+        <!-- ═══ Main Content: Tabs ═══ -->
+        <TabControl SelectedIndex="{Binding SelectedTabIndex}" Margin="4,4,4,0">
+
+            <TabItem Header="Encode">
+                <views:EncodeTabView DataContext="{Binding EncodeTab}"/>
+            </TabItem>
+
+            <TabItem Header="Batch">
+                <views:BatchTabView DataContext="{Binding BatchTab}"/>
+            </TabItem>
+
+            <TabItem Header="Filters">
+                <views:FilterTabView DataContext="{Binding FilterTab}"/>
+            </TabItem>
+
+            <TabItem Header="Plugins">
+                <views:PluginManagerView DataContext="{Binding PluginManager}"/>
+            </TabItem>
+
+            <TabItem Header="Queue">
+                <views:QueueTabView DataContext="{Binding QueueTab}"/>
+            </TabItem>
+
+            <TabItem Header="Settings">
+                <views:SettingsTabView DataContext="{Binding SettingsTab}"/>
+            </TabItem>
+        </TabControl>
+    </DockPanel>
+</Window>

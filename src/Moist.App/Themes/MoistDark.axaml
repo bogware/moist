@@ -1,0 +1,256 @@
+<Styles xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <!-- ============================================================
+         moist Dark Skin
+         Blue-gray professional palette inspired by the damp design system.
+         Low-contrast, easy on the eyes during long encode sessions.
+
+         Applied as an overlay on top of FluentTheme Dark.
+         ============================================================ -->
+
+    <Styles.Resources>
+        <!-- ── Core Palette ── -->
+        <Color x:Key="MoistBgPrimary">#FF212325</Color>
+        <Color x:Key="MoistBgSecondary">#FF1A1C1E</Color>
+        <Color x:Key="MoistBgElevated">#FF282A2D</Color>
+        <Color x:Key="MoistBgSection">#FF1E2024</Color>
+        <Color x:Key="MoistBgInput">#FF333638</Color>
+        <Color x:Key="MoistBgInputHover">#FF404345</Color>
+
+        <Color x:Key="MoistAccentBlue">#FF5B8FC9</Color>
+        <Color x:Key="MoistAccentBlueLight">#FF80CCFF</Color>
+        <Color x:Key="MoistAccentBlueDim">#FF40526B</Color>
+
+        <Color x:Key="MoistBorderColor">#FF3A3A40</Color>
+        <Color x:Key="MoistBorderSubtle">#30505055</Color>
+
+        <Color x:Key="MoistTextPrimary">#FFE0E0E6</Color>
+        <Color x:Key="MoistTextSecondary">#FF9A9AA0</Color>
+        <Color x:Key="MoistTextDim">#FF606066</Color>
+        <Color x:Key="MoistTextTitle">#FFC0C7D1</Color>
+
+        <Color x:Key="MoistGreen">#FF4D8C4D</Color>
+        <Color x:Key="MoistGreenBright">#FF5BA65B</Color>
+        <Color x:Key="MoistRed">#FFBF4040</Color>
+        <Color x:Key="MoistRedBright">#FFE65050</Color>
+
+        <Color x:Key="MoistButtonBg">#FF384252</Color>
+        <Color x:Key="MoistButtonHover">#FF47576B</Color>
+        <Color x:Key="MoistButtonActive">#FF526685</Color>
+        <Color x:Key="MoistTabActive">#FF40526B</Color>
+
+        <!-- Reusable brushes -->
+        <SolidColorBrush x:Key="MoistWindowBrush"     Color="{StaticResource MoistBgPrimary}"/>
+        <SolidColorBrush x:Key="MoistSectionBrush"    Color="{StaticResource MoistBgSection}"/>
+        <SolidColorBrush x:Key="MoistElevatedBrush"   Color="{StaticResource MoistBgElevated}"/>
+        <SolidColorBrush x:Key="MoistBorderBrush"     Color="{StaticResource MoistBorderColor}"/>
+        <SolidColorBrush x:Key="MoistBorderSubtleBrush" Color="{StaticResource MoistBorderSubtle}"/>
+        <SolidColorBrush x:Key="MoistTextBrush"       Color="{StaticResource MoistTextPrimary}"/>
+        <SolidColorBrush x:Key="MoistTextSecBrush"    Color="{StaticResource MoistTextSecondary}"/>
+        <SolidColorBrush x:Key="MoistTextDimBrush"    Color="{StaticResource MoistTextDim}"/>
+        <SolidColorBrush x:Key="MoistAccentBrush"     Color="{StaticResource MoistAccentBlue}"/>
+        <SolidColorBrush x:Key="MoistInputBrush"      Color="{StaticResource MoistBgInput}"/>
+        <SolidColorBrush x:Key="MoistGreenBrush"      Color="{StaticResource MoistGreen}"/>
+        <SolidColorBrush x:Key="MoistRedBrush"        Color="{StaticResource MoistRed}"/>
+        <SolidColorBrush x:Key="MoistStatusBarBrush"  Color="{StaticResource MoistBgSecondary}"/>
+        <SolidColorBrush x:Key="MoistTitleBarBrush"   Color="#FF1C1C1F"/>
+    </Styles.Resources>
+
+    <!-- ── Window ── -->
+    <Style Selector="Window">
+        <Setter Property="Background" Value="{StaticResource MoistWindowBrush}"/>
+        <Setter Property="Foreground" Value="{StaticResource MoistTextBrush}"/>
+    </Style>
+
+    <!-- ── TabControl ── -->
+    <Style Selector="TabControl">
+        <Setter Property="Background" Value="Transparent"/>
+    </Style>
+
+    <Style Selector="TabItem">
+        <Setter Property="FontSize" Value="13"/>
+        <Setter Property="Padding" Value="14,8"/>
+        <Setter Property="Foreground" Value="{StaticResource MoistTextSecBrush}"/>
+    </Style>
+    <Style Selector="TabItem:selected">
+        <Setter Property="Foreground" Value="{StaticResource MoistTextBrush}"/>
+    </Style>
+    <Style Selector="TabItem:pointerover">
+        <Setter Property="Foreground" Value="{StaticResource MoistTextBrush}"/>
+    </Style>
+
+    <!-- ── Buttons ── -->
+    <Style Selector="Button">
+        <Setter Property="CornerRadius" Value="2"/>
+        <Setter Property="Background">
+            <SolidColorBrush Color="{StaticResource MoistButtonBg}"/>
+        </Setter>
+        <Setter Property="Foreground" Value="{StaticResource MoistTextBrush}"/>
+        <Setter Property="BorderThickness" Value="0"/>
+        <Setter Property="Padding" Value="10,5"/>
+    </Style>
+    <Style Selector="Button:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+        <Setter Property="Background">
+            <SolidColorBrush Color="{StaticResource MoistButtonHover}"/>
+        </Setter>
+    </Style>
+    <Style Selector="Button:pressed /template/ ContentPresenter#PART_ContentPresenter">
+        <Setter Property="Background">
+            <SolidColorBrush Color="{StaticResource MoistButtonActive}"/>
+        </Setter>
+    </Style>
+
+    <!-- ── Accent button (green CTA) ── -->
+    <Style Selector="Button.accent">
+        <Setter Property="Background">
+            <SolidColorBrush Color="{StaticResource MoistGreen}"/>
+        </Setter>
+        <Setter Property="Foreground" Value="White"/>
+        <Setter Property="FontWeight" Value="SemiBold"/>
+    </Style>
+    <Style Selector="Button.accent:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+        <Setter Property="Background">
+            <SolidColorBrush Color="{StaticResource MoistGreenBright}"/>
+        </Setter>
+    </Style>
+
+    <!-- ── Danger button (red) ── -->
+    <Style Selector="Button.danger">
+        <Setter Property="Background">
+            <SolidColorBrush Color="{StaticResource MoistRed}"/>
+        </Setter>
+        <Setter Property="Foreground" Value="White"/>
+    </Style>
+    <Style Selector="Button.danger:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+        <Setter Property="Background">
+            <SolidColorBrush Color="{StaticResource MoistRedBright}"/>
+        </Setter>
+    </Style>
+
+    <!-- ── TextBox ── -->
+    <Style Selector="TextBox">
+        <Setter Property="CornerRadius" Value="2"/>
+        <Setter Property="Background" Value="{StaticResource MoistInputBrush}"/>
+        <Setter Property="Foreground" Value="{StaticResource MoistTextBrush}"/>
+        <Setter Property="BorderBrush" Value="{StaticResource MoistBorderBrush}"/>
+        <Setter Property="BorderThickness" Value="1"/>
+    </Style>
+
+    <!-- ── ComboBox ── -->
+    <Style Selector="ComboBox">
+        <Setter Property="CornerRadius" Value="2"/>
+        <Setter Property="Background" Value="{StaticResource MoistInputBrush}"/>
+        <Setter Property="BorderBrush" Value="{StaticResource MoistBorderBrush}"/>
+    </Style>
+
+    <!-- ── NumericUpDown ── -->
+    <Style Selector="NumericUpDown">
+        <Setter Property="CornerRadius" Value="2"/>
+    </Style>
+
+    <!-- ── ProgressBar ── -->
+    <Style Selector="ProgressBar">
+        <Setter Property="Background" Value="{StaticResource MoistInputBrush}"/>
+        <Setter Property="Foreground" Value="{StaticResource MoistGreenBrush}"/>
+        <Setter Property="CornerRadius" Value="2"/>
+    </Style>
+
+    <!-- ── DataGrid ── -->
+    <Style Selector="DataGrid">
+        <Setter Property="Background" Value="Transparent"/>
+        <Setter Property="RowBackground" Value="Transparent"/>
+    </Style>
+
+    <!-- ── ListBox ── -->
+    <Style Selector="ListBox">
+        <Setter Property="Background" Value="Transparent"/>
+        <Setter Property="CornerRadius" Value="2"/>
+    </Style>
+
+    <!-- ── Slider ── -->
+    <Style Selector="Slider">
+        <Setter Property="Foreground" Value="{StaticResource MoistAccentBrush}"/>
+    </Style>
+
+    <!-- ── CheckBox ── -->
+    <Style Selector="CheckBox">
+        <Setter Property="Foreground" Value="{StaticResource MoistTextBrush}"/>
+    </Style>
+
+    <!-- ── ScrollViewer (hide track, keep thumb) ── -->
+    <Style Selector="ScrollBar">
+        <Setter Property="Background" Value="Transparent"/>
+    </Style>
+
+    <!-- ── Section panels (the bordered cards) ── -->
+    <Style Selector="Border.section">
+        <Setter Property="Background" Value="{StaticResource MoistSectionBrush}"/>
+        <Setter Property="BorderBrush" Value="{StaticResource MoistBorderBrush}"/>
+        <Setter Property="BorderThickness" Value="1"/>
+        <Setter Property="CornerRadius" Value="2"/>
+        <Setter Property="Padding" Value="16"/>
+        <Setter Property="Margin" Value="0,0,0,4"/>
+    </Style>
+
+    <!-- ── Section headers ── -->
+    <Style Selector="TextBlock.section-header">
+        <Setter Property="FontWeight" Value="SemiBold"/>
+        <Setter Property="FontSize" Value="14"/>
+        <Setter Property="Foreground">
+            <SolidColorBrush Color="{StaticResource MoistTextTitle}"/>
+        </Setter>
+        <Setter Property="Margin" Value="0,0,0,8"/>
+    </Style>
+
+    <!-- ── Hint text ── -->
+    <Style Selector="TextBlock.hint">
+        <Setter Property="FontSize" Value="11"/>
+        <Setter Property="Foreground" Value="{StaticResource MoistTextDimBrush}"/>
+    </Style>
+
+    <!-- ── Status bar ── -->
+    <Style Selector="Border.statusbar">
+        <Setter Property="Background" Value="{StaticResource MoistStatusBarBrush}"/>
+        <Setter Property="Padding" Value="12,6"/>
+    </Style>
+
+    <!-- ── Title bar ── -->
+    <Style Selector="Border.titlebar">
+        <Setter Property="Background" Value="{StaticResource MoistTitleBarBrush}"/>
+        <Setter Property="Padding" Value="12,0"/>
+        <Setter Property="Height" Value="36"/>
+    </Style>
+
+    <!-- ── Drop zone ── -->
+    <Style Selector="Border.dropzone">
+        <Setter Property="Background">
+            <SolidColorBrush Color="{StaticResource MoistAccentBlue}" Opacity="0.15"/>
+        </Setter>
+        <Setter Property="BorderBrush" Value="{StaticResource MoistAccentBrush}"/>
+        <Setter Property="BorderThickness" Value="2"/>
+        <Setter Property="CornerRadius" Value="4"/>
+        <Setter Property="Padding" Value="24"/>
+    </Style>
+
+    <!-- ── Monospace code display ── -->
+    <Style Selector="TextBlock.mono">
+        <Setter Property="FontFamily" Value="Cascadia Code,JetBrains Mono,Consolas,monospace"/>
+        <Setter Property="FontSize" Value="12"/>
+    </Style>
+
+    <!-- ── Branding ── -->
+    <Style Selector="TextBlock.brand-title">
+        <Setter Property="FontSize" Value="15"/>
+        <Setter Property="FontWeight" Value="Bold"/>
+        <Setter Property="Foreground">
+            <SolidColorBrush Color="{StaticResource MoistTextTitle}"/>
+        </Setter>
+    </Style>
+
+    <Style Selector="TextBlock.brand-subtitle">
+        <Setter Property="FontSize" Value="10"/>
+        <Setter Property="Foreground" Value="{StaticResource MoistTextDimBrush}"/>
+    </Style>
+
+</Styles>

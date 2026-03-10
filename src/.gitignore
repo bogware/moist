@@ -1,0 +1,26 @@
+## .NET
+bin/
+obj/
+*.user
+*.suo
+*.vs/
+.vs/
+*.DotSettings.user
+
+## NuGet
+packages/
+*.nupkg
+
+## Build
+*.dll
+*.exe
+*.pdb
+publish/
+
+## IDE
+.idea/
+*.sln.iml
+
+## OS
+.DS_Store
+Thumbs.db

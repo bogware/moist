@@ -1,0 +1,222 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:Moist.App.ViewModels"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             mc:Ignorable="d" d:DesignWidth="1100" d:DesignHeight="800"
+             x:Class="Moist.App.Views.EncodeTabView"
+             x:DataType="vm:EncodeTabViewModel"
+             DragDrop.AllowDrop="True">
+
+    <Grid ColumnDefinitions="*,300" ColumnSpacing="12">
+
+        <!-- Left: Settings -->
+        <ScrollViewer Grid.Column="0">
+            <StackPanel Spacing="16" Margin="16">
+
+                <!-- Input / Output Section with Drop Zone -->
+                <Border Classes="section"
+                        Name="DropZone">
+                    <StackPanel Spacing="8">
+                        <TextBlock Text="Input / Output" Classes="section-header"/>
+
+                        <!-- Drop Zone Overlay -->
+                        <Border IsVisible="{Binding IsDragOver}"
+                                Background="#3300AAFF" BorderBrush="#00AAFF"
+                                BorderThickness="2" CornerRadius="8" Padding="24"
+                                HorizontalAlignment="Stretch">
+                            <TextBlock Text="Drop video file here"
+                                       HorizontalAlignment="Center" FontSize="16" FontWeight="SemiBold"
+                                       Foreground="#00AAFF"/>
+                        </Border>
+
+                        <Grid ColumnDefinitions="100,*,Auto,Auto" RowDefinitions="Auto,Auto" RowSpacing="8" ColumnSpacing="8">
+                            <TextBlock Text="Input:" VerticalAlignment="Center" Grid.Row="0"/>
+                            <TextBox Text="{Binding InputFile}" Grid.Row="0" Grid.Column="1"
+                                     Watermark="Drag and drop or browse for a video file..."/>
+                            <Button Content="Browse" Grid.Row="0" Grid.Column="2"
+                                    Name="BrowseInputButton" Click="BrowseInput_Click"/>
+                            <Button Content="Analyze" Grid.Row="0" Grid.Column="3"
+                                    Command="{Binding AnalyzeInputCommand}"/>
+
+                            <TextBlock Text="Output:" VerticalAlignment="Center" Grid.Row="1"/>
+                            <TextBox Text="{Binding OutputFile}" Grid.Row="1" Grid.Column="1"
+                                     Watermark="Output file path..."/>
+                            <Button Content="Browse" Grid.Row="1" Grid.Column="2"
+                                    Name="BrowseOutputButton" Click="BrowseOutput_Click"/>
+                            <ComboBox Grid.Row="1" Grid.Column="3"
+                                      ItemsSource="{x:Static vm:EncodeTabViewModel.ContainerOptions}"
+                                      SelectedItem="{Binding Container}"
+                                      Width="100"/>
+                        </Grid>
+
+                        <!-- Status / Error Message -->
+                        <TextBlock Text="{Binding StatusMessage}"
+                                   IsVisible="{Binding StatusMessage.Length}"
+                                   FontSize="12" Margin="0,4,0,0" Opacity="0.8"/>
+
+                        <!-- Media Info Display -->
+                        <Border IsVisible="{Binding MediaInfo, Converter={x:Static ObjectConverters.IsNotNull}}"
+                                Background="{DynamicResource SystemControlBackgroundChromeMediumLowBrush}"
+                                CornerRadius="4" Padding="12" Margin="0,4,0,0">
+                            <TextBlock Text="{Binding MediaInfoSummary}" FontFamily="Cascadia Code,Consolas,monospace" FontSize="12"/>
+                        </Border>
+                    </StackPanel>
+                </Border>
+
+                <!-- Profile Section -->
+                <Border Classes="section">
+                    <StackPanel Spacing="8">
+                        <TextBlock Text="Encoding Profile" Classes="section-header"/>
+                        <Grid ColumnDefinitions="100,*,Auto,Auto" ColumnSpacing="8">
+                            <TextBlock Text="Profile:" VerticalAlignment="Center"/>
+                            <ComboBox Grid.Column="1"
+                                      ItemsSource="{Binding Profiles}"
+                                      SelectedItem="{Binding SelectedProfile}"
+                                      DisplayMemberBinding="{Binding Name}"
+                                      HorizontalAlignment="Stretch"/>
+                            <Button Grid.Column="2" Content="Save As..."
+                                    Name="SaveProfileButton" Click="SaveProfile_Click"/>
+                            <Button Grid.Column="3" Content="Delete"
+                                    Command="{Binding DeleteProfileCommand}"
+                                    IsEnabled="{Binding SelectedProfile, Converter={x:Static ObjectConverters.IsNotNull}}"/>
+                        </Grid>
+                    </StackPanel>
+                </Border>
+
+                <!-- Video Encoder Section -->
+                <Border Classes="section">
+                    <StackPanel Spacing="8">
+                        <TextBlock Text="Video Encoder" Classes="section-header"/>
+
+                        <Grid ColumnDefinitions="120,*,120,*" RowDefinitions="Auto,Auto,Auto,Auto" RowSpacing="8" ColumnSpacing="8">
+                            <TextBlock Text="Codec:" VerticalAlignment="Center"/>
+                            <ComboBox Grid.Column="1"
+                                      ItemsSource="{Binding VideoEncoders}"
+                                      SelectedItem="{Binding SelectedVideoEncoder}"
+                                      DisplayMemberBinding="{Binding Name}"
+                                      HorizontalAlignment="Stretch"/>
+
+                            <TextBlock Text="Mode:" VerticalAlignment="Center" Grid.Column="2"/>
+                            <ComboBox Grid.Column="3"
+                                      ItemsSource="{x:Static vm:EncodeTabViewModel.EncodingModeOptions}"
+                                      SelectedItem="{Binding EncodingMode}"
+                                      HorizontalAlignment="Stretch"/>
+
+                            <TextBlock Text="Quality/CRF:" VerticalAlignment="Center" Grid.Row="1"/>
+                            <StackPanel Grid.Row="1" Grid.Column="1" Orientation="Horizontal" Spacing="8">
+                                <Slider Value="{Binding Quality}" Minimum="0" Maximum="51" Width="200"
+                                        TickFrequency="1"/>
+                                <TextBlock Text="{Binding Quality, StringFormat={}{0:F1}}" VerticalAlignment="Center"/>
+                            </StackPanel>
+
+                            <TextBlock Text="Preset:" VerticalAlignment="Center" Grid.Row="1" Grid.Column="2"/>
+                            <ComboBox Grid.Row="1" Grid.Column="3"
+                                      ItemsSource="{x:Static vm:EncodeTabViewModel.PresetOptions}"
+                                      SelectedItem="{Binding Preset}"
+                                      HorizontalAlignment="Stretch"/>
+
+                            <TextBlock Text="Tune:" VerticalAlignment="Center" Grid.Row="2"/>
+                            <ComboBox Grid.Row="2" Grid.Column="1"
+                                      ItemsSource="{x:Static vm:EncodeTabViewModel.TuneOptions}"
+                                      SelectedItem="{Binding Tune}"
+                                      HorizontalAlignment="Stretch"/>
+
+                            <TextBlock Text="Bitrate:" VerticalAlignment="Center" Grid.Row="2" Grid.Column="2"/>
+                            <StackPanel Grid.Row="2" Grid.Column="3" Orientation="Horizontal" Spacing="8">
+                                <NumericUpDown Value="{Binding Bitrate}" Minimum="100" Maximum="100000"
+                                               Increment="500" Width="120"/>
+                                <TextBlock Text="kbps" VerticalAlignment="Center"/>
+                            </StackPanel>
+
+                            <TextBlock Text="Custom Args:" VerticalAlignment="Center" Grid.Row="3"/>
+                            <TextBox Grid.Row="3" Grid.Column="1" Grid.ColumnSpan="3"
+                                     Text="{Binding CustomVideoArgs}"
+                                     Watermark="Additional encoder arguments..."/>
+                        </Grid>
+                    </StackPanel>
+                </Border>
+
+                <!-- Audio Encoder Section -->
+                <Border Classes="section">
+                    <StackPanel Spacing="8">
+                        <TextBlock Text="Audio Encoder" Classes="section-header"/>
+
+                        <Grid ColumnDefinitions="120,*,120,*" RowDefinitions="Auto,Auto,Auto" RowSpacing="8" ColumnSpacing="8">
+                            <TextBlock Text="Codec:" VerticalAlignment="Center"/>
+                            <ComboBox Grid.Column="1"
+                                      ItemsSource="{Binding AudioEncoders}"
+                                      SelectedItem="{Binding SelectedAudioEncoder}"
+                                      DisplayMemberBinding="{Binding Name}"
+                                      HorizontalAlignment="Stretch"/>
+
+                            <TextBlock Text="Bitrate:" VerticalAlignment="Center" Grid.Column="2"/>
+                            <StackPanel Grid.Column="3" Orientation="Horizontal" Spacing="8">
+                                <NumericUpDown Value="{Binding AudioBitrate}" Minimum="32" Maximum="640"
+                                               Increment="32" Width="120"/>
+                                <TextBlock Text="kbps" VerticalAlignment="Center"/>
+                            </StackPanel>
+
+                            <TextBlock Text="Audio Track:" VerticalAlignment="Center" Grid.Row="1"/>
+                            <ComboBox Grid.Row="1" Grid.Column="1" Grid.ColumnSpan="3"
+                                      ItemsSource="{Binding AudioTrackLabels}"
+                                      SelectedIndex="{Binding SelectedAudioTrackIndex}"
+                                      HorizontalAlignment="Stretch"/>
+
+                            <TextBlock Text="Subtitles:" VerticalAlignment="Center" Grid.Row="2"/>
+                            <CheckBox Grid.Row="2" Grid.Column="1"
+                                      Content="Copy subtitles from source"
+                                      IsChecked="{Binding CopySubtitles}"/>
+                        </Grid>
+                    </StackPanel>
+                </Border>
+
+                <!-- Add to Queue Button -->
+                <Button Content="Add to Queue"
+                        Command="{Binding AddToQueueCommand}"
+                        HorizontalAlignment="Right"
+                        Padding="24,8"
+                        FontSize="14"
+                        Classes="accent"/>
+            </StackPanel>
+        </ScrollViewer>
+
+        <!-- Right: Video Preview Panel -->
+        <Border Grid.Column="1" Classes="section" Margin="0,16,16,16">
+            <DockPanel>
+                <TextBlock DockPanel.Dock="Top" Text="Preview" Classes="section-header" Margin="0,0,0,8"/>
+
+                <!-- Preview Controls -->
+                <StackPanel DockPanel.Dock="Bottom" Spacing="4" Margin="0,8,0,0">
+                    <Slider Value="{Binding PreviewPosition}"
+                            Minimum="0"
+                            Maximum="{Binding PreviewMaxPosition}"
+                            IsEnabled="{Binding MediaInfo, Converter={x:Static ObjectConverters.IsNotNull}}"/>
+                    <TextBlock Text="{Binding PreviewPosition, StringFormat=Position: {0:F1}s}"
+                               FontSize="11" Opacity="0.6" HorizontalAlignment="Center"/>
+                </StackPanel>
+
+                <!-- Preview Image -->
+                <Border Background="{DynamicResource SystemControlBackgroundChromeMediumLowBrush}"
+                        CornerRadius="4">
+                    <Panel>
+                        <TextBlock Text="Loading..."
+                                   IsVisible="{Binding IsPreviewLoading}"
+                                   HorizontalAlignment="Center" VerticalAlignment="Center"
+                                   Opacity="0.5"/>
+
+                        <TextBlock Text="Open a video file&#xa;to see preview"
+                                   IsVisible="{Binding PreviewImage, Converter={x:Static ObjectConverters.IsNull}}"
+                                   HorizontalAlignment="Center" VerticalAlignment="Center"
+                                   Opacity="0.3" FontSize="12" TextWrapping="Wrap"
+                                   TextAlignment="Center"/>
+
+                        <Image Source="{Binding PreviewImage}"
+                               Stretch="Uniform"
+                               StretchDirection="DownOnly"/>
+                    </Panel>
+                </Border>
+            </DockPanel>
+        </Border>
+    </Grid>
+</UserControl>
