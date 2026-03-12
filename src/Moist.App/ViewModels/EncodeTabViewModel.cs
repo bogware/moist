@@ -30,6 +30,7 @@ public partial class EncodeTabViewModel : ViewModelBase, IDisposable
     [ObservableProperty] private int _bitrate = 5000;
     [ObservableProperty] private VideoPreset _preset = VideoPreset.Medium;
     [ObservableProperty] private VideoTune _tune = VideoTune.None;
+    [ObservableProperty] private int _svtAv1Preset = 6;
     [ObservableProperty] private string _customVideoArgs = string.Empty;
 
     // Audio encoder
@@ -263,13 +264,40 @@ public partial class EncodeTabViewModel : ViewModelBase, IDisposable
 
     partial void OnContainerChanged(ContainerFormat value)
     {
-        if (!string.IsNullOrWhiteSpace(OutputFile))
-        {
-            var dir = Path.GetDirectoryName(OutputFile) ?? "";
-            var name = Path.GetFileNameWithoutExtension(OutputFile);
-            OutputFile = Path.Combine(dir, $"{name}{value.GetExtension()}");
-        }
+        UpdateOutputExtension();
     }
+
+    partial void OnAudioOnlyChanged(bool value)
+    {
+        UpdateOutputExtension();
+    }
+
+    partial void OnSelectedAudioEncoderChanged(EncoderInfo? value)
+    {
+        UpdateOutputExtension();
+    }
+
+    private void UpdateOutputExtension()
+    {
+        if (string.IsNullOrWhiteSpace(OutputFile)) return;
+        var dir = Path.GetDirectoryName(OutputFile) ?? "";
+        var name = Path.GetFileNameWithoutExtension(OutputFile);
+        var ext = AudioOnly ? GetAudioFileExtension(SelectedAudioEncoder?.Id) : Container.GetExtension();
+        OutputFile = Path.Combine(dir, $"{name}{ext}");
+    }
+
+    private static string GetAudioFileExtension(string? encoderId) => encoderId switch
+    {
+        "ffmpeg-audio-opus" => ".opus",
+        "ffmpeg-audio-aac" => ".m4a",
+        "ffmpeg-audio-mp3" => ".mp3",
+        "ffmpeg-audio-flac" => ".flac",
+        "ffmpeg-audio-ac3" => ".ac3",
+        "ffmpeg-audio-eac3" => ".eac3",
+        "ffmpeg-audio-vorbis" => ".ogg",
+        "ffmpeg-audio-copy" => ".mka",
+        _ => ".mka"
+    };
 
     private CancellationTokenSource? _previewDebounce;
     private async Task UpdatePreviewDebounced()
@@ -309,6 +337,7 @@ public partial class EncodeTabViewModel : ViewModelBase, IDisposable
         Bitrate = profile.VideoBitrate;
         Preset = profile.VideoPreset;
         Tune = profile.VideoTune;
+        SvtAv1Preset = profile.SvtAv1Preset;
         CustomVideoArgs = profile.VideoCustomArgs;
 
         SelectedAudioEncoder = AudioEncoders.FirstOrDefault(e => e.Id == profile.AudioEncoderId)
@@ -359,6 +388,7 @@ public partial class EncodeTabViewModel : ViewModelBase, IDisposable
         VideoBitrate = Bitrate,
         VideoPreset = Preset,
         VideoTune = Tune,
+        SvtAv1Preset = SvtAv1Preset,
         VideoCustomArgs = CustomVideoArgs,
         AudioEncoderId = SelectedAudioEncoder?.Id ?? "ffmpeg-audio-opus",
         AudioBitrateMode = AudioBitrateMode,
@@ -388,6 +418,7 @@ public partial class EncodeTabViewModel : ViewModelBase, IDisposable
             VideoBitrate = Bitrate,
             VideoPreset = Preset,
             VideoTune = Tune,
+            SvtAv1Preset = SvtAv1Preset,
             VideoCustomArgs = CustomVideoArgs,
             AudioEncoderId = SelectedAudioEncoder?.Id ?? "ffmpeg-audio-opus",
             AudioBitrateMode = AudioBitrateMode,
@@ -547,7 +578,7 @@ public partial class EncodeTabViewModel : ViewModelBase, IDisposable
             {
                 "ffmpeg-x264" or "cli-x264" => new X264Settings(),
                 "ffmpeg-x265" or "cli-x265" => new X265Settings(),
-                "ffmpeg-svtav1" => new SvtAv1Settings(),
+                "ffmpeg-svtav1" => new SvtAv1Settings { SvtPreset = SvtAv1Preset },
                 _ => new VideoEncoderSettings()
             };
             videoSettings.Mode = EncodingMode;

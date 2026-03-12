@@ -8,7 +8,7 @@ namespace Moist.Core.Encoders.Audio;
 /// <summary>
 /// FFmpeg-based audio encoder processor. Supports AAC, Opus, FLAC, MP3, etc.
 /// </summary>
-public sealed partial class FFmpegAudioProcessor : CommandLineProcessor
+public partial class FFmpegAudioProcessor : CommandLineProcessor
 {
     private readonly string _ffmpegPath;
     private readonly string _codec;
@@ -116,7 +116,7 @@ public sealed partial class FFmpegAudioProcessor : CommandLineProcessor
             AudioNormalizationMode.Peak =>
                 $"acompressor=threshold={Fmt(s.TruePeakLimit)}dB:ratio=20:attack=0.1:release=50,volume={Fmt(s.NormalizationTarget)}dB",
             AudioNormalizationMode.Rms =>
-                $"dynaudnorm=f=150:g=15:p={Fmt(s.NormalizationTarget + 100.0 < 100 ? 0.95 : 0.95)}:m=10",
+                $"dynaudnorm=f=150:g=15:p={Fmt(Math.Clamp(Math.Pow(10, s.NormalizationTarget / 20.0), 0.01, 1.0))}:m=10",
             _ => null
         };
     }
@@ -190,14 +190,20 @@ public sealed partial class FFmpegAudioProcessor : CommandLineProcessor
             case Mp3Settings mp3:
                 if (mp3.BitrateMode == AudioBitrateMode.Vbr)
                     codecArgs.AddRange(["-q:a", mp3.VbrScale.ToString()]);
-                var jointMode = mp3.Mp3ChannelMode switch
+                // libmp3lame: -joint_stereo 1 enables joint/mid-side stereo, 0 forces simple stereo
+                switch (mp3.Mp3ChannelMode)
                 {
-                    Mp3ChannelMode.Stereo => "stereo",
-                    Mp3ChannelMode.ForcedJointStereo => "forced_joint_stereo",
-                    Mp3ChannelMode.DualMono => "dual_mono",
-                    _ => "joint_stereo"
-                };
-                codecArgs.AddRange(["-joint_stereo", jointMode == "joint_stereo" ? "1" : "0"]);
+                    case Mp3ChannelMode.JointStereo:
+                    case Mp3ChannelMode.ForcedJointStereo:
+                        codecArgs.AddRange(["-joint_stereo", "1"]);
+                        break;
+                    case Mp3ChannelMode.Stereo:
+                        codecArgs.AddRange(["-joint_stereo", "0"]);
+                        break;
+                    case Mp3ChannelMode.DualMono:
+                        codecArgs.AddRange(["-ac", "1"]);
+                        break;
+                }
                 break;
 
             case Ac3Settings ac3:

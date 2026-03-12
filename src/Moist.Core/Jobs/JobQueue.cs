@@ -13,6 +13,7 @@ public sealed class JobQueue : IDisposable
     private readonly ConcurrentDictionary<string, Job> _jobs = new();
     private readonly ConcurrentDictionary<string, CancellationTokenSource> _jobCts = new();
     private readonly List<IJobProcessor> _processors = [];
+    private readonly List<Func<IJobProcessor>> _processorFactories = [];
     private readonly object _processorsLock = new();
     private readonly SemaphoreSlim _workerSemaphore;
     private readonly ILogger<JobQueue> _logger;
@@ -71,6 +72,16 @@ public sealed class JobQueue : IDisposable
             _processors.Add(processor);
     }
 
+    /// <summary>
+    /// Register a processor factory. A fresh instance is created per job to avoid shared mutable state
+    /// (stopwatches, frame counters) between concurrent jobs.
+    /// </summary>
+    public void RegisterProcessorFactory(Func<IJobProcessor> factory)
+    {
+        lock (_processorsLock)
+            _processorFactories.Add(factory);
+    }
+
     public void Enqueue(Job job)
     {
         job.Status = JobStatus.Queued;
@@ -112,31 +123,33 @@ public sealed class JobQueue : IDisposable
 
     public async Task StartAsync()
     {
+        Task allTasks;
         lock (_startLock)
         {
             if (IsRunning) return;
             _cts = new CancellationTokenSource();
+
+            var ct = _cts.Token;
+
+            // Launch tasks for all currently queued jobs
+            var tasks = new List<Task>();
+            var pendingJobs = _jobs.Values
+                .Where(j => j.Status == JobStatus.Queued)
+                .ToList();
+
+            foreach (var job in pendingJobs)
+                tasks.Add(ProcessJobAsync(job, ct));
+
+            // Also start a dispatcher that picks up newly enqueued jobs
+            tasks.Add(DispatchNewJobsAsync(ct));
+
+            allTasks = Task.WhenAll(tasks);
+            _runningTask = allTasks;
         }
-
-        var ct = _cts!.Token;
-
-        // Launch tasks for all currently queued jobs
-        var tasks = new List<Task>();
-        var pendingJobs = _jobs.Values
-            .Where(j => j.Status == JobStatus.Queued)
-            .ToList();
-
-        foreach (var job in pendingJobs)
-            tasks.Add(ProcessJobAsync(job, ct));
-
-        // Also start a dispatcher that picks up newly enqueued jobs
-        tasks.Add(DispatchNewJobsAsync(ct));
-
-        _runningTask = Task.WhenAll(tasks);
 
         try
         {
-            await _runningTask;
+            await allTasks;
         }
         catch (OperationCanceledException)
         {
@@ -267,9 +280,25 @@ public sealed class JobQueue : IDisposable
 
         try
         {
-            IJobProcessor? processor;
+            // Create a fresh processor per job via factories to avoid shared mutable state
+            // (stopwatches, frame counters) between concurrent jobs
+            IJobProcessor? processor = null;
             lock (_processorsLock)
-                processor = _processors.FirstOrDefault(p => p.CanProcess(job));
+            {
+                foreach (var factory in _processorFactories)
+                {
+                    var candidate = factory();
+                    if (candidate is CommandLineProcessor clp)
+                        clp.SetLogger(LoggerFactory);
+                    if (candidate.CanProcess(job))
+                    {
+                        processor = candidate;
+                        break;
+                    }
+                }
+                // Fall back to shared singleton processors (for custom/third-party processors)
+                processor ??= _processors.FirstOrDefault(p => p.CanProcess(job));
+            }
 
             if (processor is null)
             {
@@ -313,11 +342,14 @@ public sealed class JobQueue : IDisposable
             _jobCts.TryRemove(job.Id, out _);
             RaiseEvent(JobStatusChanged, job);
 
-            // Cleanup temp files
-            foreach (var file in job.FilesToCleanup)
+            // Only cleanup temp files on success — preserve on failure for retry/debugging
+            if (job.Status == JobStatus.Completed)
             {
-                try { if (File.Exists(file)) File.Delete(file); }
-                catch { /* best effort */ }
+                foreach (var file in job.FilesToCleanup)
+                {
+                    try { if (File.Exists(file)) File.Delete(file); }
+                    catch { /* best effort */ }
+                }
             }
         }
     }

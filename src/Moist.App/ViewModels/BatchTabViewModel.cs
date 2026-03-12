@@ -104,8 +104,8 @@ public partial class BatchTabViewModel : ViewModelBase
 
                 // Analyze each file — pass mediaInfo directly to avoid mutating shared EncodeTab state
                 var mediaInfo = await _services.MediaAnalyzer.AnalyzeAsync(item.InputFile);
-                var muxJobId = _encodeTab.EnqueueFile(item.InputFile, item.OutputFile, mediaInfo);
-                _jobToItem[muxJobId] = item;
+                var finalJobId = _encodeTab.EnqueueFile(item.InputFile, item.OutputFile, mediaInfo);
+                _jobToItem[finalJobId] = item;
                 item.Status = "Queued";
 
                 // Restore original encode tab settings if we applied a per-file profile

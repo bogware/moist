@@ -28,6 +28,10 @@ public partial class QueueTabViewModel : ViewModelBase
             {
                 Jobs.Add(new JobViewModel(job));
                 QueueStatus = $"{Jobs.Count} job(s) in queue";
+
+                // Auto-start queue if enabled and not already running
+                if (_services.Settings.AutoStartQueue && !IsRunning)
+                    StartQueueCommand.Execute(null);
             });
         };
 
@@ -103,7 +107,10 @@ public partial class QueueTabViewModel : ViewModelBase
     {
         var completed = Jobs.Where(j => j.Status is "Completed" or "Failed" or "Cancelled").ToList();
         foreach (var job in completed)
+        {
+            _services.JobQueue.Remove(job.Id);
             Jobs.Remove(job);
+        }
     }
 
     [RelayCommand]

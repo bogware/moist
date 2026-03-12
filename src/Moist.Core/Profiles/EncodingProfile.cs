@@ -24,6 +24,7 @@ public sealed class EncodingProfile
     public int VideoBitrate { get; set; } = 5000;
     public VideoPreset VideoPreset { get; set; } = VideoPreset.Medium;
     public VideoTune VideoTune { get; set; } = VideoTune.None;
+    public int SvtAv1Preset { get; set; } = 6;
     public string VideoCustomArgs { get; set; } = string.Empty;
 
     // Audio settings

@@ -188,14 +188,17 @@ public sealed class AppServices : IDisposable
     {
         foreach (var encoder in Encoders.Encoders.Values)
         {
-            var processor = Encoders.CreateProcessor(encoder.Id);
+            var encoderId = encoder.Id; // capture for closure
 
-            // For video encoders, register a two-pass wrapper first (checked before raw)
-            // and then the raw processor for single-pass/CRF modes
+            // Use factories to create fresh processor instances per job,
+            // avoiding shared mutable state (stopwatches, counters) between concurrent jobs
             if (encoder.Category == "Video")
-                JobQueue.RegisterProcessor(new TwoPassProcessor(processor));
+            {
+                JobQueue.RegisterProcessorFactory(() =>
+                    new TwoPassProcessor(Encoders.CreateProcessor(encoderId)));
+            }
 
-            JobQueue.RegisterProcessor(processor);
+            JobQueue.RegisterProcessorFactory(() => Encoders.CreateProcessor(encoderId));
         }
     }
 
