@@ -32,6 +32,16 @@ public abstract class CommandLineProcessor : IJobProcessor
     public async Task ProcessAsync(Job job, IProgress<JobProgress> progress, CancellationToken ct)
     {
         var exe = GetExecutablePath(job);
+
+        // Validate executable exists before building args or starting process
+        if (!IsExecutableAccessible(exe))
+        {
+            var msg = $"{DisplayName}: executable '{exe}' not found. " +
+                      "Check Settings > Tool Paths or install the required tool.";
+            Logger.LogError("{Msg}", msg);
+            throw new FileNotFoundException(msg, exe);
+        }
+
         var args = BuildArguments(job);
 
         Logger.LogInformation("Starting {Processor} for job {JobId}: {Exe} {Args}",
@@ -113,4 +123,31 @@ public abstract class CommandLineProcessor : IJobProcessor
 
     /// <summary>Wraps a string in double quotes for CLI argument use.</summary>
     protected static string Quote(string s) => $"\"{s}\"";
+
+    /// <summary>Check if an executable is accessible (absolute path exists or found on PATH).</summary>
+    private static bool IsExecutableAccessible(string exe)
+    {
+        // If it's an absolute or relative path, check file existence
+        if (exe.Contains(Path.DirectorySeparatorChar) || exe.Contains(Path.AltDirectorySeparatorChar))
+            return File.Exists(exe);
+
+        // Otherwise it's a bare name — check if it's on PATH by trying to find it
+        var pathVar = Environment.GetEnvironmentVariable("PATH") ?? "";
+        var separator = OperatingSystem.IsWindows() ? ';' : ':';
+        var extensions = OperatingSystem.IsWindows()
+            ? new[] { ".exe", ".cmd", ".bat", "" }
+            : new[] { "" };
+
+        foreach (var dir in pathVar.Split(separator, StringSplitOptions.RemoveEmptyEntries))
+        {
+            foreach (var ext in extensions)
+            {
+                var fullPath = Path.Combine(dir, exe + ext);
+                if (File.Exists(fullPath))
+                    return true;
+            }
+        }
+
+        return false;
+    }
 }

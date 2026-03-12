@@ -101,9 +101,12 @@ public partial class EncodeTabViewModel : ViewModelBase, IDisposable
 
     // === Drag-and-Drop ===
 
+    private CancellationTokenSource? _analysisCts;
+
     public async Task HandleDroppedFile(string filePath)
     {
         InputFile = filePath;
+        OutputFile = string.Empty; // Reset so auto-generation kicks in
         await AnalyzeInput();
     }
 
@@ -121,12 +124,19 @@ public partial class EncodeTabViewModel : ViewModelBase, IDisposable
             return;
         }
 
+        // Cancel any in-flight analysis
+        _analysisCts?.Cancel();
+        _analysisCts?.Dispose();
+        _analysisCts = new CancellationTokenSource();
+        var ct = _analysisCts.Token;
+
         HasError = false;
         StatusMessage = "Analyzing...";
 
         try
         {
-            MediaInfo = await _services.MediaAnalyzer.AnalyzeAsync(InputFile);
+            MediaInfo = await _services.MediaAnalyzer.AnalyzeAsync(InputFile, ct);
+            ct.ThrowIfCancellationRequested();
             OnPropertyChanged(nameof(MediaInfoSummary));
 
             // Populate audio track selection
@@ -161,6 +171,7 @@ public partial class EncodeTabViewModel : ViewModelBase, IDisposable
             StatusMessage = $"Loaded: {MediaInfo.Video?.Width}x{MediaInfo.Video?.Height}, {MediaInfo.Duration:hh\\:mm\\:ss}";
             await UpdatePreview();
         }
+        catch (OperationCanceledException) { /* Superseded by new analysis */ }
         catch (Exception ex)
         {
             MediaInfo = null;
@@ -311,7 +322,11 @@ public partial class EncodeTabViewModel : ViewModelBase, IDisposable
     private void AddToQueue()
     {
         if (string.IsNullOrWhiteSpace(InputFile) || string.IsNullOrWhiteSpace(OutputFile))
+        {
+            HasError = true;
+            StatusMessage = "Input and output files must be specified.";
             return;
+        }
 
         if (!File.Exists(InputFile))
         {
@@ -322,13 +337,46 @@ public partial class EncodeTabViewModel : ViewModelBase, IDisposable
 
         try
         {
-            // Validate the output path is legal
             _ = Path.GetFullPath(OutputFile);
         }
         catch
         {
             HasError = true;
             StatusMessage = $"Invalid output path: {OutputFile}";
+            return;
+        }
+
+        // Validate output directory is writable
+        var outputDir = Path.GetDirectoryName(Path.GetFullPath(OutputFile));
+        if (!string.IsNullOrEmpty(outputDir))
+        {
+            try { Directory.CreateDirectory(outputDir); }
+            catch (Exception ex)
+            {
+                HasError = true;
+                StatusMessage = $"Cannot create output directory: {ex.Message}";
+                return;
+            }
+        }
+
+        if (SelectedVideoEncoder is null)
+        {
+            HasError = true;
+            StatusMessage = "No video encoder selected.";
+            return;
+        }
+
+        if (SelectedAudioEncoder is null)
+        {
+            HasError = true;
+            StatusMessage = "No audio encoder selected.";
+            return;
+        }
+
+        if (MediaInfo is null)
+        {
+            HasError = true;
+            StatusMessage = "File not analyzed yet. Click 'Analyze' or drop a file first.";
             return;
         }
 
@@ -472,6 +520,7 @@ public partial class EncodeTabViewModel : ViewModelBase, IDisposable
             AudioInputs = [new AudioTrackInput { FilePath = tempAudioFile }],
             SubtitleInputs = subtitleInputs,
             DependsOn = [videoJob.Id, audioJob.Id],
+            TotalDurationSeconds = info?.Duration.TotalSeconds ?? 0,
         };
 
         muxJob.FilesToCleanup.Add(tempVideoFile);
@@ -486,6 +535,9 @@ public partial class EncodeTabViewModel : ViewModelBase, IDisposable
 
     public void Dispose()
     {
+        _analysisCts?.Cancel();
+        _analysisCts?.Dispose();
+        _analysisCts = null;
         _previewDebounce?.Cancel();
         _previewDebounce?.Dispose();
         _previewDebounce = null;

@@ -28,11 +28,37 @@ public sealed class AppServices : IDisposable
     public ILoggerFactory LoggerFactory { get; }
     public ToolDiscovery ToolDiscovery { get; }
 
-    /// <summary>Media analyzer — reads FFprobePath from Settings on each access so config changes take effect.</summary>
-    public FFprobeMediaAnalyzer MediaAnalyzer => new(Settings.FFprobePath);
+    /// <summary>Media analyzer — uses current FFprobePath from settings. Recreated only if path changes.</summary>
+    public FFprobeMediaAnalyzer MediaAnalyzer
+    {
+        get
+        {
+            if (_mediaAnalyzer is null || _lastFfprobePath != Settings.FFprobePath)
+            {
+                _lastFfprobePath = Settings.FFprobePath;
+                _mediaAnalyzer = new FFprobeMediaAnalyzer(Settings.FFprobePath);
+            }
+            return _mediaAnalyzer;
+        }
+    }
+    private FFprobeMediaAnalyzer? _mediaAnalyzer;
+    private string _lastFfprobePath = string.Empty;
 
-    /// <summary>Preview service — reads FFmpegPath from Settings on each access so config changes take effect.</summary>
-    public VideoPreviewService PreviewService => new(Settings.FFmpegPath);
+    /// <summary>Preview service — uses current FFmpegPath from settings. Recreated only if path changes.</summary>
+    public VideoPreviewService PreviewService
+    {
+        get
+        {
+            if (_previewService is null || _lastFfmpegPathPreview != Settings.FFmpegPath)
+            {
+                _lastFfmpegPathPreview = Settings.FFmpegPath;
+                _previewService = new VideoPreviewService(Settings.FFmpegPath);
+            }
+            return _previewService;
+        }
+    }
+    private VideoPreviewService? _previewService;
+    private string _lastFfmpegPathPreview = string.Empty;
 
     public AppServices()
     {

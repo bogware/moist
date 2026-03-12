@@ -145,6 +145,9 @@ public partial class SettingsTabViewModel : ViewModelBase
         s.TempDirectory = TempDirectory?.Trim() ?? string.Empty;
         _services.Save();
 
+        // Apply max concurrent jobs change live
+        _services.JobQueue.MaxConcurrentJobs = MaxConcurrentJobs;
+
         // Apply theme change live
         if (Avalonia.Application.Current is App app)
             app.ApplyTheme(SelectedTheme);

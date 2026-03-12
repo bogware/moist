@@ -131,10 +131,21 @@ public sealed partial class FFmpegMuxProcessor : CommandLineProcessor
         if (sizeMatch.Success && long.TryParse(sizeMatch.Groups[1].Value, out var sizeKb))
         {
             double percentage = 0;
+            TimeSpan eta = TimeSpan.Zero;
             if (timeMatch.Success &&
                 TimeSpan.TryParse(timeMatch.Groups[1].Value, CultureInfo.InvariantCulture, out var currentTime))
             {
-                percentage = Math.Min(99.0, currentTime.TotalSeconds > 0 ? currentTime.TotalSeconds : 0);
+                var totalDuration = job is MuxJob mj ? mj.TotalDurationSeconds : 0;
+                if (totalDuration > 0)
+                {
+                    percentage = Math.Min(99.0, currentTime.TotalSeconds / totalDuration * 100.0);
+                    if (currentTime.TotalSeconds > 0)
+                    {
+                        var rate = _stopwatch.Elapsed.TotalSeconds / currentTime.TotalSeconds;
+                        var remaining = (totalDuration - currentTime.TotalSeconds) * rate;
+                        eta = TimeSpan.FromSeconds(Math.Max(0, remaining));
+                    }
+                }
             }
 
             return new JobProgress
@@ -142,6 +153,7 @@ public sealed partial class FFmpegMuxProcessor : CommandLineProcessor
                 Percentage = percentage,
                 OutputSizeBytes = sizeKb * 1024,
                 Elapsed = _stopwatch.Elapsed,
+                Eta = eta,
                 StatusLine = line.Trim()
             };
         }

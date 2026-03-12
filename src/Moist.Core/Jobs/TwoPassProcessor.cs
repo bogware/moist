@@ -28,9 +28,11 @@ public sealed class TwoPassProcessor : IJobProcessor
     {
         var vj = (VideoJob)job;
 
-        // Snapshot mutable state before modification
+        // Snapshot ALL mutable state before modification
         var originalOutput = vj.OutputFile;
+        var originalName = vj.Name;
         var originalCustomArgs = vj.Settings.CustomArgs;
+        var originalPixelFormat = vj.Settings.PixelFormat;
         var passLogFile = Path.Combine(
             Path.GetDirectoryName(originalOutput) ?? Path.GetTempPath(),
             $"moist_2pass_{vj.Id}");
@@ -82,9 +84,11 @@ public sealed class TwoPassProcessor : IJobProcessor
         }
         finally
         {
-            // Always restore original settings even if encoding fails
+            // Always restore ALL original settings even if encoding fails
             vj.OutputFile = originalOutput;
+            vj.Name = originalName;
             vj.Settings.CustomArgs = originalCustomArgs;
+            vj.Settings.PixelFormat = originalPixelFormat;
 
             // Cleanup pass log files
             CleanupPassLogFiles(passLogFile);

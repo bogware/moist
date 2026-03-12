@@ -26,14 +26,36 @@ public sealed class JobQueue : IDisposable
     public event EventHandler<Job>? JobStatusChanged;
     public event EventHandler<(Job Job, JobProgress Progress)>? JobProgressUpdated;
 
-    public int MaxConcurrentJobs { get; set; }
+    private int _maxConcurrentJobs;
+    public int MaxConcurrentJobs
+    {
+        get => _maxConcurrentJobs;
+        set
+        {
+            if (value < 1) value = 1;
+            if (value == _maxConcurrentJobs) return;
+            var old = _maxConcurrentJobs;
+            _maxConcurrentJobs = value;
+
+            // Adjust the semaphore to reflect the new limit.
+            // If increasing, release extra slots. If decreasing, the semaphore
+            // will naturally throttle as permits are consumed.
+            if (value > old)
+            {
+                var diff = value - old;
+                _workerSemaphore.Release(diff);
+            }
+            _logger.LogInformation("MaxConcurrentJobs changed from {Old} to {New}", old, value);
+        }
+    }
+
     public IReadOnlyDictionary<string, Job> Jobs => _jobs;
     public bool IsRunning => _cts is not null && !_cts.IsCancellationRequested;
 
     public JobQueue(int maxConcurrentJobs = 1, ILoggerFactory? loggerFactory = null)
     {
-        MaxConcurrentJobs = maxConcurrentJobs;
-        _workerSemaphore = new SemaphoreSlim(maxConcurrentJobs, maxConcurrentJobs);
+        _maxConcurrentJobs = maxConcurrentJobs;
+        _workerSemaphore = new SemaphoreSlim(maxConcurrentJobs, int.MaxValue);
         _logger = loggerFactory?.CreateLogger<JobQueue>() ?? NullLogger<JobQueue>.Instance;
         LoggerFactory = loggerFactory;
     }
