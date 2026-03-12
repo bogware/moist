@@ -138,6 +138,8 @@ public sealed class AppServices : IDisposable
             typeof(AudioEncoderSettings), "Enhanced Dolby Digital Plus");
         RegisterAudioEncoder("ffmpeg-audio-vorbis", "Vorbis", "vorbis",
             typeof(AudioEncoderSettings), "Ogg Vorbis audio for WebM");
+        RegisterAudioEncoder("ffmpeg-audio-copy", "Passthrough (Copy)", "copy",
+            typeof(AudioEncoderSettings), "Copy audio without re-encoding");
 
         // Muxer
         Encoders.Register(new EncoderInfo

@@ -22,6 +22,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Moist.Core\Moist.Core.csproj" />
+    <ProjectReference Include="..\Moist.Filters\Moist.Filters.csproj" />
   </ItemGroup>
 
 </Project>

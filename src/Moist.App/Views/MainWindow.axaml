@@ -43,7 +43,7 @@
                 <TextBlock Text="{Binding StatusText}" FontSize="12" Opacity="0.7" VerticalAlignment="Center"/>
                 <TextBlock Grid.Column="1" Classes="hint"
                            VerticalAlignment="Center"
-                           Text="Ctrl+O Open  Ctrl+Q Queue  Ctrl+R Run  Ctrl+S Save  Ctrl+1-6 Tabs"/>
+                           Text="Ctrl+O Open  Ctrl+Q Queue  Ctrl+R Run  Ctrl+S Save  Ctrl+T Theme  Del/Space Queue  Ctrl+1-6 Tabs"/>
             </Grid>
         </Border>
 

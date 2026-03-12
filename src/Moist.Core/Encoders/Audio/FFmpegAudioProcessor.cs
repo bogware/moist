@@ -43,6 +43,13 @@ public sealed partial class FFmpegAudioProcessor : CommandLineProcessor
             "-c:a", GetFfmpegCodecName()
         };
 
+        // Passthrough mode: skip all encoding options
+        if (_codec == "copy")
+        {
+            args.Add(Quote(aj.OutputFile));
+            return string.Join(" ", args);
+        }
+
         // Bitrate / quality
         switch (s.BitrateMode)
         {
@@ -125,6 +132,7 @@ public sealed partial class FFmpegAudioProcessor : CommandLineProcessor
         "vorbis" => "libvorbis",
         "ac3" => "ac3",
         "eac3" => "eac3",
+        "copy" => "copy",
         _ => _codec
     };
 

@@ -68,6 +68,7 @@ public abstract class CommandLineProcessor : IJobProcessor
         {
             if (e.Data is null) return;
             outputLines.Enqueue(e.Data);
+            job.AppendLog(e.Data);
             var p = ParseOutputLine(e.Data, job);
             if (p is not null) progress.Report(p);
         };
@@ -76,6 +77,7 @@ public abstract class CommandLineProcessor : IJobProcessor
         {
             if (e.Data is null) return;
             outputLines.Enqueue(e.Data);
+            job.AppendLog(e.Data);
             var p = ParseOutputLine(e.Data, job);
             if (p is not null) progress.Report(p);
         };

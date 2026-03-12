@@ -19,6 +19,43 @@ public partial class MainWindow : Window
     {
         InitializeComponent();
         KeyDown += OnKeyDown;
+        Opened += OnOpened;
+        Closing += OnClosing;
+    }
+
+    private void OnOpened(object? sender, EventArgs e)
+    {
+        if (DataContext is not MainWindowViewModel vm) return;
+        var s = vm.Services.Settings;
+
+        Width = s.WindowWidth;
+        Height = s.WindowHeight;
+
+        if (!double.IsNaN(s.WindowX) && !double.IsNaN(s.WindowY))
+            Position = new Avalonia.PixelPoint((int)s.WindowX, (int)s.WindowY);
+
+        if (s.WindowMaximized)
+            WindowState = WindowState.Maximized;
+    }
+
+    private void OnClosing(object? sender, WindowClosingEventArgs e)
+    {
+        if (DataContext is not MainWindowViewModel vm) return;
+        var s = vm.Services.Settings;
+
+        if (WindowState == WindowState.Maximized)
+        {
+            s.WindowMaximized = true;
+        }
+        else
+        {
+            s.WindowMaximized = false;
+            s.WindowWidth = Width;
+            s.WindowHeight = Height;
+            s.WindowX = Position.X;
+            s.WindowY = Position.Y;
+        }
+        s.Save();
     }
 
     private async void OnKeyDown(object? sender, KeyEventArgs e)
@@ -31,6 +68,16 @@ public partial class MainWindow : Window
             {
                 switch (e.Key)
                 {
+                    case Key.T: // Ctrl+T: Toggle theme
+                        e.Handled = true;
+                        var settings = vm.Services.Settings;
+                        var newTheme = settings.Theme == "moist Dark" ? "Fluent Dark" : "moist Dark";
+                        settings.Theme = newTheme;
+                        vm.SettingsTab.SelectedTheme = newTheme;
+                        if (Avalonia.Application.Current is App app)
+                            app.ApplyTheme(newTheme);
+                        vm.StatusText = $"Theme: {newTheme}";
+                        break;
                     case Key.O: // Ctrl+O: Open file
                         e.Handled = true;
                         var files = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
@@ -83,6 +130,25 @@ public partial class MainWindow : Window
                     case Key.F1: // F1: About
                         e.Handled = true;
                         ShowAbout();
+                        break;
+
+                    case Key.Delete: // Del: Remove selected job from queue
+                        if (vm.SelectedTabIndex == 1 && vm.QueueTab.SelectedJob is not null)
+                        {
+                            e.Handled = true;
+                            vm.QueueTab.RemoveJobCommand.Execute(vm.QueueTab.SelectedJob);
+                        }
+                        break;
+
+                    case Key.Space: // Space: Toggle queue start/stop
+                        if (vm.SelectedTabIndex == 1)
+                        {
+                            e.Handled = true;
+                            if (vm.QueueTab.IsRunning)
+                                vm.QueueTab.StopQueueCommand.Execute(null);
+                            else
+                                vm.QueueTab.StartQueueCommand.Execute(null);
+                        }
                         break;
                 }
             }

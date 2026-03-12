@@ -164,9 +164,23 @@
                                       HorizontalAlignment="Stretch"/>
 
                             <TextBlock Text="Subtitles:" VerticalAlignment="Center" Grid.Row="2"/>
-                            <CheckBox Grid.Row="2" Grid.Column="1"
-                                      Content="Copy subtitles from source"
-                                      IsChecked="{Binding CopySubtitles}"/>
+                            <StackPanel Grid.Row="2" Grid.Column="1" Grid.ColumnSpan="3" Spacing="4">
+                                <CheckBox Content="Copy subtitles from source"
+                                          IsChecked="{Binding CopySubtitles}"/>
+                                <ItemsControl ItemsSource="{Binding SubtitleTrackLabels}" IsVisible="{Binding CopySubtitles}">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <TextBlock Text="{Binding}" FontSize="11" Opacity="0.6" Margin="20,0,0,0"/>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                                <StackPanel Orientation="Horizontal" Spacing="4">
+                                    <TextBlock Text="External sub:" FontSize="11" VerticalAlignment="Center"/>
+                                    <TextBox Text="{Binding ExternalSubtitleFile}" Width="250"
+                                             Watermark="(optional) .srt/.ass file"
+                                             FontSize="11"/>
+                                </StackPanel>
+                            </StackPanel>
                         </Grid>
                     </StackPanel>
                 </Border>

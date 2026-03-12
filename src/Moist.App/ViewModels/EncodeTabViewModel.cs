@@ -46,6 +46,8 @@ public partial class EncodeTabViewModel : ViewModelBase, IDisposable
 
     // Subtitle options
     [ObservableProperty] private bool _copySubtitles = true;
+    [ObservableProperty] private string _externalSubtitleFile = string.Empty;
+    public ObservableCollection<string> SubtitleTrackLabels { get; } = [];
 
     // Preview
     [ObservableProperty] private Bitmap? _previewImage;
@@ -150,6 +152,17 @@ public partial class EncodeTabViewModel : ViewModelBase, IDisposable
                 AudioTrackLabels.Add(label);
             }
             SelectedAudioTrackIndex = 0;
+
+            // Populate subtitle track info
+            SubtitleTrackLabels.Clear();
+            for (int i = 0; i < MediaInfo.SubtitleStreams.Count; i++)
+            {
+                var s = MediaInfo.SubtitleStreams[i];
+                var label = $"Track {i + 1}: {s.Codec}";
+                if (s.Language is not null) label += $" ({s.Language})";
+                if (s.Title is not null) label += $" — {s.Title}";
+                SubtitleTrackLabels.Add(label);
+            }
 
             // Auto-generate output path
             if (string.IsNullOrWhiteSpace(OutputFile))
@@ -263,7 +276,7 @@ public partial class EncodeTabViewModel : ViewModelBase, IDisposable
         ApplyProfile(value);
     }
 
-    private void ApplyProfile(EncodingProfile profile)
+    public void ApplyProfile(EncodingProfile profile)
     {
         SelectedVideoEncoder = VideoEncoders.FirstOrDefault(e => e.Id == profile.VideoEncoderId)
                                ?? VideoEncoders.FirstOrDefault();
@@ -280,7 +293,46 @@ public partial class EncodeTabViewModel : ViewModelBase, IDisposable
         AudioBitrate = profile.AudioBitrate;
 
         Container = profile.Container;
+
+        // Restore filter chain if profile has one
+        if (_filterTab is not null && profile.Filters.Count > 0 && profile.FilterEngineId is not null)
+        {
+            var engine = _filterTab.Engines.FirstOrDefault(e => e.Id == profile.FilterEngineId);
+            if (engine is not null)
+            {
+                _filterTab.SelectedEngine = engine;
+                _filterTab.ClearFiltersCommand.Execute(null);
+                var engineFilters = engine.GetAvailableFilters();
+                foreach (var pf in profile.Filters)
+                {
+                    var filterDef = engineFilters.FirstOrDefault(f => f.Id == pf.FilterId);
+                    if (filterDef is not null)
+                    {
+                        _filterTab.Chain.Add(filterDef, new Dictionary<string, object>(pf.Parameters));
+                    }
+                }
+            }
+        }
     }
+
+    /// <summary>
+    /// Captures current encode settings as a profile (for batch per-file restore).
+    /// </summary>
+    public EncodingProfile CaptureCurrentSettings() => new()
+    {
+        Name = "__snapshot__",
+        VideoEncoderId = SelectedVideoEncoder?.Id ?? "ffmpeg-x265",
+        VideoMode = EncodingMode,
+        VideoQuality = Quality,
+        VideoBitrate = Bitrate,
+        VideoPreset = Preset,
+        VideoTune = Tune,
+        VideoCustomArgs = CustomVideoArgs,
+        AudioEncoderId = SelectedAudioEncoder?.Id ?? "ffmpeg-audio-opus",
+        AudioBitrateMode = AudioBitrateMode,
+        AudioBitrate = AudioBitrate,
+        Container = Container,
+    };
 
     [RelayCommand]
     private void SaveProfile(string? profileName)
@@ -301,6 +353,12 @@ public partial class EncodeTabViewModel : ViewModelBase, IDisposable
             AudioBitrateMode = AudioBitrateMode,
             AudioBitrate = AudioBitrate,
             Container = Container,
+            FilterEngineId = _filterTab?.SelectedEngine?.Id,
+            Filters = _filterTab?.Chain.Filters.Select(af => new ProfileFilter
+            {
+                FilterId = af.Filter.Id,
+                Parameters = new Dictionary<string, object>(af.ParameterValues),
+            }).ToList() ?? [],
         };
 
         _services.ProfileManager.Save(profile);
@@ -507,6 +565,16 @@ public partial class EncodeTabViewModel : ViewModelBase, IDisposable
                     IsForced = sub.IsForced,
                 });
             }
+        }
+
+        // Add external subtitle file if specified
+        if (!string.IsNullOrWhiteSpace(ExternalSubtitleFile) && File.Exists(ExternalSubtitleFile))
+        {
+            subtitleInputs.Add(new SubtitleTrackInput
+            {
+                FilePath = ExternalSubtitleFile,
+                IsDefault = subtitleInputs.Count == 0,
+            });
         }
 
         var muxJob = new MuxJob
