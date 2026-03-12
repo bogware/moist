@@ -57,7 +57,7 @@
                                                        TextTrimming="CharacterEllipsis"/>
                                         </StackPanel>
                                         <TextBlock Grid.Column="1"
-                                                   Text="{Binding IsEnabled, StringFormat={}{0}}"
+                                                   Text="{Binding StatusLabel}"
                                                    FontSize="10" VerticalAlignment="Center"
                                                    Opacity="0.5"/>
                                     </Grid>

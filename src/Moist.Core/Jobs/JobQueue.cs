@@ -19,6 +19,8 @@ public sealed class JobQueue : IDisposable
     private CancellationTokenSource? _cts;
     private readonly object _startLock = new();
     private Task? _runningTask;
+    private readonly ConcurrentQueue<Job> _pendingQueue = new();
+    private readonly SemaphoreSlim _pendingSignal = new(0);
 
     public event EventHandler<Job>? JobAdded;
     public event EventHandler<Job>? JobStatusChanged;
@@ -53,6 +55,13 @@ public sealed class JobQueue : IDisposable
         _jobs[job.Id] = job;
         _logger.LogInformation("Job enqueued: {JobId} ({JobType})", job.Id, job.JobType);
         RaiseEvent(JobAdded, job);
+
+        // If the queue is already running, signal the dispatcher to pick up new jobs
+        if (IsRunning)
+        {
+            _pendingQueue.Enqueue(job);
+            _pendingSignal.Release();
+        }
     }
 
     /// <summary>Remove a job from the queue. If running, cancels it.</summary>
@@ -89,12 +98,61 @@ public sealed class JobQueue : IDisposable
 
         var ct = _cts!.Token;
 
+        // Launch tasks for all currently queued jobs
+        var tasks = new List<Task>();
         var pendingJobs = _jobs.Values
             .Where(j => j.Status == JobStatus.Queued)
             .ToList();
 
-        _runningTask = Task.WhenAll(pendingJobs.Select(job => ProcessJobAsync(job, ct)));
-        await _runningTask;
+        foreach (var job in pendingJobs)
+            tasks.Add(ProcessJobAsync(job, ct));
+
+        // Also start a dispatcher that picks up newly enqueued jobs
+        tasks.Add(DispatchNewJobsAsync(ct));
+
+        _runningTask = Task.WhenAll(tasks);
+
+        try
+        {
+            await _runningTask;
+        }
+        catch (OperationCanceledException)
+        {
+            // Normal shutdown via Stop()
+        }
+    }
+
+    /// <summary>
+    /// Background loop that picks up jobs enqueued while the queue is running.
+    /// </summary>
+    private async Task DispatchNewJobsAsync(CancellationToken ct)
+    {
+        var dispatched = new List<Task>();
+
+        while (!ct.IsCancellationRequested)
+        {
+            try
+            {
+                await _pendingSignal.WaitAsync(ct);
+            }
+            catch (OperationCanceledException)
+            {
+                break;
+            }
+
+            while (_pendingQueue.TryDequeue(out var job))
+            {
+                if (job.Status == JobStatus.Queued)
+                    dispatched.Add(ProcessJobAsync(job, ct));
+            }
+        }
+
+        // Wait for any dynamically dispatched jobs to finish
+        if (dispatched.Count > 0)
+        {
+            try { await Task.WhenAll(dispatched); }
+            catch (OperationCanceledException) { }
+        }
     }
 
     public void Stop()
@@ -114,6 +172,7 @@ public sealed class JobQueue : IDisposable
         _cts?.Dispose();
         _cts = null;
         _workerSemaphore.Dispose();
+        _pendingSignal.Dispose();
 
         // Dispose all per-job CTS
         foreach (var cts in _jobCts.Values)
@@ -135,6 +194,17 @@ public sealed class JobQueue : IDisposable
             {
                 ct.ThrowIfCancellationRequested();
 
+                // Check if any dependency doesn't exist in the queue — treat as failed
+                var missingDep = job.DependsOn.FirstOrDefault(depId => !_jobs.ContainsKey(depId));
+                if (missingDep is not null)
+                {
+                    job.Status = JobStatus.Failed;
+                    job.ErrorMessage = $"Dependency not found: {missingDep}";
+                    _logger.LogError("Job {JobId} has missing dependency: {DepId}", job.Id, missingDep);
+                    RaiseEvent(JobStatusChanged, job);
+                    return;
+                }
+
                 var allDone = job.DependsOn.All(depId =>
                     _jobs.TryGetValue(depId, out var dep) && dep.Status == JobStatus.Completed);
 
@@ -147,7 +217,7 @@ public sealed class JobQueue : IDisposable
                 if (anyFailed)
                 {
                     job.Status = JobStatus.Failed;
-                    job.ErrorMessage = "Dependency failed";
+                    job.ErrorMessage = "Dependency failed or was cancelled";
                     RaiseEvent(JobStatusChanged, job);
                     return;
                 }
@@ -183,6 +253,9 @@ public sealed class JobQueue : IDisposable
             {
                 job.Status = JobStatus.Failed;
                 job.ErrorMessage = $"No processor found for job type: {job.JobType}";
+                _logger.LogError("No processor found for job {JobId} (type: {JobType}, encoderId: {EncoderId})",
+                    job.Id, job.JobType,
+                    job is VideoJob vj ? vj.EncoderId : job is AudioJob aj ? aj.EncoderId : "N/A");
                 RaiseEvent(JobStatusChanged, job);
                 return;
             }

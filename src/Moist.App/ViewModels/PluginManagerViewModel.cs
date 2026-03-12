@@ -207,6 +207,8 @@ public partial class PluginSourceViewModel : ObservableObject
     [ObservableProperty] private bool _isEnabled;
     [ObservableProperty] private string _typeLabel;
 
+    public string StatusLabel => IsEnabled ? "Enabled" : "Disabled";
+
     public PluginSourceViewModel(PluginSource source)
     {
         Id = source.Id;
@@ -215,6 +217,11 @@ public partial class PluginSourceViewModel : ObservableObject
         _description = source.Description;
         _isEnabled = source.IsEnabled;
         _typeLabel = source.Type == PluginSourceType.LocalDirectory ? "Local" : "Online";
+    }
+
+    partial void OnIsEnabledChanged(bool value)
+    {
+        OnPropertyChanged(nameof(StatusLabel));
     }
 }
 

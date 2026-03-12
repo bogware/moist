@@ -52,7 +52,7 @@
 
                         <!-- Status / Error Message -->
                         <TextBlock Text="{Binding StatusMessage}"
-                                   IsVisible="{Binding StatusMessage.Length}"
+                                   IsVisible="{Binding StatusMessage, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
                                    FontSize="12" Margin="0,4,0,0" Opacity="0.8"/>
 
                         <!-- Media Info Display -->

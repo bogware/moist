@@ -21,6 +21,7 @@ public partial class MainWindowViewModel : ViewModelBase
     private string _statusText = "Ready";
 
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasStartupError))]
     private string _startupError = string.Empty;
 
     public bool HasStartupError => !string.IsNullOrEmpty(StartupError);
@@ -33,10 +34,17 @@ public partial class MainWindowViewModel : ViewModelBase
         }
         catch (Exception ex)
         {
-            // If initialization fails (e.g. corrupt settings), log and try fresh
+            // If initialization fails (e.g. corrupt settings), delete corrupt settings and retry
             StartupError = $"Initialization warning: {ex.Message} — using defaults.";
-            try { Services = new AppServices(); }
-            catch { Services = new AppServices(); }
+            try
+            {
+                var settingsPath = Core.Settings.MoistSettings.GetSettingsPath();
+                if (File.Exists(settingsPath))
+                    File.Delete(settingsPath);
+            }
+            catch { /* best effort cleanup */ }
+
+            Services = new AppServices();
         }
 
         FilterTab = new FilterTabViewModel(Services);

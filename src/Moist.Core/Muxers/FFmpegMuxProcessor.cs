@@ -31,11 +31,22 @@ public sealed partial class FFmpegMuxProcessor : CommandLineProcessor
         var mj = (MuxJob)job;
         var args = new List<string> { "-y", "-hide_banner" };
 
-        // Collect unique input files and track their indices
+        // Build input list with delay offsets applied BEFORE the input they affect.
+        // FFmpeg requires -itsoffset to appear before the -i it modifies.
         var inputFiles = new List<string>();
         var fileIndexMap = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        // Track which audio inputs need delay so we can apply -itsoffset before their -i
+        var delayByFile = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
 
-        void AddInput(string path)
+        // Collect delays for audio inputs
+        foreach (var audio in mj.AudioInputs)
+        {
+            if (audio.DelayMs != 0)
+                delayByFile[audio.FilePath] = audio.DelayMs;
+        }
+
+        // Register unique input files
+        void RegisterInput(string path)
         {
             if (!fileIndexMap.ContainsKey(path))
             {
@@ -44,17 +55,20 @@ public sealed partial class FFmpegMuxProcessor : CommandLineProcessor
             }
         }
 
-        // Register all input files (deduplicated)
         if (mj.VideoInput is not null)
-            AddInput(mj.VideoInput);
+            RegisterInput(mj.VideoInput);
         foreach (var audio in mj.AudioInputs)
-            AddInput(audio.FilePath);
+            RegisterInput(audio.FilePath);
         foreach (var sub in mj.SubtitleInputs)
-            AddInput(sub.FilePath);
+            RegisterInput(sub.FilePath);
 
-        // Add -i arguments
+        // Add -i arguments with -itsoffset before inputs that need delay
         foreach (var file in inputFiles)
+        {
+            if (delayByFile.TryGetValue(file, out var delayMs))
+                args.AddRange(["-itsoffset", $"{delayMs}ms"]);
             args.AddRange(["-i", Quote(file)]);
+        }
 
         // Map video
         if (mj.VideoInput is not null)
@@ -70,12 +84,10 @@ public sealed partial class FFmpegMuxProcessor : CommandLineProcessor
         // Map subtitles — if they come from the source file, map each stream
         if (mj.SubtitleInputs.Count > 0)
         {
-            // Group by file to handle "copy all subs from source" efficiently
             var subsByFile = mj.SubtitleInputs.GroupBy(s => s.FilePath, StringComparer.OrdinalIgnoreCase);
             foreach (var group in subsByFile)
             {
                 var idx = fileIndexMap[group.Key];
-                // If the source is also the main input and has multiple subs, map all subtitle streams
                 args.AddRange(["-map", $"{idx}:s?"]);
             }
         }
@@ -94,8 +106,6 @@ public sealed partial class FFmpegMuxProcessor : CommandLineProcessor
                 args.AddRange([$"-metadata:s:{streamIdx}", $"language={audio.Language}"]);
             if (audio.TrackName is not null)
                 args.AddRange([$"-metadata:s:{streamIdx}", $"title={audio.TrackName}"]);
-            if (audio.DelayMs != 0)
-                args.AddRange([$"-itsoffset", $"{audio.DelayMs}ms"]);
             streamIdx++;
         }
 
@@ -124,9 +134,6 @@ public sealed partial class FFmpegMuxProcessor : CommandLineProcessor
             if (timeMatch.Success &&
                 TimeSpan.TryParse(timeMatch.Groups[1].Value, CultureInfo.InvariantCulture, out var currentTime))
             {
-                // Estimate total duration from source file if available
-                var mj = job as MuxJob;
-                // Mux duration should roughly match source — use elapsed/speed heuristic
                 percentage = Math.Min(99.0, currentTime.TotalSeconds > 0 ? currentTime.TotalSeconds : 0);
             }
 
