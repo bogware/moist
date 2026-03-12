@@ -129,15 +129,15 @@ public sealed class AppServices : IDisposable
         RegisterAudioEncoder("ffmpeg-audio-aac", "AAC", "aac",
             typeof(AacSettings), "Advanced Audio Coding — wide compatibility");
         RegisterAudioEncoder("ffmpeg-audio-mp3", "MP3 (LAME)", "mp3",
-            typeof(AudioEncoderSettings), "Legacy MP3 encoder");
+            typeof(Mp3Settings), "LAME MP3 encoder with VBR quality scale");
         RegisterAudioEncoder("ffmpeg-audio-flac", "FLAC (Lossless)", "flac",
             typeof(FlacSettings), "Lossless audio compression");
-        RegisterAudioEncoder("ffmpeg-audio-ac3", "AC3 (Dolby)", "ac3",
-            typeof(AudioEncoderSettings), "Dolby Digital audio");
-        RegisterAudioEncoder("ffmpeg-audio-eac3", "E-AC3 (Dolby+)", "eac3",
-            typeof(AudioEncoderSettings), "Enhanced Dolby Digital Plus");
+        RegisterAudioEncoder("ffmpeg-audio-ac3", "AC3 (Dolby Digital)", "ac3",
+            typeof(Ac3Settings), "Dolby Digital 5.1 surround audio");
+        RegisterAudioEncoder("ffmpeg-audio-eac3", "E-AC3 (Dolby Digital+)", "eac3",
+            typeof(Eac3Settings), "Enhanced Dolby Digital Plus surround");
         RegisterAudioEncoder("ffmpeg-audio-vorbis", "Vorbis", "vorbis",
-            typeof(AudioEncoderSettings), "Ogg Vorbis audio for WebM");
+            typeof(VorbisSettings), "Ogg Vorbis audio for WebM containers");
         RegisterAudioEncoder("ffmpeg-audio-copy", "Passthrough (Copy)", "copy",
             typeof(AudioEncoderSettings), "Copy audio without re-encoding");
 

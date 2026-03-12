@@ -31,6 +31,13 @@ public sealed class EncodingProfile
     public AudioBitrateMode AudioBitrateMode { get; set; } = AudioBitrateMode.Vbr;
     public int AudioBitrate { get; set; } = 128;
     public string AudioCustomArgs { get; set; } = string.Empty;
+    public AudioChannelMode AudioChannelMode { get; set; } = AudioChannelMode.KeepOriginal;
+    public int AudioSampleRate { get; set; }
+    public AudioNormalizationMode AudioNormalization { get; set; } = AudioNormalizationMode.None;
+    public double NormalizationTarget { get; set; } = -16.0;
+    public double TruePeakLimit { get; set; } = -1.0;
+    public AudioSampleFormat AudioSampleFormat { get; set; } = AudioSampleFormat.Auto;
+    public bool AudioOnly { get; set; }
 
     // Container
     public ContainerFormat Container { get; set; } = ContainerFormat.Mkv;
