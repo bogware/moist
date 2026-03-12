@@ -63,5 +63,36 @@ public partial class MainWindowViewModel : ViewModelBase
                 ? $"Encoding: {running} running, {queued} queued"
                 : queued > 0 ? $"{queued} job(s) queued" : "Ready";
         };
+
+        // Run startup tool discovery in background
+        _ = CheckToolsAtStartupAsync();
+    }
+
+    private async Task CheckToolsAtStartupAsync()
+    {
+        try
+        {
+            StatusText = "Checking prerequisites...";
+            var results = await Services.DiscoverToolsAsync();
+            var missingRequired = results
+                .Where(s => s.Tool.IsRequired && !s.IsAvailable)
+                .Select(s => s.Tool.Name)
+                .ToList();
+
+            if (missingRequired.Count > 0)
+            {
+                StartupError = $"Missing required tools: {string.Join(", ", missingRequired)}. Go to Settings to install or configure paths.";
+                StatusText = "Missing prerequisites — check Settings tab";
+            }
+            else
+            {
+                var found = results.Count(s => s.IsAvailable);
+                StatusText = $"Ready — {found}/{results.Count} tools available";
+            }
+        }
+        catch
+        {
+            StatusText = "Ready";
+        }
     }
 }

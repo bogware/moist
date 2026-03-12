@@ -7,6 +7,7 @@ using Moist.Core.Media;
 using Moist.Core.Muxers;
 using Moist.Core.Profiles;
 using Moist.Core.Settings;
+using Moist.Core.Tools;
 using Moist.Filters;
 using Moist.Filters.Engines;
 
@@ -25,6 +26,7 @@ public sealed class AppServices : IDisposable
     public PluginSourceManager PluginSources { get; }
     public FilterPresetManager FilterPresets { get; }
     public ILoggerFactory LoggerFactory { get; }
+    public ToolDiscovery ToolDiscovery { get; }
 
     /// <summary>Media analyzer — reads FFprobePath from Settings on each access so config changes take effect.</summary>
     public FFprobeMediaAnalyzer MediaAnalyzer => new(Settings.FFprobePath);
@@ -55,6 +57,7 @@ public sealed class AppServices : IDisposable
         ProfileManager = new ProfileManager();
         PluginSources = new PluginSourceManager();
         FilterPresets = new FilterPresetManager();
+        ToolDiscovery = new ToolDiscovery(LoggerFactory);
 
         RegisterDefaultEncoders();
         RegisterDefaultFilters();
@@ -165,6 +168,61 @@ public sealed class AppServices : IDisposable
                 JobQueue.RegisterProcessor(new TwoPassProcessor(processor));
 
             JobQueue.RegisterProcessor(processor);
+        }
+    }
+
+    /// <summary>
+    /// Run tool discovery and auto-update settings with discovered paths.
+    /// Call this at startup or when the user wants to re-scan.
+    /// </summary>
+    public async Task<List<ToolStatus>> DiscoverToolsAsync(CancellationToken ct = default)
+    {
+        var results = await ToolDiscovery.CheckAllToolsAsync(GetConfiguredToolPath, ct);
+
+        // Auto-update settings with any newly discovered paths
+        var changed = false;
+        foreach (var status in results.Where(s => s.IsAvailable && s.DetectedPath is not null))
+        {
+            var currentPath = GetConfiguredToolPath(status.Tool.Id);
+            // Only update if the current setting is just the bare binary name (default)
+            // and we found it at an actual path
+            if (currentPath == status.Tool.DefaultBinaryName && status.DetectedPath != currentPath)
+            {
+                SetConfiguredToolPath(status.Tool.Id, status.DetectedPath!);
+                changed = true;
+            }
+        }
+
+        if (changed)
+            Settings.Save();
+
+        return results;
+    }
+
+    /// <summary>Get the currently configured path for a tool ID.</summary>
+    public string GetConfiguredToolPath(string toolId) => toolId switch
+    {
+        "ffmpeg" => Settings.FFmpegPath,
+        "ffprobe" => Settings.FFprobePath,
+        "mkvmerge" => Settings.MkvMergePath,
+        "x264" => Settings.X264Path,
+        "x265" => Settings.X265Path,
+        "vspipe" => Settings.VapourSynthPath,
+        "mp4box" => Settings.Mp4BoxPath,
+        _ => string.Empty,
+    };
+
+    private void SetConfiguredToolPath(string toolId, string path)
+    {
+        switch (toolId)
+        {
+            case "ffmpeg": Settings.FFmpegPath = path; break;
+            case "ffprobe": Settings.FFprobePath = path; break;
+            case "mkvmerge": Settings.MkvMergePath = path; break;
+            case "x264": Settings.X264Path = path; break;
+            case "x265": Settings.X265Path = path; break;
+            case "vspipe": Settings.VapourSynthPath = path; break;
+            case "mp4box": Settings.Mp4BoxPath = path; break;
         }
     }
 
