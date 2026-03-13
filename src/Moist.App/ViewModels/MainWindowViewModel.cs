@@ -1,6 +1,7 @@
 using System;
 using CommunityToolkit.Mvvm.ComponentModel;
 using Moist.App.Services;
+using Moist.Core.Tools;
 
 namespace Moist.App.ViewModels;
 
@@ -28,6 +29,12 @@ public partial class MainWindowViewModel : ViewModelBase
     private string _startupError = string.Empty;
 
     public bool HasStartupError => !string.IsNullOrEmpty(StartupError);
+
+    /// <summary>
+    /// Raised when required tools are missing at startup. The view subscribes
+    /// to show a modal dialog. Payload is the list of missing tool statuses.
+    /// </summary>
+    public event EventHandler<List<ToolStatus>>? RequiredToolsMissing;
 
     public MainWindowViewModel()
     {
@@ -87,13 +94,16 @@ public partial class MainWindowViewModel : ViewModelBase
             var results = await Services.DiscoverToolsAsync();
             var missingRequired = results
                 .Where(s => s.Tool.IsRequired && !s.IsAvailable)
-                .Select(s => s.Tool.Name)
                 .ToList();
 
             if (missingRequired.Count > 0)
             {
-                StartupError = $"Missing required tools: {string.Join(", ", missingRequired)}. Go to Settings to install or configure paths.";
+                var names = missingRequired.Select(s => s.Tool.Name).ToList();
+                StartupError = $"Missing required tools: {string.Join(", ", names)}. Go to Settings to install or configure paths.";
                 StatusText = "Missing prerequisites — check Settings tab";
+
+                // Notify the view to show the missing tools dialog
+                RequiredToolsMissing?.Invoke(this, missingRequired);
             }
             else
             {
@@ -105,5 +115,36 @@ public partial class MainWindowViewModel : ViewModelBase
         {
             StatusText = "Ready";
         }
+    }
+
+    /// <summary>
+    /// Attempt to auto-install a missing required tool via ToolDiscovery.
+    /// Returns the installed path, or null on failure.
+    /// </summary>
+    public async Task<string?> InstallToolAsync(ToolDefinition tool, IProgress<(string Status, double Percent)>? progress = null)
+    {
+        var path = await Services.ToolDiscovery.DownloadAndInstallAsync(tool, progress);
+        if (path is not null)
+        {
+            // Update settings with installed path
+            switch (tool.Id)
+            {
+                case "ffmpeg": Services.Settings.FFmpegPath = path; break;
+                case "ffprobe": Services.Settings.FFprobePath = path; break;
+            }
+            Services.Save();
+            SettingsTab.SetToolPath(tool.Id, path);
+
+            // Re-check if all required tools are now available
+            var results = await Services.DiscoverToolsAsync();
+            var stillMissing = results.Where(s => s.Tool.IsRequired && !s.IsAvailable).ToList();
+            if (stillMissing.Count == 0)
+            {
+                StartupError = string.Empty;
+                var found = results.Count(s => s.IsAvailable);
+                StatusText = $"Ready — {found}/{results.Count} tools available";
+            }
+        }
+        return path;
     }
 }

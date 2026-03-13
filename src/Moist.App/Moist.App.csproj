@@ -11,6 +11,7 @@
     <AssemblyTitle>moist - Video Encoder</AssemblyTitle>
     <Description>Cross-platform video encoder GUI built with Avalonia UI</Description>
     <Copyright>Copyright (c) 2024-2026 moist contributors</Copyright>
+    <ApplicationIcon>Assets/moist.ico</ApplicationIcon>
   </PropertyGroup>
 
   <ItemGroup>

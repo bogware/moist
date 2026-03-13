@@ -1,9 +1,13 @@
 using System.Reflection;
+using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Interactivity;
+using Avalonia.Layout;
+using Avalonia.Media;
 using Avalonia.Platform.Storage;
 using Moist.App.ViewModels;
+using Moist.Core.Tools;
 
 namespace Moist.App.Views;
 
@@ -21,6 +25,177 @@ public partial class MainWindow : Window
         KeyDown += OnKeyDown;
         Opened += OnOpened;
         Closing += OnClosing;
+        DataContextChanged += OnDataContextChanged;
+    }
+
+    private void OnDataContextChanged(object? sender, EventArgs e)
+    {
+        if (DataContext is MainWindowViewModel vm)
+            vm.RequiredToolsMissing += OnRequiredToolsMissing;
+    }
+
+    private async void OnRequiredToolsMissing(object? sender, List<ToolStatus> missingTools)
+    {
+        if (DataContext is not MainWindowViewModel vm) return;
+
+        // Wait a beat for the window to fully render before showing the dialog
+        await Task.Delay(200);
+
+        await ShowMissingToolsDialog(vm, missingTools);
+    }
+
+    private async Task ShowMissingToolsDialog(MainWindowViewModel vm, List<ToolStatus> missingTools)
+    {
+        var toolNames = string.Join(", ", missingTools.Select(t => t.Tool.Name));
+        var canAutoInstall = missingTools.Any(t => t.Tool.DownloadUrls.Count > 0);
+
+        var statusLabel = new TextBlock
+        {
+            Text = "",
+            FontSize = 12,
+            Opacity = 0.7,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            TextWrapping = TextWrapping.Wrap,
+            MaxWidth = 380,
+        };
+
+        var progressBar = new ProgressBar
+        {
+            Minimum = 0,
+            Maximum = 100,
+            IsVisible = false,
+            Margin = new Thickness(0, 8, 0, 0),
+        };
+
+        var installButton = new Button
+        {
+            Content = "Download && Install",
+            HorizontalAlignment = HorizontalAlignment.Center,
+            Padding = new Thickness(24, 8),
+            IsVisible = canAutoInstall,
+            FontWeight = FontWeight.SemiBold,
+        };
+
+        var settingsButton = new Button
+        {
+            Content = "Open Settings",
+            HorizontalAlignment = HorizontalAlignment.Center,
+            Padding = new Thickness(24, 8),
+        };
+
+        var continueButton = new Button
+        {
+            Content = "Continue Anyway",
+            HorizontalAlignment = HorizontalAlignment.Center,
+            Padding = new Thickness(16, 6),
+            FontSize = 11,
+            Opacity = 0.6,
+        };
+
+        var buttonPanel = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            Spacing = 12,
+            Children = { installButton, settingsButton },
+        };
+
+        var dialog = new Window
+        {
+            Title = "moist — Prerequisites Required",
+            Width = 480,
+            Height = 360,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            CanResize = false,
+            Content = new StackPanel
+            {
+                Spacing = 8,
+                Margin = new Thickness(32, 24),
+                VerticalAlignment = VerticalAlignment.Center,
+                Children =
+                {
+                    new TextBlock
+                    {
+                        Text = "Prerequisites Not Found",
+                        FontSize = 22,
+                        FontWeight = FontWeight.Bold,
+                        HorizontalAlignment = HorizontalAlignment.Center,
+                    },
+                    new Separator { Margin = new Thickness(40, 6) },
+                    new TextBlock
+                    {
+                        Text = $"moist requires {toolNames} to encode video and audio.\n\nWithout these tools, encoding will not work.",
+                        FontSize = 13,
+                        TextWrapping = TextWrapping.Wrap,
+                        TextAlignment = TextAlignment.Center,
+                        HorizontalAlignment = HorizontalAlignment.Center,
+                        MaxWidth = 400,
+                        Margin = new Thickness(0, 4, 0, 8),
+                    },
+                    statusLabel,
+                    progressBar,
+                    new Separator { Margin = new Thickness(40, 8) },
+                    buttonPanel,
+                    new StackPanel
+                    {
+                        HorizontalAlignment = HorizontalAlignment.Center,
+                        Margin = new Thickness(0, 8, 0, 0),
+                        Children = { continueButton },
+                    },
+                }
+            }
+        };
+
+        continueButton.Click += (_, _) => dialog.Close();
+
+        settingsButton.Click += (_, _) =>
+        {
+            vm.SelectedTabIndex = 5; // Settings tab
+            dialog.Close();
+        };
+
+        installButton.Click += async (_, _) =>
+        {
+            installButton.IsEnabled = false;
+            settingsButton.IsEnabled = false;
+            installButton.Content = "Installing...";
+            progressBar.IsVisible = true;
+
+            var allSucceeded = true;
+            foreach (var missing in missingTools)
+            {
+                if (missing.Tool.DownloadUrls.Count == 0) continue;
+
+                var progress = new Progress<(string Status, double Percent)>(p =>
+                {
+                    statusLabel.Text = p.Status;
+                    if (p.Percent >= 0)
+                        progressBar.Value = p.Percent;
+                });
+
+                var result = await vm.InstallToolAsync(missing.Tool, progress);
+                if (result is null)
+                {
+                    allSucceeded = false;
+                    statusLabel.Text = $"Failed to install {missing.Tool.Name}. You can configure paths manually in Settings.";
+                    installButton.Content = "Retry";
+                    installButton.IsEnabled = true;
+                    settingsButton.IsEnabled = true;
+                    progressBar.IsVisible = false;
+                    return;
+                }
+            }
+
+            if (allSucceeded)
+            {
+                statusLabel.Text = "All prerequisites installed successfully!";
+                progressBar.Value = 100;
+                await Task.Delay(1200);
+                dialog.Close();
+            }
+        };
+
+        await dialog.ShowDialog(this);
     }
 
     private void OnOpened(object? sender, EventArgs e)
