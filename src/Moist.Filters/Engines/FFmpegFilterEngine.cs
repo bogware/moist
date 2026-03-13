@@ -325,7 +325,7 @@ public sealed class FFmpegFilterEngine : IFilterEngine
     private static string BuildDebandFilter(AppliedFilter af)
     {
         var range = GetInt(af, "range", 16);
-        var blur = af.ParameterValues.TryGetValue("blur", out var v) && Convert.ToBoolean(v);
+        var blur = !af.ParameterValues.TryGetValue("blur", out var v) || Convert.ToBoolean(v); // default true
         return $"deband=range={range}:blur={(blur ? 1 : 0)}";
     }
 

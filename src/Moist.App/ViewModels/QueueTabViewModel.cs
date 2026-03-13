@@ -15,6 +15,8 @@ public partial class QueueTabViewModel : ViewModelBase
 
     [ObservableProperty] private bool _isRunning;
     [ObservableProperty] private string _queueStatus = "Idle";
+    [ObservableProperty] private JobViewModel? _selectedJob;
+    [ObservableProperty] private string _logText = string.Empty;
 
     public QueueTabViewModel(AppServices services)
     {
@@ -26,6 +28,10 @@ public partial class QueueTabViewModel : ViewModelBase
             {
                 Jobs.Add(new JobViewModel(job));
                 QueueStatus = $"{Jobs.Count} job(s) in queue";
+
+                // Auto-start queue if enabled and not already running
+                if (_services.Settings.AutoStartQueue && !IsRunning)
+                    StartQueueCommand.Execute(null);
             });
         };
 
@@ -44,8 +50,28 @@ public partial class QueueTabViewModel : ViewModelBase
             {
                 var vm = Jobs.FirstOrDefault(j => j.Id == args.Job.Id);
                 vm?.UpdateProgress(args.Progress);
+
+                // Refresh log if this is the selected job
+                if (SelectedJob is not null && args.Job.Id == SelectedJob.Id)
+                    RefreshLog(args.Job);
             });
         };
+    }
+
+    partial void OnSelectedJobChanged(JobViewModel? value)
+    {
+        if (value is null)
+        {
+            LogText = string.Empty;
+            return;
+        }
+        if (_services.JobQueue.Jobs.TryGetValue(value.Id, out var job))
+            RefreshLog(job);
+    }
+
+    private void RefreshLog(Job job)
+    {
+        LogText = string.Join('\n', job.OutputLog);
     }
 
     [RelayCommand]
@@ -81,7 +107,10 @@ public partial class QueueTabViewModel : ViewModelBase
     {
         var completed = Jobs.Where(j => j.Status is "Completed" or "Failed" or "Cancelled").ToList();
         foreach (var job in completed)
+        {
+            _services.JobQueue.Remove(job.Id);
             Jobs.Remove(job);
+        }
     }
 
     [RelayCommand]

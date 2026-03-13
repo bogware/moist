@@ -1,6 +1,8 @@
+using System.Collections.ObjectModel;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Moist.App.Services;
+using Moist.Core.Tools;
 
 namespace Moist.App.ViewModels;
 
@@ -30,6 +32,11 @@ public partial class SettingsTabViewModel : ViewModelBase
     // Status
     [ObservableProperty] private string _saveStatus = string.Empty;
 
+    // Tool discovery
+    [ObservableProperty] private string _toolScanStatus = string.Empty;
+    [ObservableProperty] private bool _isScanning;
+    public ObservableCollection<ToolStatusViewModel> ToolStatuses { get; } = [];
+
     public SettingsTabViewModel(AppServices services)
     {
         _services = services;
@@ -47,6 +54,62 @@ public partial class SettingsTabViewModel : ViewModelBase
         _deleteTempFiles = s.DeleteTempFiles;
         _defaultOutputDirectory = s.DefaultOutputDirectory;
         _tempDirectory = s.TempDirectory;
+
+        // Run initial scan on construction
+        _ = ScanToolsAsync();
+    }
+
+    [RelayCommand]
+    private async Task ScanToolsAsync()
+    {
+        IsScanning = true;
+        ToolScanStatus = "Scanning for tools...";
+
+        try
+        {
+            var results = await _services.DiscoverToolsAsync();
+            ToolStatuses.Clear();
+
+            foreach (var status in results)
+            {
+                ToolStatuses.Add(new ToolStatusViewModel(status, _services, this));
+            }
+
+            // Update local path properties from settings (discovery may have updated them)
+            RefreshPathsFromSettings();
+
+            var found = results.Count(s => s.IsAvailable);
+            var required = results.Where(s => s.Tool.IsRequired);
+            var missingRequired = required.Where(s => !s.IsAvailable).ToList();
+
+            if (missingRequired.Count > 0)
+            {
+                ToolScanStatus = $"WARNING: {string.Join(", ", missingRequired.Select(s => s.Tool.Name))} not found! These are required.";
+            }
+            else
+            {
+                ToolScanStatus = $"{found}/{results.Count} tools found. All required tools available.";
+            }
+        }
+        catch (Exception ex)
+        {
+            ToolScanStatus = $"Scan failed: {ex.Message}";
+        }
+        finally
+        {
+            IsScanning = false;
+        }
+    }
+
+    private void RefreshPathsFromSettings()
+    {
+        var s = _services.Settings;
+        FfmpegPath = s.FFmpegPath;
+        FfprobePath = s.FFprobePath;
+        MkvMergePath = s.MkvMergePath;
+        X264Path = s.X264Path;
+        X265Path = s.X265Path;
+        VapourSynthPath = s.VapourSynthPath;
     }
 
     [RelayCommand]
@@ -67,20 +130,40 @@ public partial class SettingsTabViewModel : ViewModelBase
             return;
         }
 
+        // Validate temp directory is writable
+        if (!string.IsNullOrWhiteSpace(TempDirectory))
+        {
+            try
+            {
+                Directory.CreateDirectory(TempDirectory);
+                var testFile = Path.Combine(TempDirectory, $".moist_test_{Guid.NewGuid():N}");
+                File.WriteAllText(testFile, "");
+                File.Delete(testFile);
+            }
+            catch (Exception ex)
+            {
+                SaveStatus = $"Temp directory not writable: {ex.Message}";
+                return;
+            }
+        }
+
         var s = _services.Settings;
         s.Theme = SelectedTheme;
         s.FFmpegPath = FfmpegPath.Trim();
         s.FFprobePath = FfprobePath.Trim();
-        s.MkvMergePath = MkvMergePath.Trim();
-        s.X264Path = X264Path.Trim();
-        s.X265Path = X265Path.Trim();
-        s.VapourSynthPath = VapourSynthPath.Trim();
+        s.MkvMergePath = MkvMergePath?.Trim() ?? string.Empty;
+        s.X264Path = X264Path?.Trim() ?? string.Empty;
+        s.X265Path = X265Path?.Trim() ?? string.Empty;
+        s.VapourSynthPath = VapourSynthPath?.Trim() ?? string.Empty;
         s.MaxConcurrentJobs = MaxConcurrentJobs;
         s.AutoStartQueue = AutoStartQueue;
         s.DeleteTempFiles = DeleteTempFiles;
-        s.DefaultOutputDirectory = DefaultOutputDirectory.Trim();
-        s.TempDirectory = TempDirectory.Trim();
+        s.DefaultOutputDirectory = DefaultOutputDirectory?.Trim() ?? string.Empty;
+        s.TempDirectory = TempDirectory?.Trim() ?? string.Empty;
         _services.Save();
+
+        // Apply max concurrent jobs change live
+        _services.JobQueue.MaxConcurrentJobs = MaxConcurrentJobs;
 
         // Apply theme change live
         if (Avalonia.Application.Current is App app)
@@ -104,6 +187,98 @@ public partial class SettingsTabViewModel : ViewModelBase
             case "vspipe": VapourSynthPath = path; break;
             case "outputDir": DefaultOutputDirectory = path; break;
             case "tempDir": TempDirectory = path; break;
+        }
+    }
+}
+
+/// <summary>
+/// ViewModel for a single tool's status in the prerequisites panel.
+/// </summary>
+public partial class ToolStatusViewModel : ViewModelBase
+{
+    private readonly ToolStatus _status;
+    private readonly AppServices _services;
+    private readonly SettingsTabViewModel _parent;
+
+    [ObservableProperty] private string _statusIcon;
+    [ObservableProperty] private string _statusText;
+    [ObservableProperty] private string _actionLabel = "Install";
+    [ObservableProperty] private bool _canInstall;
+    [ObservableProperty] private bool _isInstalling;
+
+    public string Name => _status.Tool.Name;
+
+    public ToolStatusViewModel(ToolStatus status, AppServices services, SettingsTabViewModel parent)
+    {
+        _status = status;
+        _services = services;
+        _parent = parent;
+
+        if (status.IsAvailable)
+        {
+            _statusIcon = "OK";
+            _statusText = status.Version ?? status.DetectedPath ?? "Found";
+            _canInstall = false;
+        }
+        else
+        {
+            _statusIcon = status.Tool.IsRequired ? "!!" : "--";
+            _statusText = status.Error ?? "Not found";
+            _canInstall = status.Tool.DownloadUrls.Count > 0;
+        }
+    }
+
+    [RelayCommand]
+    private async Task InstallAsync()
+    {
+        IsInstalling = true;
+        ActionLabel = "Installing...";
+        CanInstall = false;
+
+        try
+        {
+            var progress = new Progress<(string Status, double Percent)>(p =>
+            {
+                StatusText = p.Status;
+            });
+
+            var installedPath = await _services.ToolDiscovery.DownloadAndInstallAsync(
+                _status.Tool, progress);
+
+            if (installedPath is not null)
+            {
+                StatusIcon = "OK";
+                StatusText = $"Installed at {installedPath}";
+
+                // Update the settings path
+                switch (_status.Tool.Id)
+                {
+                    case "ffmpeg": _services.Settings.FFmpegPath = installedPath; break;
+                    case "ffprobe": _services.Settings.FFprobePath = installedPath; break;
+                    case "mkvmerge": _services.Settings.MkvMergePath = installedPath; break;
+                    case "x264": _services.Settings.X264Path = installedPath; break;
+                    case "x265": _services.Settings.X265Path = installedPath; break;
+                    case "vspipe": _services.Settings.VapourSynthPath = installedPath; break;
+                    case "mp4box": _services.Settings.Mp4BoxPath = installedPath; break;
+                }
+                _services.Save();
+                _parent.SetToolPath(_status.Tool.Id, installedPath);
+            }
+            else
+            {
+                CanInstall = true;
+                ActionLabel = "Retry";
+            }
+        }
+        catch (Exception ex)
+        {
+            StatusText = $"Install failed: {ex.Message}";
+            CanInstall = true;
+            ActionLabel = "Retry";
+        }
+        finally
+        {
+            IsInstalling = false;
         }
     }
 }

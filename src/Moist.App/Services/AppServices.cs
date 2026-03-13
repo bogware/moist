@@ -7,6 +7,7 @@ using Moist.Core.Media;
 using Moist.Core.Muxers;
 using Moist.Core.Profiles;
 using Moist.Core.Settings;
+using Moist.Core.Tools;
 using Moist.Filters;
 using Moist.Filters.Engines;
 
@@ -25,12 +26,39 @@ public sealed class AppServices : IDisposable
     public PluginSourceManager PluginSources { get; }
     public FilterPresetManager FilterPresets { get; }
     public ILoggerFactory LoggerFactory { get; }
+    public ToolDiscovery ToolDiscovery { get; }
 
-    /// <summary>Media analyzer — reads FFprobePath from Settings on each access so config changes take effect.</summary>
-    public FFprobeMediaAnalyzer MediaAnalyzer => new(Settings.FFprobePath);
+    /// <summary>Media analyzer — uses current FFprobePath from settings. Recreated only if path changes.</summary>
+    public FFprobeMediaAnalyzer MediaAnalyzer
+    {
+        get
+        {
+            if (_mediaAnalyzer is null || _lastFfprobePath != Settings.FFprobePath)
+            {
+                _lastFfprobePath = Settings.FFprobePath;
+                _mediaAnalyzer = new FFprobeMediaAnalyzer(Settings.FFprobePath);
+            }
+            return _mediaAnalyzer;
+        }
+    }
+    private FFprobeMediaAnalyzer? _mediaAnalyzer;
+    private string _lastFfprobePath = string.Empty;
 
-    /// <summary>Preview service — reads FFmpegPath from Settings on each access so config changes take effect.</summary>
-    public VideoPreviewService PreviewService => new(Settings.FFmpegPath);
+    /// <summary>Preview service — uses current FFmpegPath from settings. Recreated only if path changes.</summary>
+    public VideoPreviewService PreviewService
+    {
+        get
+        {
+            if (_previewService is null || _lastFfmpegPathPreview != Settings.FFmpegPath)
+            {
+                _lastFfmpegPathPreview = Settings.FFmpegPath;
+                _previewService = new VideoPreviewService(Settings.FFmpegPath);
+            }
+            return _previewService;
+        }
+    }
+    private VideoPreviewService? _previewService;
+    private string _lastFfmpegPathPreview = string.Empty;
 
     public AppServices()
     {
@@ -55,6 +83,7 @@ public sealed class AppServices : IDisposable
         ProfileManager = new ProfileManager();
         PluginSources = new PluginSourceManager();
         FilterPresets = new FilterPresetManager();
+        ToolDiscovery = new ToolDiscovery(LoggerFactory);
 
         RegisterDefaultEncoders();
         RegisterDefaultFilters();
@@ -100,15 +129,17 @@ public sealed class AppServices : IDisposable
         RegisterAudioEncoder("ffmpeg-audio-aac", "AAC", "aac",
             typeof(AacSettings), "Advanced Audio Coding — wide compatibility");
         RegisterAudioEncoder("ffmpeg-audio-mp3", "MP3 (LAME)", "mp3",
-            typeof(AudioEncoderSettings), "Legacy MP3 encoder");
+            typeof(Mp3Settings), "LAME MP3 encoder with VBR quality scale");
         RegisterAudioEncoder("ffmpeg-audio-flac", "FLAC (Lossless)", "flac",
             typeof(FlacSettings), "Lossless audio compression");
-        RegisterAudioEncoder("ffmpeg-audio-ac3", "AC3 (Dolby)", "ac3",
-            typeof(AudioEncoderSettings), "Dolby Digital audio");
-        RegisterAudioEncoder("ffmpeg-audio-eac3", "E-AC3 (Dolby+)", "eac3",
-            typeof(AudioEncoderSettings), "Enhanced Dolby Digital Plus");
+        RegisterAudioEncoder("ffmpeg-audio-ac3", "AC3 (Dolby Digital)", "ac3",
+            typeof(Ac3Settings), "Dolby Digital 5.1 surround audio");
+        RegisterAudioEncoder("ffmpeg-audio-eac3", "E-AC3 (Dolby Digital+)", "eac3",
+            typeof(Eac3Settings), "Enhanced Dolby Digital Plus surround");
         RegisterAudioEncoder("ffmpeg-audio-vorbis", "Vorbis", "vorbis",
-            typeof(AudioEncoderSettings), "Ogg Vorbis audio for WebM");
+            typeof(VorbisSettings), "Ogg Vorbis audio for WebM containers");
+        RegisterAudioEncoder("ffmpeg-audio-copy", "Passthrough (Copy)", "copy",
+            typeof(AudioEncoderSettings), "Copy audio without re-encoding");
 
         // Muxer
         Encoders.Register(new EncoderInfo
@@ -157,14 +188,72 @@ public sealed class AppServices : IDisposable
     {
         foreach (var encoder in Encoders.Encoders.Values)
         {
-            var processor = Encoders.CreateProcessor(encoder.Id);
+            var encoderId = encoder.Id; // capture for closure
 
-            // For video encoders, register a two-pass wrapper first (checked before raw)
-            // and then the raw processor for single-pass/CRF modes
+            // Use factories to create fresh processor instances per job,
+            // avoiding shared mutable state (stopwatches, counters) between concurrent jobs
             if (encoder.Category == "Video")
-                JobQueue.RegisterProcessor(new TwoPassProcessor(processor));
+            {
+                JobQueue.RegisterProcessorFactory(() =>
+                    new TwoPassProcessor(Encoders.CreateProcessor(encoderId)));
+            }
 
-            JobQueue.RegisterProcessor(processor);
+            JobQueue.RegisterProcessorFactory(() => Encoders.CreateProcessor(encoderId));
+        }
+    }
+
+    /// <summary>
+    /// Run tool discovery and auto-update settings with discovered paths.
+    /// Call this at startup or when the user wants to re-scan.
+    /// </summary>
+    public async Task<List<ToolStatus>> DiscoverToolsAsync(CancellationToken ct = default)
+    {
+        var results = await ToolDiscovery.CheckAllToolsAsync(GetConfiguredToolPath, ct);
+
+        // Auto-update settings with any newly discovered paths
+        var changed = false;
+        foreach (var status in results.Where(s => s.IsAvailable && s.DetectedPath is not null))
+        {
+            var currentPath = GetConfiguredToolPath(status.Tool.Id);
+            // Only update if the current setting is just the bare binary name (default)
+            // and we found it at an actual path
+            if (currentPath == status.Tool.DefaultBinaryName && status.DetectedPath != currentPath)
+            {
+                SetConfiguredToolPath(status.Tool.Id, status.DetectedPath!);
+                changed = true;
+            }
+        }
+
+        if (changed)
+            Settings.Save();
+
+        return results;
+    }
+
+    /// <summary>Get the currently configured path for a tool ID.</summary>
+    public string GetConfiguredToolPath(string toolId) => toolId switch
+    {
+        "ffmpeg" => Settings.FFmpegPath,
+        "ffprobe" => Settings.FFprobePath,
+        "mkvmerge" => Settings.MkvMergePath,
+        "x264" => Settings.X264Path,
+        "x265" => Settings.X265Path,
+        "vspipe" => Settings.VapourSynthPath,
+        "mp4box" => Settings.Mp4BoxPath,
+        _ => string.Empty,
+    };
+
+    private void SetConfiguredToolPath(string toolId, string path)
+    {
+        switch (toolId)
+        {
+            case "ffmpeg": Settings.FFmpegPath = path; break;
+            case "ffprobe": Settings.FFprobePath = path; break;
+            case "mkvmerge": Settings.MkvMergePath = path; break;
+            case "x264": Settings.X264Path = path; break;
+            case "x265": Settings.X265Path = path; break;
+            case "vspipe": Settings.VapourSynthPath = path; break;
+            case "mp4box": Settings.Mp4BoxPath = path; break;
         }
     }
 

@@ -8,7 +8,7 @@ namespace Moist.Core.Encoders.Audio;
 /// <summary>
 /// FFmpeg-based audio encoder processor. Supports AAC, Opus, FLAC, MP3, etc.
 /// </summary>
-public sealed partial class FFmpegAudioProcessor : CommandLineProcessor
+public partial class FFmpegAudioProcessor : CommandLineProcessor
 {
     private readonly string _ffmpegPath;
     private readonly string _codec;
@@ -43,6 +43,13 @@ public sealed partial class FFmpegAudioProcessor : CommandLineProcessor
             "-c:a", GetFfmpegCodecName()
         };
 
+        // Passthrough mode: skip all encoding options
+        if (_codec == "copy")
+        {
+            args.Add(Quote(aj.OutputFile));
+            return string.Join(" ", args);
+        }
+
         // Bitrate / quality
         switch (s.BitrateMode)
         {
@@ -71,6 +78,23 @@ public sealed partial class FFmpegAudioProcessor : CommandLineProcessor
         if (channelArg is not null)
             args.AddRange(["-ac", channelArg]);
 
+        // Sample format
+        var sampleFmtArg = s.SampleFormat switch
+        {
+            AudioSampleFormat.S16 => "s16",
+            AudioSampleFormat.S24 => "s24",
+            AudioSampleFormat.S32 => "s32",
+            AudioSampleFormat.Float => "flt",
+            _ => null
+        };
+        if (sampleFmtArg is not null)
+            args.AddRange(["-sample_fmt", sampleFmtArg]);
+
+        // Normalization via audio filter chain
+        var normFilter = BuildNormalizationFilter(s);
+        if (normFilter is not null)
+            args.AddRange(["-af", normFilter]);
+
         // Codec-specific
         args.AddRange(GetCodecSpecificArgs(s));
 
@@ -82,6 +106,22 @@ public sealed partial class FFmpegAudioProcessor : CommandLineProcessor
 
         return string.Join(" ", args);
     }
+
+    private static string? BuildNormalizationFilter(AudioEncoderSettings s)
+    {
+        return s.Normalization switch
+        {
+            AudioNormalizationMode.EbuR128 =>
+                $"loudnorm=I={Fmt(s.NormalizationTarget)}:TP={Fmt(s.TruePeakLimit)}:LRA=11:print_format=summary",
+            AudioNormalizationMode.Peak =>
+                $"acompressor=threshold={Fmt(s.TruePeakLimit)}dB:ratio=20:attack=0.1:release=50,volume={Fmt(s.NormalizationTarget)}dB",
+            AudioNormalizationMode.Rms =>
+                $"dynaudnorm=f=150:g=15:p={Fmt(Math.Clamp(Math.Pow(10, s.NormalizationTarget / 20.0), 0.01, 1.0))}:m=10",
+            _ => null
+        };
+    }
+
+    private static string Fmt(double v) => v.ToString("G", CultureInfo.InvariantCulture);
 
     protected override JobProgress? ParseOutputLine(string line, Job job)
     {
@@ -125,16 +165,68 @@ public sealed partial class FFmpegAudioProcessor : CommandLineProcessor
         "vorbis" => "libvorbis",
         "ac3" => "ac3",
         "eac3" => "eac3",
+        "copy" => "copy",
         _ => _codec
     };
 
-    private string[] GetCodecSpecificArgs(AudioEncoderSettings s) => s switch
+    private List<string> GetCodecSpecificArgs(AudioEncoderSettings s)
     {
-        OpusSettings opus => ["-compression_level", opus.Complexity.ToString()],
-        FlacSettings flac => ["-compression_level", flac.CompressionLevel.ToString()],
-        AacSettings aac when aac.Profile is not null => ["-profile:a", aac.Profile],
-        _ => []
-    };
+        var codecArgs = new List<string>();
+        switch (s)
+        {
+            case OpusSettings opus:
+                codecArgs.AddRange(["-compression_level", opus.Complexity.ToString()]);
+                break;
+
+            case FlacSettings flac:
+                codecArgs.AddRange(["-compression_level", flac.CompressionLevel.ToString()]);
+                break;
+
+            case AacSettings aac:
+                if (aac.Profile is not null)
+                    codecArgs.AddRange(["-profile:a", aac.Profile]);
+                break;
+
+            case Mp3Settings mp3:
+                if (mp3.BitrateMode == AudioBitrateMode.Vbr)
+                    codecArgs.AddRange(["-q:a", mp3.VbrScale.ToString()]);
+                // libmp3lame: -joint_stereo 1 enables joint/mid-side stereo, 0 forces simple stereo
+                switch (mp3.Mp3ChannelMode)
+                {
+                    case Mp3ChannelMode.JointStereo:
+                    case Mp3ChannelMode.ForcedJointStereo:
+                        codecArgs.AddRange(["-joint_stereo", "1"]);
+                        break;
+                    case Mp3ChannelMode.Stereo:
+                        codecArgs.AddRange(["-joint_stereo", "0"]);
+                        break;
+                    case Mp3ChannelMode.DualMono:
+                        codecArgs.AddRange(["-ac", "1"]);
+                        break;
+                }
+                break;
+
+            case Ac3Settings ac3:
+                if (ac3.DialogueNormalization > -31)
+                    codecArgs.AddRange(["-dialnorm", ac3.DialogueNormalization.ToString()]);
+                if (ac3.SurroundMode != Ac3SurroundMode.NotIndicated)
+                    codecArgs.AddRange(["-dsur_mode", ((int)ac3.SurroundMode).ToString()]);
+                break;
+
+            case Eac3Settings eac3:
+                if (eac3.DialogueNormalization > -31)
+                    codecArgs.AddRange(["-dialnorm", eac3.DialogueNormalization.ToString()]);
+                if (eac3.MixingLevel.HasValue)
+                    codecArgs.AddRange(["-mixing_level", eac3.MixingLevel.Value.ToString()]);
+                break;
+
+            case VorbisSettings vorbis:
+                if (vorbis.BitrateMode == AudioBitrateMode.Vbr)
+                    codecArgs.AddRange(["-q:a", vorbis.QualityScale.ToString()]);
+                break;
+        }
+        return codecArgs;
+    }
 
     [GeneratedRegex(@"size=\s*(\d+)kB")]
     private static partial Regex SizeRegex();

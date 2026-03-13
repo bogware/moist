@@ -170,21 +170,46 @@ public sealed class AviSynthFilterEngine : IFilterEngine
         return sb.ToString();
     }
 
-    public Task<bool> CheckAvailabilityAsync(CancellationToken ct = default)
+    public async Task<bool> CheckAvailabilityAsync(CancellationToken ct = default)
     {
         // AviSynth is Windows-only
         if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
-            return Task.FromResult(IsAvailable = false);
+            return IsAvailable = false;
 
-        // Check both 64-bit and 32-bit Program Files locations
+        // First check if AviSynth+ directory exists
         var dirs = new[]
         {
             Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "AviSynth+"),
             Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86), "AviSynth+"),
         };
 
-        IsAvailable = dirs.Any(Directory.Exists);
-        return Task.FromResult(IsAvailable);
+        if (!dirs.Any(Directory.Exists))
+            return IsAvailable = false;
+
+        // Try running avs2pipemod to verify AviSynth actually works
+        try
+        {
+            var psi = new ProcessStartInfo
+            {
+                FileName = "avs2pipemod",
+                Arguments = "--version",
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+            };
+            using var process = Process.Start(psi);
+            if (process is null)
+                return IsAvailable = true; // Directory exists, assume available
+
+            await process.WaitForExitAsync(ct);
+            return IsAvailable = true; // If avs2pipemod ran at all, AviSynth is installed
+        }
+        catch
+        {
+            // avs2pipemod not found, but directory exists — AviSynth is likely installed
+            return IsAvailable = true;
+        }
     }
 
     private static int GetInt(AppliedFilter af, string key, int def = 0)

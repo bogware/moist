@@ -12,6 +12,9 @@ public sealed class MuxJob : Job
     public List<SubtitleTrackInput> SubtitleInputs { get; set; } = [];
     public string? ChapterFile { get; set; }
     public List<string> Attachments { get; set; } = [];
+
+    /// <summary>Total duration in seconds, used for mux progress percentage.</summary>
+    public double TotalDurationSeconds { get; set; }
 }
 
 public sealed class AudioTrackInput

@@ -23,46 +23,69 @@
                        Opacity="0.7"/>
         </StackPanel>
 
-        <!-- Job List -->
-        <DataGrid ItemsSource="{Binding Jobs}"
-                  AutoGenerateColumns="False"
-                  CanUserReorderColumns="True"
-                  CanUserResizeColumns="True"
-                  CanUserSortColumns="True"
-                  GridLinesVisibility="Horizontal"
-                  IsReadOnly="True">
-            <DataGrid.Columns>
-                <DataGridTextColumn Header="Name" Binding="{Binding Name}" Width="*"/>
-                <DataGridTextColumn Header="Type" Binding="{Binding JobType}" Width="100"/>
-                <DataGridTextColumn Header="Status" Binding="{Binding Status}" Width="100"/>
-                <DataGridTemplateColumn Header="Progress" Width="200">
-                    <DataGridTemplateColumn.CellTemplate>
-                        <DataTemplate x:DataType="vm:JobViewModel">
-                            <ProgressBar Value="{Binding Percentage}"
-                                         Minimum="0" Maximum="100"
-                                         Height="16" Margin="4"/>
-                        </DataTemplate>
-                    </DataGridTemplateColumn.CellTemplate>
-                </DataGridTemplateColumn>
-                <DataGridTextColumn Header="FPS" Binding="{Binding Fps}" Width="80"/>
-                <DataGridTextColumn Header="ETA" Binding="{Binding Eta}" Width="100"/>
-                <DataGridTemplateColumn Header="Actions" Width="120">
-                    <DataGridTemplateColumn.CellTemplate>
-                        <DataTemplate x:DataType="vm:JobViewModel">
-                            <StackPanel Orientation="Horizontal" Spacing="4" Margin="4">
-                                <Button Content="Cancel" Padding="4,2"
-                                        FontSize="11"
-                                        Command="{Binding $parent[DataGrid].((vm:QueueTabViewModel)DataContext).CancelJobCommand}"
-                                        CommandParameter="{Binding}"/>
-                                <Button Content="Remove" Padding="4,2"
-                                        FontSize="11"
-                                        Command="{Binding $parent[DataGrid].((vm:QueueTabViewModel)DataContext).RemoveJobCommand}"
-                                        CommandParameter="{Binding}"/>
-                            </StackPanel>
-                        </DataTemplate>
-                    </DataGridTemplateColumn.CellTemplate>
-                </DataGridTemplateColumn>
-            </DataGrid.Columns>
-        </DataGrid>
+        <!-- Job List + Log split -->
+        <Grid RowDefinitions="*,Auto,200">
+            <DataGrid Grid.Row="0"
+                      ItemsSource="{Binding Jobs}"
+                      SelectedItem="{Binding SelectedJob}"
+                      AutoGenerateColumns="False"
+                      CanUserReorderColumns="True"
+                      CanUserResizeColumns="True"
+                      CanUserSortColumns="True"
+                      GridLinesVisibility="Horizontal"
+                      IsReadOnly="True"
+                      SelectionMode="Single">
+                <DataGrid.Columns>
+                    <DataGridTextColumn Header="Name" Binding="{Binding Name}" Width="*"/>
+                    <DataGridTextColumn Header="Type" Binding="{Binding JobType}" Width="100"/>
+                    <DataGridTextColumn Header="Status" Binding="{Binding Status}" Width="100"/>
+                    <DataGridTemplateColumn Header="Progress" Width="200">
+                        <DataGridTemplateColumn.CellTemplate>
+                            <DataTemplate x:DataType="vm:JobViewModel">
+                                <ProgressBar Value="{Binding Percentage}"
+                                             Minimum="0" Maximum="100"
+                                             Height="16" Margin="4"/>
+                            </DataTemplate>
+                        </DataGridTemplateColumn.CellTemplate>
+                    </DataGridTemplateColumn>
+                    <DataGridTextColumn Header="FPS" Binding="{Binding Fps}" Width="80"/>
+                    <DataGridTextColumn Header="ETA" Binding="{Binding Eta}" Width="100"/>
+                    <DataGridTemplateColumn Header="Actions" Width="120">
+                        <DataGridTemplateColumn.CellTemplate>
+                            <DataTemplate x:DataType="vm:JobViewModel">
+                                <StackPanel Orientation="Horizontal" Spacing="4" Margin="4">
+                                    <Button Content="Cancel" Padding="4,2"
+                                            FontSize="11"
+                                            Command="{Binding $parent[DataGrid].((vm:QueueTabViewModel)DataContext).CancelJobCommand}"
+                                            CommandParameter="{Binding}"/>
+                                    <Button Content="Remove" Padding="4,2"
+                                            FontSize="11"
+                                            Command="{Binding $parent[DataGrid].((vm:QueueTabViewModel)DataContext).RemoveJobCommand}"
+                                            CommandParameter="{Binding}"/>
+                                </StackPanel>
+                            </DataTemplate>
+                        </DataGridTemplateColumn.CellTemplate>
+                    </DataGridTemplateColumn>
+                </DataGrid.Columns>
+            </DataGrid>
+
+            <GridSplitter Grid.Row="1" Height="5" HorizontalAlignment="Stretch"
+                          Background="Transparent" Cursor="SizeNorthSouth"/>
+
+            <!-- Log Viewer -->
+            <Border Grid.Row="2" Classes="section" Margin="0,4,0,0">
+                <DockPanel>
+                    <TextBlock DockPanel.Dock="Top" Text="Job Output Log" FontWeight="SemiBold"
+                               FontSize="12" Opacity="0.7" Margin="4,2"/>
+                    <TextBox Text="{Binding LogText, Mode=OneWay}"
+                             IsReadOnly="True"
+                             AcceptsReturn="True"
+                             FontFamily="Cascadia Mono,Consolas,Menlo,monospace"
+                             FontSize="11"
+                             TextWrapping="NoWrap"
+                             Watermark="Select a job to view its output log"/>
+                </DockPanel>
+            </Border>
+        </Grid>
     </DockPanel>
 </UserControl>

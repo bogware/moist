@@ -31,7 +31,9 @@ public partial class EncodeTabView : UserControl
 
     private void OnDragEnter(object? sender, DragEventArgs e)
     {
+#pragma warning disable CS0618 // Avalonia 11.3 deprecation — DataTransfer API incompatible
         if (DataContext is EncodeTabViewModel vm && e.Data.Contains(DataFormats.Files))
+#pragma warning restore CS0618
         {
             vm.IsDragOver = true;
             e.DragEffects = DragDropEffects.Copy;
@@ -52,7 +54,9 @@ public partial class EncodeTabView : UserControl
 
             vm.IsDragOver = false;
 
+#pragma warning disable CS0618
             var files = e.Data.GetFiles()?.ToList();
+#pragma warning restore CS0618
             if (files is null || files.Count == 0) return;
 
             var firstFile = files[0].TryGetLocalPath();

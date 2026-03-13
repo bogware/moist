@@ -30,12 +30,32 @@ public partial class EncodeTabViewModel : ViewModelBase, IDisposable
     [ObservableProperty] private int _bitrate = 5000;
     [ObservableProperty] private VideoPreset _preset = VideoPreset.Medium;
     [ObservableProperty] private VideoTune _tune = VideoTune.None;
+    [ObservableProperty] private int _svtAv1Preset = 6;
     [ObservableProperty] private string _customVideoArgs = string.Empty;
 
     // Audio encoder
     [ObservableProperty] private EncoderInfo? _selectedAudioEncoder;
     [ObservableProperty] private int _audioBitrate = 128;
     [ObservableProperty] private AudioBitrateMode _audioBitrateMode = AudioBitrateMode.Vbr;
+    [ObservableProperty] private AudioChannelMode _audioChannelMode = AudioChannelMode.KeepOriginal;
+    [ObservableProperty] private int _audioSampleRate;  // 0 = keep original
+    [ObservableProperty] private string _customAudioArgs = string.Empty;
+    [ObservableProperty] private AudioNormalizationMode _audioNormalization = AudioNormalizationMode.None;
+    [ObservableProperty] private double _normalizationTarget = -16.0;
+    [ObservableProperty] private double _truePeakLimit = -1.0;
+    [ObservableProperty] private AudioSampleFormat _audioSampleFormat = AudioSampleFormat.Auto;
+
+    // Codec-specific settings
+    [ObservableProperty] private int _opusComplexity = 10;
+    [ObservableProperty] private string _aacProfile = "";
+    [ObservableProperty] private int _mp3VbrScale = 2;
+    [ObservableProperty] private int _flacCompressionLevel = 5;
+    [ObservableProperty] private int _ac3DialogueNorm = -31;
+    [ObservableProperty] private int _eac3DialogueNorm = -31;
+    [ObservableProperty] private int _vorbisQuality = 3;
+
+    // Audio-only mode
+    [ObservableProperty] private bool _audioOnly;
 
     // Container
     [ObservableProperty] private ContainerFormat _container = ContainerFormat.Mkv;
@@ -46,9 +66,12 @@ public partial class EncodeTabViewModel : ViewModelBase, IDisposable
 
     // Subtitle options
     [ObservableProperty] private bool _copySubtitles = true;
+    [ObservableProperty] private string _externalSubtitleFile = string.Empty;
+    public ObservableCollection<string> SubtitleTrackLabels { get; } = [];
 
     // Preview
     [ObservableProperty] private Bitmap? _previewImage;
+    private MemoryStream? _previewStream;
     [ObservableProperty] private double _previewPosition;
     [ObservableProperty] private double _previewMaxPosition = 100;
     [ObservableProperty] private bool _isPreviewLoading;
@@ -66,6 +89,12 @@ public partial class EncodeTabViewModel : ViewModelBase, IDisposable
     public static VideoPreset[] PresetOptions { get; } = Enum.GetValues<VideoPreset>();
     public static VideoTune[] TuneOptions { get; } = Enum.GetValues<VideoTune>();
     public static ContainerFormat[] ContainerOptions { get; } = Enum.GetValues<ContainerFormat>();
+    public static AudioBitrateMode[] AudioBitrateModeOptions { get; } = Enum.GetValues<AudioBitrateMode>();
+    public static AudioChannelMode[] AudioChannelModeOptions { get; } = Enum.GetValues<AudioChannelMode>();
+    public static AudioNormalizationMode[] NormalizationModeOptions { get; } = Enum.GetValues<AudioNormalizationMode>();
+    public static AudioSampleFormat[] SampleFormatOptions { get; } = Enum.GetValues<AudioSampleFormat>();
+    public static int[] SampleRateOptions { get; } = [0, 8000, 11025, 16000, 22050, 32000, 44100, 48000, 88200, 96000, 176400, 192000];
+    public static string[] AacProfileOptions { get; } = ["", "aac_low", "aac_he", "aac_he_v2", "aac_ld", "aac_eld"];
 
     public string MediaInfoSummary => MediaInfo is null ? "" :
         $"Duration: {MediaInfo.Duration:hh\\:mm\\:ss}  |  " +
@@ -101,9 +130,12 @@ public partial class EncodeTabViewModel : ViewModelBase, IDisposable
 
     // === Drag-and-Drop ===
 
+    private CancellationTokenSource? _analysisCts;
+
     public async Task HandleDroppedFile(string filePath)
     {
         InputFile = filePath;
+        OutputFile = string.Empty; // Reset so auto-generation kicks in
         await AnalyzeInput();
     }
 
@@ -121,12 +153,19 @@ public partial class EncodeTabViewModel : ViewModelBase, IDisposable
             return;
         }
 
+        // Cancel any in-flight analysis
+        _analysisCts?.Cancel();
+        _analysisCts?.Dispose();
+        _analysisCts = new CancellationTokenSource();
+        var ct = _analysisCts.Token;
+
         HasError = false;
         StatusMessage = "Analyzing...";
 
         try
         {
-            MediaInfo = await _services.MediaAnalyzer.AnalyzeAsync(InputFile);
+            MediaInfo = await _services.MediaAnalyzer.AnalyzeAsync(InputFile, ct);
+            ct.ThrowIfCancellationRequested();
             OnPropertyChanged(nameof(MediaInfoSummary));
 
             // Populate audio track selection
@@ -140,6 +179,17 @@ public partial class EncodeTabViewModel : ViewModelBase, IDisposable
                 AudioTrackLabels.Add(label);
             }
             SelectedAudioTrackIndex = 0;
+
+            // Populate subtitle track info
+            SubtitleTrackLabels.Clear();
+            for (int i = 0; i < MediaInfo.SubtitleStreams.Count; i++)
+            {
+                var s = MediaInfo.SubtitleStreams[i];
+                var label = $"Track {i + 1}: {s.Codec}";
+                if (s.Language is not null) label += $" ({s.Language})";
+                if (s.Title is not null) label += $" — {s.Title}";
+                SubtitleTrackLabels.Add(label);
+            }
 
             // Auto-generate output path
             if (string.IsNullOrWhiteSpace(OutputFile))
@@ -161,6 +211,7 @@ public partial class EncodeTabViewModel : ViewModelBase, IDisposable
             StatusMessage = $"Loaded: {MediaInfo.Video?.Width}x{MediaInfo.Video?.Height}, {MediaInfo.Duration:hh\\:mm\\:ss}";
             await UpdatePreview();
         }
+        catch (OperationCanceledException) { /* Superseded by new analysis */ }
         catch (Exception ex)
         {
             MediaInfo = null;
@@ -186,6 +237,7 @@ public partial class EncodeTabViewModel : ViewModelBase, IDisposable
             if (framePath is not null && File.Exists(framePath))
             {
                 var oldImage = PreviewImage;
+                var oldStream = _previewStream;
                 // Load into MemoryStream so Bitmap doesn't reference a disposed FileStream
                 var memoryStream = new MemoryStream();
                 await using (var fileStream = File.OpenRead(framePath))
@@ -194,7 +246,9 @@ public partial class EncodeTabViewModel : ViewModelBase, IDisposable
                 }
                 memoryStream.Seek(0, SeekOrigin.Begin);
                 PreviewImage = new Bitmap(memoryStream);
+                _previewStream = memoryStream;
                 oldImage?.Dispose();
+                oldStream?.Dispose();
                 try { File.Delete(framePath); } catch { }
             }
         }
@@ -215,13 +269,40 @@ public partial class EncodeTabViewModel : ViewModelBase, IDisposable
 
     partial void OnContainerChanged(ContainerFormat value)
     {
-        if (!string.IsNullOrWhiteSpace(OutputFile))
-        {
-            var dir = Path.GetDirectoryName(OutputFile) ?? "";
-            var name = Path.GetFileNameWithoutExtension(OutputFile);
-            OutputFile = Path.Combine(dir, $"{name}{value.GetExtension()}");
-        }
+        UpdateOutputExtension();
     }
+
+    partial void OnAudioOnlyChanged(bool value)
+    {
+        UpdateOutputExtension();
+    }
+
+    partial void OnSelectedAudioEncoderChanged(EncoderInfo? value)
+    {
+        UpdateOutputExtension();
+    }
+
+    private void UpdateOutputExtension()
+    {
+        if (string.IsNullOrWhiteSpace(OutputFile)) return;
+        var dir = Path.GetDirectoryName(OutputFile) ?? "";
+        var name = Path.GetFileNameWithoutExtension(OutputFile);
+        var ext = AudioOnly ? GetAudioFileExtension(SelectedAudioEncoder?.Id) : Container.GetExtension();
+        OutputFile = Path.Combine(dir, $"{name}{ext}");
+    }
+
+    private static string GetAudioFileExtension(string? encoderId) => encoderId switch
+    {
+        "ffmpeg-audio-opus" => ".opus",
+        "ffmpeg-audio-aac" => ".m4a",
+        "ffmpeg-audio-mp3" => ".mp3",
+        "ffmpeg-audio-flac" => ".flac",
+        "ffmpeg-audio-ac3" => ".ac3",
+        "ffmpeg-audio-eac3" => ".eac3",
+        "ffmpeg-audio-vorbis" => ".ogg",
+        "ffmpeg-audio-copy" => ".mka",
+        _ => ".mka"
+    };
 
     private CancellationTokenSource? _previewDebounce;
     private async Task UpdatePreviewDebounced()
@@ -252,7 +333,7 @@ public partial class EncodeTabViewModel : ViewModelBase, IDisposable
         ApplyProfile(value);
     }
 
-    private void ApplyProfile(EncodingProfile profile)
+    public void ApplyProfile(EncodingProfile profile)
     {
         SelectedVideoEncoder = VideoEncoders.FirstOrDefault(e => e.Id == profile.VideoEncoderId)
                                ?? VideoEncoders.FirstOrDefault();
@@ -261,15 +342,72 @@ public partial class EncodeTabViewModel : ViewModelBase, IDisposable
         Bitrate = profile.VideoBitrate;
         Preset = profile.VideoPreset;
         Tune = profile.VideoTune;
+        SvtAv1Preset = profile.SvtAv1Preset;
         CustomVideoArgs = profile.VideoCustomArgs;
 
         SelectedAudioEncoder = AudioEncoders.FirstOrDefault(e => e.Id == profile.AudioEncoderId)
                                ?? AudioEncoders.FirstOrDefault();
         AudioBitrateMode = profile.AudioBitrateMode;
         AudioBitrate = profile.AudioBitrate;
+        CustomAudioArgs = profile.AudioCustomArgs;
+        AudioChannelMode = profile.AudioChannelMode;
+        AudioSampleRate = profile.AudioSampleRate;
+        AudioNormalization = profile.AudioNormalization;
+        NormalizationTarget = profile.NormalizationTarget;
+        TruePeakLimit = profile.TruePeakLimit;
+        AudioSampleFormat = profile.AudioSampleFormat;
+        AudioOnly = profile.AudioOnly;
 
         Container = profile.Container;
+
+        // Restore filter chain if profile has one
+        if (_filterTab is not null && profile.Filters.Count > 0 && profile.FilterEngineId is not null)
+        {
+            var engine = _filterTab.Engines.FirstOrDefault(e => e.Id == profile.FilterEngineId);
+            if (engine is not null)
+            {
+                _filterTab.SelectedEngine = engine;
+                _filterTab.ClearFiltersCommand.Execute(null);
+                var engineFilters = engine.GetAvailableFilters();
+                foreach (var pf in profile.Filters)
+                {
+                    var filterDef = engineFilters.FirstOrDefault(f => f.Id == pf.FilterId);
+                    if (filterDef is not null)
+                    {
+                        _filterTab.Chain.Add(filterDef, new Dictionary<string, object>(pf.Parameters));
+                    }
+                }
+            }
+        }
     }
+
+    /// <summary>
+    /// Captures current encode settings as a profile (for batch per-file restore).
+    /// </summary>
+    public EncodingProfile CaptureCurrentSettings() => new()
+    {
+        Name = "__snapshot__",
+        VideoEncoderId = SelectedVideoEncoder?.Id ?? "ffmpeg-x265",
+        VideoMode = EncodingMode,
+        VideoQuality = Quality,
+        VideoBitrate = Bitrate,
+        VideoPreset = Preset,
+        VideoTune = Tune,
+        SvtAv1Preset = SvtAv1Preset,
+        VideoCustomArgs = CustomVideoArgs,
+        AudioEncoderId = SelectedAudioEncoder?.Id ?? "ffmpeg-audio-opus",
+        AudioBitrateMode = AudioBitrateMode,
+        AudioBitrate = AudioBitrate,
+        AudioCustomArgs = CustomAudioArgs,
+        AudioChannelMode = AudioChannelMode,
+        AudioSampleRate = AudioSampleRate,
+        AudioNormalization = AudioNormalization,
+        NormalizationTarget = NormalizationTarget,
+        TruePeakLimit = TruePeakLimit,
+        AudioSampleFormat = AudioSampleFormat,
+        AudioOnly = AudioOnly,
+        Container = Container,
+    };
 
     [RelayCommand]
     private void SaveProfile(string? profileName)
@@ -285,11 +423,26 @@ public partial class EncodeTabViewModel : ViewModelBase, IDisposable
             VideoBitrate = Bitrate,
             VideoPreset = Preset,
             VideoTune = Tune,
+            SvtAv1Preset = SvtAv1Preset,
             VideoCustomArgs = CustomVideoArgs,
             AudioEncoderId = SelectedAudioEncoder?.Id ?? "ffmpeg-audio-opus",
             AudioBitrateMode = AudioBitrateMode,
             AudioBitrate = AudioBitrate,
+            AudioCustomArgs = CustomAudioArgs,
+            AudioChannelMode = AudioChannelMode,
+            AudioSampleRate = AudioSampleRate,
+            AudioNormalization = AudioNormalization,
+            NormalizationTarget = NormalizationTarget,
+            TruePeakLimit = TruePeakLimit,
+            AudioSampleFormat = AudioSampleFormat,
+            AudioOnly = AudioOnly,
             Container = Container,
+            FilterEngineId = _filterTab?.SelectedEngine?.Id,
+            Filters = _filterTab?.Chain.Filters.Select(af => new ProfileFilter
+            {
+                FilterId = af.Filter.Id,
+                Parameters = new Dictionary<string, object>(af.ParameterValues),
+            }).ToList() ?? [],
         };
 
         _services.ProfileManager.Save(profile);
@@ -311,7 +464,11 @@ public partial class EncodeTabViewModel : ViewModelBase, IDisposable
     private void AddToQueue()
     {
         if (string.IsNullOrWhiteSpace(InputFile) || string.IsNullOrWhiteSpace(OutputFile))
+        {
+            HasError = true;
+            StatusMessage = "Input and output files must be specified.";
             return;
+        }
 
         if (!File.Exists(InputFile))
         {
@@ -322,13 +479,46 @@ public partial class EncodeTabViewModel : ViewModelBase, IDisposable
 
         try
         {
-            // Validate the output path is legal
             _ = Path.GetFullPath(OutputFile);
         }
         catch
         {
             HasError = true;
             StatusMessage = $"Invalid output path: {OutputFile}";
+            return;
+        }
+
+        // Validate output directory is writable
+        var outputDir = Path.GetDirectoryName(Path.GetFullPath(OutputFile));
+        if (!string.IsNullOrEmpty(outputDir))
+        {
+            try { Directory.CreateDirectory(outputDir); }
+            catch (Exception ex)
+            {
+                HasError = true;
+                StatusMessage = $"Cannot create output directory: {ex.Message}";
+                return;
+            }
+        }
+
+        if (!AudioOnly && SelectedVideoEncoder is null)
+        {
+            HasError = true;
+            StatusMessage = "No video encoder selected.";
+            return;
+        }
+
+        if (SelectedAudioEncoder is null)
+        {
+            HasError = true;
+            StatusMessage = "No audio encoder selected.";
+            return;
+        }
+
+        if (MediaInfo is null)
+        {
+            HasError = true;
+            StatusMessage = "File not analyzed yet. Click 'Analyze' or drop a file first.";
             return;
         }
 
@@ -381,57 +571,54 @@ public partial class EncodeTabViewModel : ViewModelBase, IDisposable
         if (!string.IsNullOrEmpty(outputDir))
             Directory.CreateDirectory(outputDir);
 
-        var encoderId = SelectedVideoEncoder?.Id ?? "ffmpeg-x265";
+        // Audio-only mode skips video entirely
+        VideoJob? videoJob = null;
+        string? tempVideoFile = null;
 
-        // Create the correct settings subclass based on selected encoder
-        VideoEncoderSettings videoSettings = encoderId switch
+        if (!AudioOnly)
         {
-            "ffmpeg-x264" or "cli-x264" => new X264Settings(),
-            "ffmpeg-x265" or "cli-x265" => new X265Settings(),
-            "ffmpeg-svtav1" => new SvtAv1Settings(),
-            _ => new VideoEncoderSettings()
-        };
-        videoSettings.Mode = EncodingMode;
-        videoSettings.Quality = Quality;
-        videoSettings.Bitrate = Bitrate;
-        videoSettings.Preset = Preset;
-        videoSettings.Tune = Tune;
-        videoSettings.CustomArgs = CustomVideoArgs;
+            var encoderId = SelectedVideoEncoder?.Id ?? "ffmpeg-x265";
 
-        // Generate filter script from filter chain if configured
-        string? filterScript = null;
-        if (_filterTab?.SelectedEngine is not null && _filterTab.Chain.Filters.Count > 0)
-            filterScript = _filterTab.SelectedEngine.GenerateScript(_filterTab.Chain, inputFile);
+            VideoEncoderSettings videoSettings = encoderId switch
+            {
+                "ffmpeg-x264" or "cli-x264" => new X264Settings(),
+                "ffmpeg-x265" or "cli-x265" => new X265Settings(),
+                "ffmpeg-svtav1" => new SvtAv1Settings { SvtPreset = SvtAv1Preset },
+                _ => new VideoEncoderSettings()
+            };
+            videoSettings.Mode = EncodingMode;
+            videoSettings.Quality = Quality;
+            videoSettings.Bitrate = Bitrate;
+            videoSettings.Preset = Preset;
+            videoSettings.Tune = Tune;
+            videoSettings.CustomArgs = CustomVideoArgs;
 
-        var tempVideoFile = Path.Combine(
-            _services.Settings.TempDirectory,
-            $"moist_v_{Guid.NewGuid():N}_{Path.GetFileNameWithoutExtension(outputFile)}.mkv");
+            string? filterScript = null;
+            if (_filterTab?.SelectedEngine is not null && _filterTab.Chain.Filters.Count > 0)
+                filterScript = _filterTab.SelectedEngine.GenerateScript(_filterTab.Chain, inputFile);
 
-        var videoJob = new VideoJob
-        {
-            Name = $"Video: {Path.GetFileName(inputFile)}",
-            InputFile = inputFile,
-            OutputFile = tempVideoFile,
-            EncoderId = encoderId,
-            Settings = videoSettings,
-            FilterScript = filterScript,
-            TotalFrames = info?.Video?.TotalFrames ?? 0,
-        };
+            tempVideoFile = Path.Combine(
+                _services.Settings.TempDirectory,
+                $"moist_v_{Guid.NewGuid():N}_{Path.GetFileNameWithoutExtension(outputFile)}.mkv");
+
+            videoJob = new VideoJob
+            {
+                Name = $"Video: {Path.GetFileName(inputFile)}",
+                InputFile = inputFile,
+                OutputFile = tempVideoFile,
+                EncoderId = encoderId,
+                Settings = videoSettings,
+                FilterScript = filterScript,
+                TotalFrames = info?.Video?.TotalFrames ?? 0,
+            };
+        }
 
         var tempAudioFile = Path.Combine(
             _services.Settings.TempDirectory,
             $"moist_a_{Guid.NewGuid():N}_{Path.GetFileNameWithoutExtension(outputFile)}.mka");
 
         var audioEncoderId = SelectedAudioEncoder?.Id ?? "ffmpeg-audio-opus";
-        AudioEncoderSettings audioSettings = audioEncoderId switch
-        {
-            "ffmpeg-audio-opus" => new OpusSettings(),
-            "ffmpeg-audio-aac" => new AacSettings(),
-            "ffmpeg-audio-flac" => new FlacSettings(),
-            _ => new AudioEncoderSettings()
-        };
-        audioSettings.BitrateMode = AudioBitrateMode;
-        audioSettings.Bitrate = AudioBitrate;
+        var audioSettings = CreateAudioSettings(audioEncoderId);
 
         var audioJob = new AudioJob
         {
@@ -443,6 +630,14 @@ public partial class EncodeTabViewModel : ViewModelBase, IDisposable
             TotalDurationSeconds = info?.Duration.TotalSeconds ?? 0,
             AudioStreamIndex = SelectedAudioTrackIndex,
         };
+
+        // Audio-only mode: encode audio directly to output, no video or mux
+        if (AudioOnly)
+        {
+            audioJob.OutputFile = outputFile;
+            _services.JobQueue.Enqueue(audioJob);
+            return audioJob.Id;
+        }
 
         // Build subtitle inputs if CopySubtitles is enabled
         var subtitleInputs = new List<SubtitleTrackInput>();
@@ -461,6 +656,20 @@ public partial class EncodeTabViewModel : ViewModelBase, IDisposable
             }
         }
 
+        // Add external subtitle file if specified
+        if (!string.IsNullOrWhiteSpace(ExternalSubtitleFile) && File.Exists(ExternalSubtitleFile))
+        {
+            subtitleInputs.Add(new SubtitleTrackInput
+            {
+                FilePath = ExternalSubtitleFile,
+                IsDefault = subtitleInputs.Count == 0,
+            });
+        }
+
+        var dependsOn = new List<string>();
+        if (videoJob is not null) dependsOn.Add(videoJob.Id);
+        dependsOn.Add(audioJob.Id);
+
         var muxJob = new MuxJob
         {
             Name = $"Mux: {Path.GetFileName(outputFile)}",
@@ -471,25 +680,57 @@ public partial class EncodeTabViewModel : ViewModelBase, IDisposable
             VideoInput = tempVideoFile,
             AudioInputs = [new AudioTrackInput { FilePath = tempAudioFile }],
             SubtitleInputs = subtitleInputs,
-            DependsOn = [videoJob.Id, audioJob.Id],
+            DependsOn = dependsOn,
+            TotalDurationSeconds = info?.Duration.TotalSeconds ?? 0,
         };
 
-        muxJob.FilesToCleanup.Add(tempVideoFile);
+        if (tempVideoFile is not null) muxJob.FilesToCleanup.Add(tempVideoFile);
         muxJob.FilesToCleanup.Add(tempAudioFile);
 
-        _services.JobQueue.Enqueue(videoJob);
+        if (videoJob is not null) _services.JobQueue.Enqueue(videoJob);
         _services.JobQueue.Enqueue(audioJob);
         _services.JobQueue.Enqueue(muxJob);
 
         return muxJob.Id;
     }
 
+    private AudioEncoderSettings CreateAudioSettings(string audioEncoderId)
+    {
+        AudioEncoderSettings s = audioEncoderId switch
+        {
+            "ffmpeg-audio-opus" => new OpusSettings { Complexity = OpusComplexity },
+            "ffmpeg-audio-aac" => new AacSettings { Profile = string.IsNullOrEmpty(AacProfile) ? null : AacProfile },
+            "ffmpeg-audio-mp3" => new Mp3Settings { VbrScale = Mp3VbrScale },
+            "ffmpeg-audio-flac" => new FlacSettings { CompressionLevel = FlacCompressionLevel },
+            "ffmpeg-audio-ac3" => new Ac3Settings { DialogueNormalization = Ac3DialogueNorm },
+            "ffmpeg-audio-eac3" => new Eac3Settings { DialogueNormalization = Eac3DialogueNorm },
+            "ffmpeg-audio-vorbis" => new VorbisSettings { QualityScale = VorbisQuality },
+            _ => new AudioEncoderSettings()
+        };
+
+        s.BitrateMode = AudioBitrateMode;
+        s.Bitrate = AudioBitrate;
+        s.ChannelMode = AudioChannelMode;
+        s.SampleRate = AudioSampleRate > 0 ? AudioSampleRate : null;
+        s.CustomArgs = CustomAudioArgs;
+        s.Normalization = AudioNormalization;
+        s.NormalizationTarget = NormalizationTarget;
+        s.TruePeakLimit = TruePeakLimit;
+        s.SampleFormat = AudioSampleFormat;
+        return s;
+    }
+
     public void Dispose()
     {
+        _analysisCts?.Cancel();
+        _analysisCts?.Dispose();
+        _analysisCts = null;
         _previewDebounce?.Cancel();
         _previewDebounce?.Dispose();
         _previewDebounce = null;
         PreviewImage?.Dispose();
         PreviewImage = null;
+        _previewStream?.Dispose();
+        _previewStream = null;
     }
 }

@@ -52,7 +52,7 @@
 
                         <!-- Status / Error Message -->
                         <TextBlock Text="{Binding StatusMessage}"
-                                   IsVisible="{Binding StatusMessage.Length}"
+                                   IsVisible="{Binding StatusMessage, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
                                    FontSize="12" Margin="0,4,0,0" Opacity="0.8"/>
 
                         <!-- Media Info Display -->
@@ -89,7 +89,7 @@
                     <StackPanel Spacing="8">
                         <TextBlock Text="Video Encoder" Classes="section-header"/>
 
-                        <Grid ColumnDefinitions="120,*,120,*" RowDefinitions="Auto,Auto,Auto,Auto" RowSpacing="8" ColumnSpacing="8">
+                        <Grid ColumnDefinitions="120,*,120,*" RowDefinitions="Auto,Auto,Auto,Auto,Auto" RowSpacing="8" ColumnSpacing="8">
                             <TextBlock Text="Codec:" VerticalAlignment="Center"/>
                             <ComboBox Grid.Column="1"
                                       ItemsSource="{Binding VideoEncoders}"
@@ -129,8 +129,16 @@
                                 <TextBlock Text="kbps" VerticalAlignment="Center"/>
                             </StackPanel>
 
-                            <TextBlock Text="Custom Args:" VerticalAlignment="Center" Grid.Row="3"/>
-                            <TextBox Grid.Row="3" Grid.Column="1" Grid.ColumnSpan="3"
+                            <TextBlock Text="AV1 Preset:" VerticalAlignment="Center" Grid.Row="3"/>
+                            <StackPanel Grid.Row="3" Grid.Column="1" Orientation="Horizontal" Spacing="8">
+                                <NumericUpDown Value="{Binding SvtAv1Preset}" Minimum="0" Maximum="13"
+                                               Increment="1" Width="100"/>
+                                <TextBlock Text="(0=slowest, 13=fastest)" VerticalAlignment="Center"
+                                           FontSize="11" Opacity="0.6"/>
+                            </StackPanel>
+
+                            <TextBlock Text="Custom Args:" VerticalAlignment="Center" Grid.Row="4"/>
+                            <TextBox Grid.Row="4" Grid.Column="1" Grid.ColumnSpan="3"
                                      Text="{Binding CustomVideoArgs}"
                                      Watermark="Additional encoder arguments..."/>
                         </Grid>
@@ -140,9 +148,14 @@
                 <!-- Audio Encoder Section -->
                 <Border Classes="section">
                     <StackPanel Spacing="8">
-                        <TextBlock Text="Audio Encoder" Classes="section-header"/>
+                        <StackPanel Orientation="Horizontal" Spacing="16">
+                            <TextBlock Text="Audio Encoder" Classes="section-header"/>
+                            <CheckBox Content="Audio Only (no video)" IsChecked="{Binding AudioOnly}"
+                                      VerticalAlignment="Center" FontSize="12"/>
+                        </StackPanel>
 
-                        <Grid ColumnDefinitions="120,*,120,*" RowDefinitions="Auto,Auto,Auto" RowSpacing="8" ColumnSpacing="8">
+                        <Grid ColumnDefinitions="120,*,120,*" RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto" RowSpacing="8" ColumnSpacing="8">
+                            <!-- Row 0: Codec + Bitrate Mode -->
                             <TextBlock Text="Codec:" VerticalAlignment="Center"/>
                             <ComboBox Grid.Column="1"
                                       ItemsSource="{Binding AudioEncoders}"
@@ -150,23 +163,117 @@
                                       DisplayMemberBinding="{Binding Name}"
                                       HorizontalAlignment="Stretch"/>
 
-                            <TextBlock Text="Bitrate:" VerticalAlignment="Center" Grid.Column="2"/>
-                            <StackPanel Grid.Column="3" Orientation="Horizontal" Spacing="8">
-                                <NumericUpDown Value="{Binding AudioBitrate}" Minimum="32" Maximum="640"
+                            <TextBlock Text="Bitrate Mode:" VerticalAlignment="Center" Grid.Column="2"/>
+                            <ComboBox Grid.Column="3"
+                                      ItemsSource="{x:Static vm:EncodeTabViewModel.AudioBitrateModeOptions}"
+                                      SelectedItem="{Binding AudioBitrateMode}"
+                                      HorizontalAlignment="Stretch"/>
+
+                            <!-- Row 1: Bitrate + Channel Mode -->
+                            <TextBlock Text="Bitrate:" VerticalAlignment="Center" Grid.Row="1"/>
+                            <StackPanel Grid.Row="1" Grid.Column="1" Orientation="Horizontal" Spacing="8">
+                                <NumericUpDown Value="{Binding AudioBitrate}" Minimum="8" Maximum="1536"
                                                Increment="32" Width="120"/>
                                 <TextBlock Text="kbps" VerticalAlignment="Center"/>
                             </StackPanel>
 
-                            <TextBlock Text="Audio Track:" VerticalAlignment="Center" Grid.Row="1"/>
-                            <ComboBox Grid.Row="1" Grid.Column="1" Grid.ColumnSpan="3"
+                            <TextBlock Text="Channels:" VerticalAlignment="Center" Grid.Row="1" Grid.Column="2"/>
+                            <ComboBox Grid.Row="1" Grid.Column="3"
+                                      ItemsSource="{x:Static vm:EncodeTabViewModel.AudioChannelModeOptions}"
+                                      SelectedItem="{Binding AudioChannelMode}"
+                                      HorizontalAlignment="Stretch"/>
+
+                            <!-- Row 2: Sample Rate + Sample Format -->
+                            <TextBlock Text="Sample Rate:" VerticalAlignment="Center" Grid.Row="2"/>
+                            <ComboBox Grid.Row="2" Grid.Column="1"
+                                      ItemsSource="{x:Static vm:EncodeTabViewModel.SampleRateOptions}"
+                                      SelectedItem="{Binding AudioSampleRate}"
+                                      HorizontalAlignment="Stretch"/>
+
+                            <TextBlock Text="Sample Fmt:" VerticalAlignment="Center" Grid.Row="2" Grid.Column="2"/>
+                            <ComboBox Grid.Row="2" Grid.Column="3"
+                                      ItemsSource="{x:Static vm:EncodeTabViewModel.SampleFormatOptions}"
+                                      SelectedItem="{Binding AudioSampleFormat}"
+                                      HorizontalAlignment="Stretch"/>
+
+                            <!-- Row 3: Normalization -->
+                            <TextBlock Text="Normalize:" VerticalAlignment="Center" Grid.Row="3"/>
+                            <ComboBox Grid.Row="3" Grid.Column="1"
+                                      ItemsSource="{x:Static vm:EncodeTabViewModel.NormalizationModeOptions}"
+                                      SelectedItem="{Binding AudioNormalization}"
+                                      HorizontalAlignment="Stretch"/>
+
+                            <TextBlock Text="Target LUFS:" VerticalAlignment="Center" Grid.Row="3" Grid.Column="2"/>
+                            <StackPanel Grid.Row="3" Grid.Column="3" Orientation="Horizontal" Spacing="8">
+                                <NumericUpDown Value="{Binding NormalizationTarget}" Minimum="-70" Maximum="0"
+                                               Increment="1" FormatString="F1" Width="100"/>
+                                <TextBlock Text="TP:" VerticalAlignment="Center"/>
+                                <NumericUpDown Value="{Binding TruePeakLimit}" Minimum="-10" Maximum="0"
+                                               Increment="0.5" FormatString="F1" Width="80"/>
+                            </StackPanel>
+
+                            <!-- Row 4: Codec-specific options -->
+                            <TextBlock Text="Codec Opts:" VerticalAlignment="Center" Grid.Row="4"/>
+                            <StackPanel Grid.Row="4" Grid.Column="1" Grid.ColumnSpan="3" Orientation="Horizontal" Spacing="16">
+                                <StackPanel Orientation="Horizontal" Spacing="4">
+                                    <TextBlock Text="Opus Complexity:" VerticalAlignment="Center" FontSize="11"/>
+                                    <NumericUpDown Value="{Binding OpusComplexity}" Minimum="0" Maximum="10"
+                                                   Increment="1" Width="80" FontSize="11"/>
+                                </StackPanel>
+                                <StackPanel Orientation="Horizontal" Spacing="4">
+                                    <TextBlock Text="AAC Profile:" VerticalAlignment="Center" FontSize="11"/>
+                                    <ComboBox ItemsSource="{x:Static vm:EncodeTabViewModel.AacProfileOptions}"
+                                              SelectedItem="{Binding AacProfile}" Width="110" FontSize="11"/>
+                                </StackPanel>
+                                <StackPanel Orientation="Horizontal" Spacing="4">
+                                    <TextBlock Text="MP3 VBR:" VerticalAlignment="Center" FontSize="11"/>
+                                    <NumericUpDown Value="{Binding Mp3VbrScale}" Minimum="0" Maximum="9"
+                                                   Increment="1" Width="70" FontSize="11"/>
+                                </StackPanel>
+                                <StackPanel Orientation="Horizontal" Spacing="4">
+                                    <TextBlock Text="FLAC Level:" VerticalAlignment="Center" FontSize="11"/>
+                                    <NumericUpDown Value="{Binding FlacCompressionLevel}" Minimum="0" Maximum="12"
+                                                   Increment="1" Width="70" FontSize="11"/>
+                                </StackPanel>
+                                <StackPanel Orientation="Horizontal" Spacing="4">
+                                    <TextBlock Text="Vorbis Q:" VerticalAlignment="Center" FontSize="11"/>
+                                    <NumericUpDown Value="{Binding VorbisQuality}" Minimum="-1" Maximum="10"
+                                                   Increment="1" Width="70" FontSize="11"/>
+                                </StackPanel>
+                            </StackPanel>
+
+                            <!-- Row 5: Custom audio args -->
+                            <TextBlock Text="Custom Args:" VerticalAlignment="Center" Grid.Row="5"/>
+                            <TextBox Grid.Row="5" Grid.Column="1" Grid.ColumnSpan="3"
+                                     Text="{Binding CustomAudioArgs}"
+                                     Watermark="Additional audio encoder arguments..."/>
+
+                            <!-- Row 6: Audio Track -->
+                            <TextBlock Text="Audio Track:" VerticalAlignment="Center" Grid.Row="6"/>
+                            <ComboBox Grid.Row="6" Grid.Column="1" Grid.ColumnSpan="3"
                                       ItemsSource="{Binding AudioTrackLabels}"
                                       SelectedIndex="{Binding SelectedAudioTrackIndex}"
                                       HorizontalAlignment="Stretch"/>
 
-                            <TextBlock Text="Subtitles:" VerticalAlignment="Center" Grid.Row="2"/>
-                            <CheckBox Grid.Row="2" Grid.Column="1"
-                                      Content="Copy subtitles from source"
-                                      IsChecked="{Binding CopySubtitles}"/>
+                            <!-- Row 7: Subtitles -->
+                            <TextBlock Text="Subtitles:" VerticalAlignment="Center" Grid.Row="7"/>
+                            <StackPanel Grid.Row="7" Grid.Column="1" Grid.ColumnSpan="3" Spacing="4">
+                                <CheckBox Content="Copy subtitles from source"
+                                          IsChecked="{Binding CopySubtitles}"/>
+                                <ItemsControl ItemsSource="{Binding SubtitleTrackLabels}" IsVisible="{Binding CopySubtitles}">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <TextBlock Text="{Binding}" FontSize="11" Opacity="0.6" Margin="20,0,0,0"/>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                                <StackPanel Orientation="Horizontal" Spacing="4">
+                                    <TextBlock Text="External sub:" FontSize="11" VerticalAlignment="Center"/>
+                                    <TextBox Text="{Binding ExternalSubtitleFile}" Width="250"
+                                             Watermark="(optional) .srt/.ass file"
+                                             FontSize="11"/>
+                                </StackPanel>
+                            </StackPanel>
                         </Grid>
                     </StackPanel>
                 </Border>

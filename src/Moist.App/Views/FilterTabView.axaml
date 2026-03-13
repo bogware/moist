@@ -179,7 +179,7 @@
                            Margin="0,0,0,8"/>
 
                 <!-- No Filter Selected State -->
-                <TextBlock IsVisible="{Binding !SelectedAppliedFilter, Converter={x:Static ObjectConverters.IsNotNull}}"
+                <TextBlock IsVisible="{Binding SelectedAppliedFilter, Converter={x:Static ObjectConverters.IsNull}}"
                            Text="Select a filter in the chain to edit its parameters"
                            Opacity="0.3" FontSize="12" TextWrapping="Wrap"
                            HorizontalAlignment="Center" VerticalAlignment="Center"/>

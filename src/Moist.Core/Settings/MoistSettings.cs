@@ -29,6 +29,9 @@ public sealed class MoistSettings
     public string Theme { get; set; } = "moist Dark";
     public double WindowWidth { get; set; } = 1200;
     public double WindowHeight { get; set; } = 800;
+    public double WindowX { get; set; } = double.NaN;
+    public double WindowY { get; set; } = double.NaN;
+    public bool WindowMaximized { get; set; }
 
     // Defaults
     public string DefaultOutputDirectory { get; set; } = string.Empty;

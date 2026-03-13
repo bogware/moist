@@ -7,7 +7,8 @@
         mc:Ignorable="d" d:DesignWidth="1200" d:DesignHeight="800"
         x:Class="Moist.App.Views.MainWindow"
         x:DataType="vm:MainWindowViewModel"
-        Title="moist"
+        Title="{Binding WindowTitle}"
+        Icon="avares://Moist.App/Assets/moist.ico"
         Width="1200" Height="800"
         MinWidth="800" MinHeight="600">
 
@@ -43,7 +44,7 @@
                 <TextBlock Text="{Binding StatusText}" FontSize="12" Opacity="0.7" VerticalAlignment="Center"/>
                 <TextBlock Grid.Column="1" Classes="hint"
                            VerticalAlignment="Center"
-                           Text="Ctrl+O Open  Ctrl+Q Queue  Ctrl+R Run  Ctrl+S Save  Ctrl+1-6 Tabs"/>
+                           Text="Ctrl+O Open  Ctrl+Q Queue  Ctrl+R Run  Ctrl+S Save  Ctrl+T Theme  Del/Space Queue  Ctrl+1-6 Tabs"/>
             </Grid>
         </Border>
 

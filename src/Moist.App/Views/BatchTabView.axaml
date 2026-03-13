@@ -62,9 +62,18 @@
                           IsReadOnly="True"
                           IsVisible="{Binding Items.Count}">
                     <DataGrid.Columns>
-                        <DataGridTextColumn Header="File" Binding="{Binding FileName}" Width="250"/>
+                        <DataGridTextColumn Header="File" Binding="{Binding FileName}" Width="200"/>
                         <DataGridTextColumn Header="Input Path" Binding="{Binding InputFile}" Width="*"/>
                         <DataGridTextColumn Header="Output Path" Binding="{Binding OutputFile}" Width="*"/>
+                        <DataGridTemplateColumn Header="Profile" Width="180">
+                            <DataGridTemplateColumn.CellTemplate>
+                                <DataTemplate x:DataType="vm:BatchItemViewModel">
+                                    <ComboBox SelectedItem="{Binding ProfileOverride}"
+                                              ItemsSource="{Binding $parent[DataGrid].((vm:BatchTabViewModel)DataContext).AvailableProfiles}"
+                                              HorizontalAlignment="Stretch" Padding="4,2"/>
+                                </DataTemplate>
+                            </DataGridTemplateColumn.CellTemplate>
+                        </DataGridTemplateColumn>
                         <DataGridTextColumn Header="Status" Binding="{Binding Status}" Width="80"/>
                         <DataGridTemplateColumn Header="" Width="60">
                             <DataGridTemplateColumn.CellTemplate>

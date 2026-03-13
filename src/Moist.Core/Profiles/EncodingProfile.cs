@@ -24,6 +24,7 @@ public sealed class EncodingProfile
     public int VideoBitrate { get; set; } = 5000;
     public VideoPreset VideoPreset { get; set; } = VideoPreset.Medium;
     public VideoTune VideoTune { get; set; } = VideoTune.None;
+    public int SvtAv1Preset { get; set; } = 6;
     public string VideoCustomArgs { get; set; } = string.Empty;
 
     // Audio settings
@@ -31,9 +32,27 @@ public sealed class EncodingProfile
     public AudioBitrateMode AudioBitrateMode { get; set; } = AudioBitrateMode.Vbr;
     public int AudioBitrate { get; set; } = 128;
     public string AudioCustomArgs { get; set; } = string.Empty;
+    public AudioChannelMode AudioChannelMode { get; set; } = AudioChannelMode.KeepOriginal;
+    public int AudioSampleRate { get; set; }
+    public AudioNormalizationMode AudioNormalization { get; set; } = AudioNormalizationMode.None;
+    public double NormalizationTarget { get; set; } = -16.0;
+    public double TruePeakLimit { get; set; } = -1.0;
+    public AudioSampleFormat AudioSampleFormat { get; set; } = AudioSampleFormat.Auto;
+    public bool AudioOnly { get; set; }
 
     // Container
     public ContainerFormat Container { get; set; } = ContainerFormat.Mkv;
+
+    // Filter chain (optional — engine ID + list of filter ID + param pairs)
+    public string? FilterEngineId { get; set; }
+    public List<ProfileFilter> Filters { get; set; } = [];
+}
+
+/// <summary>Serializable filter entry within a profile.</summary>
+public sealed class ProfileFilter
+{
+    public string FilterId { get; set; } = string.Empty;
+    public Dictionary<string, object> Parameters { get; set; } = new();
 }
 
 /// <summary>
@@ -76,6 +95,23 @@ public sealed class ProfileManager
         return profiles.OrderBy(p => p.Name).ToList();
     }
 
+    public async Task<List<EncodingProfile>> GetAllProfilesAsync(CancellationToken ct = default)
+    {
+        var profiles = new List<EncodingProfile>();
+        foreach (var file in Directory.GetFiles(_profilesDir, "*.json"))
+        {
+            try
+            {
+                var json = await File.ReadAllTextAsync(file, ct);
+                var profile = JsonSerializer.Deserialize<EncodingProfile>(json, JsonOptions);
+                if (profile is not null)
+                    profiles.Add(profile);
+            }
+            catch { /* skip corrupt profiles */ }
+        }
+        return profiles.OrderBy(p => p.Name).ToList();
+    }
+
     public void Save(EncodingProfile profile)
     {
         profile.ModifiedAt = DateTime.UtcNow;
@@ -83,6 +119,15 @@ public sealed class ProfileManager
         var path = Path.Combine(_profilesDir, fileName);
         var json = JsonSerializer.Serialize(profile, JsonOptions);
         File.WriteAllText(path, json);
+    }
+
+    public async Task SaveAsync(EncodingProfile profile, CancellationToken ct = default)
+    {
+        profile.ModifiedAt = DateTime.UtcNow;
+        var fileName = SanitizeFileName(profile.Name) + ".json";
+        var path = Path.Combine(_profilesDir, fileName);
+        var json = JsonSerializer.Serialize(profile, JsonOptions);
+        await File.WriteAllTextAsync(path, json, ct);
     }
 
     public void Delete(string profileName)
@@ -100,6 +145,16 @@ public sealed class ProfileManager
         if (!File.Exists(path)) return null;
 
         var json = File.ReadAllText(path);
+        return JsonSerializer.Deserialize<EncodingProfile>(json, JsonOptions);
+    }
+
+    public async Task<EncodingProfile?> LoadAsync(string profileName, CancellationToken ct = default)
+    {
+        var fileName = SanitizeFileName(profileName) + ".json";
+        var path = Path.Combine(_profilesDir, fileName);
+        if (!File.Exists(path)) return null;
+
+        var json = await File.ReadAllTextAsync(path, ct);
         return JsonSerializer.Deserialize<EncodingProfile>(json, JsonOptions);
     }
 

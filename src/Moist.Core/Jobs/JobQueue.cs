@@ -13,25 +13,50 @@ public sealed class JobQueue : IDisposable
     private readonly ConcurrentDictionary<string, Job> _jobs = new();
     private readonly ConcurrentDictionary<string, CancellationTokenSource> _jobCts = new();
     private readonly List<IJobProcessor> _processors = [];
+    private readonly List<Func<IJobProcessor>> _processorFactories = [];
     private readonly object _processorsLock = new();
     private readonly SemaphoreSlim _workerSemaphore;
     private readonly ILogger<JobQueue> _logger;
     private CancellationTokenSource? _cts;
     private readonly object _startLock = new();
     private Task? _runningTask;
+    private readonly ConcurrentQueue<Job> _pendingQueue = new();
+    private readonly SemaphoreSlim _pendingSignal = new(0);
 
     public event EventHandler<Job>? JobAdded;
     public event EventHandler<Job>? JobStatusChanged;
     public event EventHandler<(Job Job, JobProgress Progress)>? JobProgressUpdated;
 
-    public int MaxConcurrentJobs { get; set; }
+    private int _maxConcurrentJobs;
+    public int MaxConcurrentJobs
+    {
+        get => _maxConcurrentJobs;
+        set
+        {
+            if (value < 1) value = 1;
+            if (value == _maxConcurrentJobs) return;
+            var old = _maxConcurrentJobs;
+            _maxConcurrentJobs = value;
+
+            // Adjust the semaphore to reflect the new limit.
+            // If increasing, release extra slots. If decreasing, the semaphore
+            // will naturally throttle as permits are consumed.
+            if (value > old)
+            {
+                var diff = value - old;
+                _workerSemaphore.Release(diff);
+            }
+            _logger.LogInformation("MaxConcurrentJobs changed from {Old} to {New}", old, value);
+        }
+    }
+
     public IReadOnlyDictionary<string, Job> Jobs => _jobs;
     public bool IsRunning => _cts is not null && !_cts.IsCancellationRequested;
 
     public JobQueue(int maxConcurrentJobs = 1, ILoggerFactory? loggerFactory = null)
     {
-        MaxConcurrentJobs = maxConcurrentJobs;
-        _workerSemaphore = new SemaphoreSlim(maxConcurrentJobs, maxConcurrentJobs);
+        _maxConcurrentJobs = maxConcurrentJobs;
+        _workerSemaphore = new SemaphoreSlim(maxConcurrentJobs, int.MaxValue);
         _logger = loggerFactory?.CreateLogger<JobQueue>() ?? NullLogger<JobQueue>.Instance;
         LoggerFactory = loggerFactory;
     }
@@ -47,12 +72,29 @@ public sealed class JobQueue : IDisposable
             _processors.Add(processor);
     }
 
+    /// <summary>
+    /// Register a processor factory. A fresh instance is created per job to avoid shared mutable state
+    /// (stopwatches, frame counters) between concurrent jobs.
+    /// </summary>
+    public void RegisterProcessorFactory(Func<IJobProcessor> factory)
+    {
+        lock (_processorsLock)
+            _processorFactories.Add(factory);
+    }
+
     public void Enqueue(Job job)
     {
         job.Status = JobStatus.Queued;
         _jobs[job.Id] = job;
         _logger.LogInformation("Job enqueued: {JobId} ({JobType})", job.Id, job.JobType);
         RaiseEvent(JobAdded, job);
+
+        // If the queue is already running, signal the dispatcher to pick up new jobs
+        if (IsRunning)
+        {
+            _pendingQueue.Enqueue(job);
+            _pendingSignal.Release();
+        }
     }
 
     /// <summary>Remove a job from the queue. If running, cancels it.</summary>
@@ -81,20 +123,71 @@ public sealed class JobQueue : IDisposable
 
     public async Task StartAsync()
     {
+        Task allTasks;
         lock (_startLock)
         {
             if (IsRunning) return;
             _cts = new CancellationTokenSource();
+
+            var ct = _cts.Token;
+
+            // Launch tasks for all currently queued jobs
+            var tasks = new List<Task>();
+            var pendingJobs = _jobs.Values
+                .Where(j => j.Status == JobStatus.Queued)
+                .ToList();
+
+            foreach (var job in pendingJobs)
+                tasks.Add(ProcessJobAsync(job, ct));
+
+            // Also start a dispatcher that picks up newly enqueued jobs
+            tasks.Add(DispatchNewJobsAsync(ct));
+
+            allTasks = Task.WhenAll(tasks);
+            _runningTask = allTasks;
         }
 
-        var ct = _cts!.Token;
+        try
+        {
+            await allTasks;
+        }
+        catch (OperationCanceledException)
+        {
+            // Normal shutdown via Stop()
+        }
+    }
 
-        var pendingJobs = _jobs.Values
-            .Where(j => j.Status == JobStatus.Queued)
-            .ToList();
+    /// <summary>
+    /// Background loop that picks up jobs enqueued while the queue is running.
+    /// </summary>
+    private async Task DispatchNewJobsAsync(CancellationToken ct)
+    {
+        var dispatched = new List<Task>();
 
-        _runningTask = Task.WhenAll(pendingJobs.Select(job => ProcessJobAsync(job, ct)));
-        await _runningTask;
+        while (!ct.IsCancellationRequested)
+        {
+            try
+            {
+                await _pendingSignal.WaitAsync(ct);
+            }
+            catch (OperationCanceledException)
+            {
+                break;
+            }
+
+            while (_pendingQueue.TryDequeue(out var job))
+            {
+                if (job.Status == JobStatus.Queued)
+                    dispatched.Add(ProcessJobAsync(job, ct));
+            }
+        }
+
+        // Wait for any dynamically dispatched jobs to finish
+        if (dispatched.Count > 0)
+        {
+            try { await Task.WhenAll(dispatched); }
+            catch (OperationCanceledException) { }
+        }
     }
 
     public void Stop()
@@ -114,6 +207,7 @@ public sealed class JobQueue : IDisposable
         _cts?.Dispose();
         _cts = null;
         _workerSemaphore.Dispose();
+        _pendingSignal.Dispose();
 
         // Dispose all per-job CTS
         foreach (var cts in _jobCts.Values)
@@ -135,6 +229,17 @@ public sealed class JobQueue : IDisposable
             {
                 ct.ThrowIfCancellationRequested();
 
+                // Check if any dependency doesn't exist in the queue — treat as failed
+                var missingDep = job.DependsOn.FirstOrDefault(depId => !_jobs.ContainsKey(depId));
+                if (missingDep is not null)
+                {
+                    job.Status = JobStatus.Failed;
+                    job.ErrorMessage = $"Dependency not found: {missingDep}";
+                    _logger.LogError("Job {JobId} has missing dependency: {DepId}", job.Id, missingDep);
+                    RaiseEvent(JobStatusChanged, job);
+                    return;
+                }
+
                 var allDone = job.DependsOn.All(depId =>
                     _jobs.TryGetValue(depId, out var dep) && dep.Status == JobStatus.Completed);
 
@@ -147,7 +252,7 @@ public sealed class JobQueue : IDisposable
                 if (anyFailed)
                 {
                     job.Status = JobStatus.Failed;
-                    job.ErrorMessage = "Dependency failed";
+                    job.ErrorMessage = "Dependency failed or was cancelled";
                     RaiseEvent(JobStatusChanged, job);
                     return;
                 }
@@ -175,14 +280,33 @@ public sealed class JobQueue : IDisposable
 
         try
         {
-            IJobProcessor? processor;
+            // Create a fresh processor per job via factories to avoid shared mutable state
+            // (stopwatches, frame counters) between concurrent jobs
+            IJobProcessor? processor = null;
             lock (_processorsLock)
-                processor = _processors.FirstOrDefault(p => p.CanProcess(job));
+            {
+                foreach (var factory in _processorFactories)
+                {
+                    var candidate = factory();
+                    if (candidate is CommandLineProcessor clp)
+                        clp.SetLogger(LoggerFactory);
+                    if (candidate.CanProcess(job))
+                    {
+                        processor = candidate;
+                        break;
+                    }
+                }
+                // Fall back to shared singleton processors (for custom/third-party processors)
+                processor ??= _processors.FirstOrDefault(p => p.CanProcess(job));
+            }
 
             if (processor is null)
             {
                 job.Status = JobStatus.Failed;
                 job.ErrorMessage = $"No processor found for job type: {job.JobType}";
+                _logger.LogError("No processor found for job {JobId} (type: {JobType}, encoderId: {EncoderId})",
+                    job.Id, job.JobType,
+                    job is VideoJob vj ? vj.EncoderId : job is AudioJob aj ? aj.EncoderId : "N/A");
                 RaiseEvent(JobStatusChanged, job);
                 return;
             }
@@ -218,11 +342,14 @@ public sealed class JobQueue : IDisposable
             _jobCts.TryRemove(job.Id, out _);
             RaiseEvent(JobStatusChanged, job);
 
-            // Cleanup temp files
-            foreach (var file in job.FilesToCleanup)
+            // Only cleanup temp files on success — preserve on failure for retry/debugging
+            if (job.Status == JobStatus.Completed)
             {
-                try { if (File.Exists(file)) File.Delete(file); }
-                catch { /* best effort */ }
+                foreach (var file in job.FilesToCleanup)
+                {
+                    try { if (File.Exists(file)) File.Delete(file); }
+                    catch { /* best effort */ }
+                }
             }
         }
     }

@@ -24,7 +24,9 @@ public partial class BatchTabView : UserControl
 
     private void OnDragEnter(object? sender, DragEventArgs e)
     {
+#pragma warning disable CS0618 // Avalonia 11.3 deprecation — DataTransfer API incompatible
         if (e.Data.Contains(DataFormats.Files))
+#pragma warning restore CS0618
             e.DragEffects = DragDropEffects.Copy;
     }
 
@@ -32,7 +34,9 @@ public partial class BatchTabView : UserControl
     {
         if (DataContext is not BatchTabViewModel vm) return;
 
+#pragma warning disable CS0618
         var files = e.Data.GetFiles()?.ToList();
+#pragma warning restore CS0618
         if (files is null || files.Count == 0) return;
 
         var paths = files

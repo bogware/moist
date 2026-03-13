@@ -76,6 +76,10 @@ public sealed partial class FFmpegVideoProcessor : CommandLineProcessor
         // Preset
         args.AddRange(GetPresetArgs(s));
 
+        // Tune (skip for SVT-AV1 which doesn't support -tune)
+        if (s.Tune != VideoTune.None && _codec != "svtav1")
+            args.AddRange(["-tune", s.Tune.ToString().ToLowerInvariant()]);
+
         // Pixel format
         if (s.PixelFormat is not null)
             args.AddRange(["-pix_fmt", s.PixelFormat]);
