@@ -21,6 +21,9 @@ public partial class MainWindowViewModel : ViewModelBase
     private string _statusText = "Ready";
 
     [ObservableProperty]
+    private string _windowTitle = "moist";
+
+    [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(HasStartupError))]
     private string _startupError = string.Empty;
 
@@ -54,7 +57,7 @@ public partial class MainWindowViewModel : ViewModelBase
         PluginManager = new PluginManagerViewModel(Services);
         SettingsTab = new SettingsTabViewModel(Services);
 
-        // Wire up queue status to main status bar
+        // Wire up queue status to main status bar and window title
         Services.JobQueue.JobStatusChanged += (_, job) =>
         {
             var running = Services.JobQueue.Jobs.Values.Count(j => j.Status == Core.Jobs.JobStatus.Running);
@@ -62,6 +65,14 @@ public partial class MainWindowViewModel : ViewModelBase
             StatusText = running > 0
                 ? $"Encoding: {running} running, {queued} queued"
                 : queued > 0 ? $"{queued} job(s) queued" : "Ready";
+            if (running == 0)
+                WindowTitle = "moist";
+        };
+
+        Services.JobQueue.JobProgressUpdated += (_, args) =>
+        {
+            if (args.Progress.Percentage > 0)
+                WindowTitle = $"moist [{args.Progress.Percentage:F0}%] {args.Job.Name}";
         };
 
         // Run startup tool discovery in background

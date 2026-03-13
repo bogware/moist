@@ -51,6 +51,7 @@ public partial class EncodeTabViewModel : ViewModelBase, IDisposable
     [ObservableProperty] private int _mp3VbrScale = 2;
     [ObservableProperty] private int _flacCompressionLevel = 5;
     [ObservableProperty] private int _ac3DialogueNorm = -31;
+    [ObservableProperty] private int _eac3DialogueNorm = -31;
     [ObservableProperty] private int _vorbisQuality = 3;
 
     // Audio-only mode
@@ -70,6 +71,7 @@ public partial class EncodeTabViewModel : ViewModelBase, IDisposable
 
     // Preview
     [ObservableProperty] private Bitmap? _previewImage;
+    private MemoryStream? _previewStream;
     [ObservableProperty] private double _previewPosition;
     [ObservableProperty] private double _previewMaxPosition = 100;
     [ObservableProperty] private bool _isPreviewLoading;
@@ -235,6 +237,7 @@ public partial class EncodeTabViewModel : ViewModelBase, IDisposable
             if (framePath is not null && File.Exists(framePath))
             {
                 var oldImage = PreviewImage;
+                var oldStream = _previewStream;
                 // Load into MemoryStream so Bitmap doesn't reference a disposed FileStream
                 var memoryStream = new MemoryStream();
                 await using (var fileStream = File.OpenRead(framePath))
@@ -243,7 +246,9 @@ public partial class EncodeTabViewModel : ViewModelBase, IDisposable
                 }
                 memoryStream.Seek(0, SeekOrigin.Begin);
                 PreviewImage = new Bitmap(memoryStream);
+                _previewStream = memoryStream;
                 oldImage?.Dispose();
+                oldStream?.Dispose();
                 try { File.Delete(framePath); } catch { }
             }
         }
@@ -698,7 +703,7 @@ public partial class EncodeTabViewModel : ViewModelBase, IDisposable
             "ffmpeg-audio-mp3" => new Mp3Settings { VbrScale = Mp3VbrScale },
             "ffmpeg-audio-flac" => new FlacSettings { CompressionLevel = FlacCompressionLevel },
             "ffmpeg-audio-ac3" => new Ac3Settings { DialogueNormalization = Ac3DialogueNorm },
-            "ffmpeg-audio-eac3" => new Eac3Settings { DialogueNormalization = Ac3DialogueNorm },
+            "ffmpeg-audio-eac3" => new Eac3Settings { DialogueNormalization = Eac3DialogueNorm },
             "ffmpeg-audio-vorbis" => new VorbisSettings { QualityScale = VorbisQuality },
             _ => new AudioEncoderSettings()
         };
@@ -725,5 +730,7 @@ public partial class EncodeTabViewModel : ViewModelBase, IDisposable
         _previewDebounce = null;
         PreviewImage?.Dispose();
         PreviewImage = null;
+        _previewStream?.Dispose();
+        _previewStream = null;
     }
 }

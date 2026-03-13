@@ -130,6 +130,23 @@ public partial class SettingsTabViewModel : ViewModelBase
             return;
         }
 
+        // Validate temp directory is writable
+        if (!string.IsNullOrWhiteSpace(TempDirectory))
+        {
+            try
+            {
+                Directory.CreateDirectory(TempDirectory);
+                var testFile = Path.Combine(TempDirectory, $".moist_test_{Guid.NewGuid():N}");
+                File.WriteAllText(testFile, "");
+                File.Delete(testFile);
+            }
+            catch (Exception ex)
+            {
+                SaveStatus = $"Temp directory not writable: {ex.Message}";
+                return;
+            }
+        }
+
         var s = _services.Settings;
         s.Theme = SelectedTheme;
         s.FFmpegPath = FfmpegPath.Trim();
