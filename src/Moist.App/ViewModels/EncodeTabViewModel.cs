@@ -609,6 +609,7 @@ public partial class EncodeTabViewModel : ViewModelBase, IDisposable
                 EncoderId = encoderId,
                 Settings = videoSettings,
                 FilterScript = filterScript,
+                FilterEngineId = _filterTab?.SelectedEngine?.Id,
                 TotalFrames = info?.Video?.TotalFrames ?? 0,
             };
         }

@@ -49,7 +49,10 @@ public sealed partial class FFmpegVideoProcessor : CommandLineProcessor
         // Apply filter script if present
         if (!string.IsNullOrWhiteSpace(vj.FilterScript))
         {
-            args.AddRange(["-filter_complex", Quote(vj.FilterScript)]);
+            // FFmpeg filter engine produces simple linear chains (e.g. "scale=1920:1080,hqdn3d=4:3:6")
+            // which use -vf. VapourSynth/AviSynth scripts are not directly supported by FFmpeg CLI
+            // and require piping through vspipe/avs2pipe (handled at the job creation level).
+            args.AddRange(["-vf", Quote(vj.FilterScript)]);
         }
 
         // Codec selection

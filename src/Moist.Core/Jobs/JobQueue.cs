@@ -334,6 +334,8 @@ public sealed class JobQueue : IDisposable
         {
             job.Status = JobStatus.Failed;
             job.ErrorMessage = ex.Message;
+            job.AppendLog($"--- JOB FAILED ---");
+            job.AppendLog(ex.Message);
             _logger.LogError(ex, "Job failed: {JobId}", job.Id);
         }
         finally

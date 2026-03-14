@@ -79,7 +79,7 @@ public sealed partial class X265CliProcessor : CommandLineProcessor
         x265Args.AddRange(["-o", ShellEscape(vj.OutputFile), "--y4m", "-"]);
 
         var filterArgs = !string.IsNullOrWhiteSpace(vj.FilterScript)
-            ? $"-filter_complex {ShellEscape(vj.FilterScript)}"
+            ? $"-vf {ShellEscape(vj.FilterScript)}"
             : "";
 
         var x265ArgsStr = string.Join(" ", x265Args);

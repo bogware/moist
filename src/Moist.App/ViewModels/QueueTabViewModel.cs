@@ -41,6 +41,11 @@ public partial class QueueTabViewModel : ViewModelBase
             {
                 var vm = Jobs.FirstOrDefault(j => j.Id == job.Id);
                 vm?.UpdateFromJob(job);
+
+                // Refresh log whenever job status changes (start, fail, complete)
+                // so error output is visible even when no progress events fired
+                if (SelectedJob is not null && job.Id == SelectedJob.Id)
+                    RefreshLog(job);
             });
         };
 
