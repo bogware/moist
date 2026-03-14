@@ -534,6 +534,17 @@ public partial class EncodeTabViewModel : ViewModelBase, IDisposable
             StatusMessage = "Added to queue.";
         }
 
+        // Guard: non-FFmpeg filter engines can't be used with FFmpeg-based encoders
+        if (!AudioOnly && _filterTab?.SelectedEngine is not null
+            && _filterTab.Chain.Filters.Count > 0
+            && _filterTab.SelectedEngine.Id != "ffmpeg")
+        {
+            HasError = true;
+            StatusMessage = $"The {_filterTab.SelectedEngine.Name} filter engine requires standalone CLI encoders (x264/x265 CLI with vspipe piping). " +
+                            "Please switch to FFmpeg Filters or clear the filter chain.";
+            return;
+        }
+
         HasError = false;
         EnqueueFile(InputFile, OutputFile);
     }
@@ -557,10 +568,20 @@ public partial class EncodeTabViewModel : ViewModelBase, IDisposable
     }
 
     /// <summary>
-    /// Enqueue a file for encoding. Returns the mux job ID for tracking.
+    /// Enqueue a file and return ALL sub-job IDs (video, audio, mux) for comprehensive tracking.
+    /// </summary>
+    public List<string> EnqueueFileWithAllIds(string inputFile, string outputFile, MediaFileInfo? mediaInfo = null)
+    {
+        var ids = new List<string>();
+        var originalEnqueue = EnqueueFile(inputFile, outputFile, mediaInfo, ids);
+        return ids;
+    }
+
+    /// <summary>
+    /// Enqueue a file for encoding. Returns the final job ID (mux or audio-only) for tracking.
     /// When called from batch, pass mediaInfo directly to avoid mutating shared EncodeTab state.
     /// </summary>
-    public string EnqueueFile(string inputFile, string outputFile, MediaFileInfo? mediaInfo = null)
+    public string EnqueueFile(string inputFile, string outputFile, MediaFileInfo? mediaInfo = null, List<string>? allJobIds = null)
     {
         // Use provided mediaInfo (batch mode) or fall back to shared MediaInfo (single encode)
         var info = mediaInfo ?? MediaInfo;
@@ -637,6 +658,7 @@ public partial class EncodeTabViewModel : ViewModelBase, IDisposable
         {
             audioJob.OutputFile = outputFile;
             _services.JobQueue.Enqueue(audioJob);
+            allJobIds?.Add(audioJob.Id);
             return audioJob.Id;
         }
 
@@ -688,9 +710,15 @@ public partial class EncodeTabViewModel : ViewModelBase, IDisposable
         if (tempVideoFile is not null) muxJob.FilesToCleanup.Add(tempVideoFile);
         muxJob.FilesToCleanup.Add(tempAudioFile);
 
-        if (videoJob is not null) _services.JobQueue.Enqueue(videoJob);
+        if (videoJob is not null)
+        {
+            _services.JobQueue.Enqueue(videoJob);
+            allJobIds?.Add(videoJob.Id);
+        }
         _services.JobQueue.Enqueue(audioJob);
+        allJobIds?.Add(audioJob.Id);
         _services.JobQueue.Enqueue(muxJob);
+        allJobIds?.Add(muxJob.Id);
 
         return muxJob.Id;
     }

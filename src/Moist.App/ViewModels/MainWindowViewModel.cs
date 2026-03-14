@@ -82,8 +82,31 @@ public partial class MainWindowViewModel : ViewModelBase
                 WindowTitle = $"moist [{args.Progress.Percentage:F0}%] {args.Job.Name}";
         };
 
+        // Write job logs to file when jobs complete or fail
+        Services.JobQueue.JobStatusChanged += (_, job) =>
+        {
+            if (job.Status is Core.Jobs.JobStatus.Completed or Core.Jobs.JobStatus.Failed)
+                Services.WriteJobLogToFile(job);
+        };
+
+        // Restore any interrupted jobs from previous session
+        RestorePersistedJobs();
+
         // Run startup tool discovery in background
         _ = CheckToolsAtStartupAsync();
+    }
+
+    private void RestorePersistedJobs()
+    {
+        try
+        {
+            var restored = Core.Jobs.JobPersistence.Load();
+            if (restored.Count > 0)
+            {
+                StatusText = $"Restored {restored.Count} interrupted job(s) from previous session";
+            }
+        }
+        catch { /* non-critical */ }
     }
 
     private async Task CheckToolsAtStartupAsync()

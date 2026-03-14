@@ -231,6 +231,9 @@ public partial class MainWindow : Window
             s.WindowY = Position.Y;
         }
         s.Save();
+
+        // Persist any incomplete jobs for recovery on next startup
+        Core.Jobs.JobPersistence.Save(vm.Services.JobQueue.Jobs);
     }
 
     private async void OnKeyDown(object? sender, KeyEventArgs e)

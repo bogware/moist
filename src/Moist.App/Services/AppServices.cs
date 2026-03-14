@@ -5,6 +5,7 @@ using Moist.Core.Encoders.Video;
 using Moist.Core.Jobs;
 using Moist.Core.Media;
 using Moist.Core.Muxers;
+using Moist.Core.Plugins;
 using Moist.Core.Profiles;
 using Moist.Core.Settings;
 using Moist.Core.Tools;
@@ -27,6 +28,8 @@ public sealed class AppServices : IDisposable
     public FilterPresetManager FilterPresets { get; }
     public ILoggerFactory LoggerFactory { get; }
     public ToolDiscovery ToolDiscovery { get; }
+    public PluginLoader PluginLoader { get; }
+    public string LogFilePath { get; private set; } = string.Empty;
 
     /// <summary>Media analyzer — uses current FFprobePath from settings. Recreated only if path changes.</summary>
     public FFprobeMediaAnalyzer MediaAnalyzer
@@ -62,6 +65,13 @@ public sealed class AppServices : IDisposable
 
     public AppServices()
     {
+        // Set up logging to both console and file
+        var logDir = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+            "moist", "logs");
+        Directory.CreateDirectory(logDir);
+        LogFilePath = Path.Combine(logDir, $"moist_{DateTime.Now:yyyyMMdd_HHmmss}.log");
+
         LoggerFactory = Microsoft.Extensions.Logging.LoggerFactory.Create(builder =>
         {
             builder
@@ -72,6 +82,9 @@ public sealed class AppServices : IDisposable
                     options.SingleLine = true;
                 });
         });
+
+        // Start a background task to write job logs to file
+        _ = CleanOldLogFiles(logDir);
 
         var logger = LoggerFactory.CreateLogger<AppServices>();
         logger.LogInformation("moist starting up — initializing services");
@@ -84,10 +97,21 @@ public sealed class AppServices : IDisposable
         PluginSources = new PluginSourceManager();
         FilterPresets = new FilterPresetManager();
         ToolDiscovery = new ToolDiscovery(LoggerFactory);
+        PluginLoader = new PluginLoader(LoggerFactory);
 
         RegisterDefaultEncoders();
         RegisterDefaultFilters();
         RegisterDefaultProcessors();
+
+        // Load plugins (adds custom encoders/processors from plugins directory)
+        try
+        {
+            PluginLoader.LoadPlugins(Encoders, JobQueue);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Plugin loading failed — continuing without plugins");
+        }
     }
 
     private void RegisterDefaultEncoders()
@@ -260,6 +284,57 @@ public sealed class AppServices : IDisposable
     public void Save()
     {
         Settings.Save();
+    }
+
+    /// <summary>
+    /// Write all log output from a completed job to the session log file.
+    /// Called automatically when a job finishes.
+    /// </summary>
+    public void WriteJobLogToFile(Core.Jobs.Job job)
+    {
+        if (string.IsNullOrEmpty(LogFilePath)) return;
+        try
+        {
+            var lines = new List<string>
+            {
+                $"",
+                $"=== {job.Name} ({job.JobType}) — {job.Status} ===",
+                $"    ID: {job.Id}",
+                $"    Input: {job.InputFile}",
+                $"    Output: {job.OutputFile}",
+                $"    Started: {job.StartedAt:O}",
+                $"    Completed: {job.CompletedAt:O}",
+            };
+            if (job.ErrorMessage is not null)
+                lines.Add($"    Error: {job.ErrorMessage}");
+            lines.Add("--- Output Log ---");
+            lines.AddRange(job.OutputLog);
+            lines.Add("--- End ---");
+            lines.Add("");
+
+            File.AppendAllLines(LogFilePath, lines);
+        }
+        catch { /* best effort */ }
+    }
+
+    /// <summary>Keep only the last 10 log files.</summary>
+    private static Task CleanOldLogFiles(string logDir)
+    {
+        return Task.Run(() =>
+        {
+            try
+            {
+                var logFiles = Directory.GetFiles(logDir, "moist_*.log")
+                    .OrderByDescending(f => f)
+                    .Skip(10)
+                    .ToList();
+                foreach (var old in logFiles)
+                {
+                    try { File.Delete(old); } catch { }
+                }
+            }
+            catch { }
+        });
     }
 
     public void Dispose()

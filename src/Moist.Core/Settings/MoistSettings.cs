@@ -40,7 +40,7 @@ public sealed class MoistSettings
     public string DefaultContainer { get; set; } = "Mkv";
 
     // Temp
-    public string TempDirectory { get; set; } = Path.GetTempPath();
+    public string TempDirectory { get; set; } = Path.Combine(Path.GetTempPath(), "moist");
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
