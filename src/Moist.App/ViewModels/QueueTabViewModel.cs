@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Diagnostics;
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
@@ -41,6 +42,11 @@ public partial class QueueTabViewModel : ViewModelBase
             {
                 var vm = Jobs.FirstOrDefault(j => j.Id == job.Id);
                 vm?.UpdateFromJob(job);
+
+                // Refresh log whenever job status changes (start, fail, complete)
+                // so error output is visible even when no progress events fired
+                if (SelectedJob is not null && job.Id == SelectedJob.Id)
+                    RefreshLog(job);
             });
         };
 
@@ -128,6 +134,44 @@ public partial class QueueTabViewModel : ViewModelBase
         if (job is null || job.Status is not ("Running" or "Queued")) return;
         _services.JobQueue.CancelJob(job.Id);
     }
+
+    [RelayCommand]
+    private void OpenOutputFile(JobViewModel? job)
+    {
+        if (job is null) return;
+        if (!_services.JobQueue.Jobs.TryGetValue(job.Id, out var realJob)) return;
+        if (!File.Exists(realJob.OutputFile)) return;
+
+        try
+        {
+            Process.Start(new ProcessStartInfo
+            {
+                FileName = realJob.OutputFile,
+                UseShellExecute = true,
+            });
+        }
+        catch { /* best effort */ }
+    }
+
+    [RelayCommand]
+    private void OpenOutputFolder(JobViewModel? job)
+    {
+        if (job is null) return;
+        if (!_services.JobQueue.Jobs.TryGetValue(job.Id, out var realJob)) return;
+
+        var dir = Path.GetDirectoryName(realJob.OutputFile);
+        if (dir is null || !Directory.Exists(dir)) return;
+
+        try
+        {
+            Process.Start(new ProcessStartInfo
+            {
+                FileName = dir,
+                UseShellExecute = true,
+            });
+        }
+        catch { /* best effort */ }
+    }
 }
 
 public partial class JobViewModel : ObservableObject
@@ -141,6 +185,10 @@ public partial class JobViewModel : ObservableObject
     [ObservableProperty] private string _fps = "";
     [ObservableProperty] private string _eta = "";
     [ObservableProperty] private string _statusLine = "";
+    [ObservableProperty] private string _outputFile = "";
+    [ObservableProperty] private string _estimatedSize = "";
+
+    public bool IsCompleted => Status == "Completed";
 
     public JobViewModel(Job job)
     {
@@ -148,13 +196,22 @@ public partial class JobViewModel : ObservableObject
         _name = job.Name;
         _jobType = job.JobType;
         _status = job.Status.ToString();
+        _outputFile = job.OutputFile;
     }
 
     public void UpdateFromJob(Job job)
     {
         Status = job.Status.ToString();
+        OnPropertyChanged(nameof(IsCompleted));
         if (job.ErrorMessage is not null)
             StatusLine = job.ErrorMessage;
+
+        // Update estimated size from output file when completed
+        if (job.Status == JobStatus.Completed && File.Exists(job.OutputFile))
+        {
+            var size = new FileInfo(job.OutputFile).Length;
+            EstimatedSize = FormatFileSize(size);
+        }
     }
 
     public void UpdateProgress(JobProgress progress)
@@ -163,5 +220,20 @@ public partial class JobViewModel : ObservableObject
         Fps = progress.Fps > 0 ? $"{progress.Fps:F1} fps" : "";
         Eta = progress.Eta > TimeSpan.Zero ? $"ETA: {progress.Eta:hh\\:mm\\:ss}" : "";
         StatusLine = progress.StatusLine ?? "";
+
+        // Estimate output size from current progress data
+        if (progress.OutputSizeBytes > 0 && progress.Percentage > 5)
+        {
+            var estimated = (long)(progress.OutputSizeBytes / (progress.Percentage / 100.0));
+            EstimatedSize = $"~{FormatFileSize(estimated)}";
+        }
     }
+
+    private static string FormatFileSize(long bytes) => bytes switch
+    {
+        < 1024 => $"{bytes} B",
+        < 1024 * 1024 => $"{bytes / 1024.0:F1} KB",
+        < 1024 * 1024 * 1024 => $"{bytes / (1024.0 * 1024):F1} MB",
+        _ => $"{bytes / (1024.0 * 1024 * 1024):F2} GB",
+    };
 }

@@ -47,6 +47,9 @@ public abstract class CommandLineProcessor : IJobProcessor
         Logger.LogInformation("Starting {Processor} for job {JobId}: {Exe} {Args}",
             DisplayName, job.Id, exe, args);
 
+        // Log the command line to the job's output log for UI visibility
+        job.AppendLog($"[{DisplayName}] {exe} {args}");
+
         var psi = new ProcessStartInfo
         {
             FileName = exe,

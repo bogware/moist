@@ -29,7 +29,7 @@ public sealed partial class FFmpegMuxProcessor : CommandLineProcessor
     {
         _stopwatch.Reset();
         var mj = (MuxJob)job;
-        var args = new List<string> { "-y", "-hide_banner" };
+        var args = new List<string> { "-y", "-hide_banner", "-progress", "pipe:1" };
 
         // Build input list with delay offsets applied BEFORE the input they affect.
         // FFmpeg requires -itsoffset to appear before the -i it modifies.

@@ -203,8 +203,11 @@ public partial class FilterTabViewModel : ViewModelBase
                     paramValues[key] = param.DefaultValue;
             }
 
+            // Share the same dict instance between chain and VM for sync
             Chain.Add(filterDef, paramValues);
-            var afvm = new AppliedFilterViewModel(filterDef, paramValues);
+            // Get the actual dict from the chain (same reference since Add stores what we pass)
+            var chainParams = Chain.Filters[^1].ParameterValues;
+            var afvm = new AppliedFilterViewModel(filterDef, chainParams);
             WireParameterChanges(afvm);
             AppliedFilters.Add(afvm);
         }

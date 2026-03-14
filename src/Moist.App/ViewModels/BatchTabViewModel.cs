@@ -31,21 +31,35 @@ public partial class BatchTabViewModel : ViewModelBase
         // Load available profile names for per-file override
         LoadProfiles();
 
-        // Track job status changes for batch items
+        // Track job status changes for batch items — map all sub-jobs to the batch item
         services.JobQueue.JobStatusChanged += (_, job) =>
         {
             Dispatcher.UIThread.Post(() =>
             {
                 if (_jobToItem.TryGetValue(job.Id, out var item))
                 {
-                    item.Status = job.Status switch
-                    {
-                        JobStatus.Running => "Encoding",
-                        JobStatus.Completed => "Completed",
-                        JobStatus.Failed => $"Failed: {job.ErrorMessage}",
-                        JobStatus.Cancelled => "Cancelled",
-                        _ => item.Status
-                    };
+                    // Show the most informative status across all sub-jobs
+                    if (job.Status == JobStatus.Failed)
+                        item.Status = $"Failed: {job.ErrorMessage}";
+                    else if (job.Status == JobStatus.Cancelled)
+                        item.Status = "Cancelled";
+                    else if (job.Status == JobStatus.Running)
+                        item.Status = $"Encoding ({job.JobType})";
+                    else if (job.Status == JobStatus.Completed && job is MuxJob)
+                        item.Status = "Completed";  // Only mark completed when the final mux is done
+                    else if (job.Status == JobStatus.Completed && job is AudioJob && _encodeTab.AudioOnly)
+                        item.Status = "Completed";  // Audio-only: no mux
+                }
+            });
+        };
+
+        services.JobQueue.JobProgressUpdated += (_, args) =>
+        {
+            Dispatcher.UIThread.Post(() =>
+            {
+                if (_jobToItem.TryGetValue(args.Job.Id, out var item))
+                {
+                    item.Progress = args.Progress.Percentage;
                 }
             });
         };
@@ -104,8 +118,9 @@ public partial class BatchTabViewModel : ViewModelBase
 
                 // Analyze each file — pass mediaInfo directly to avoid mutating shared EncodeTab state
                 var mediaInfo = await _services.MediaAnalyzer.AnalyzeAsync(item.InputFile);
-                var finalJobId = _encodeTab.EnqueueFile(item.InputFile, item.OutputFile, mediaInfo);
-                _jobToItem[finalJobId] = item;
+                var allJobIds = _encodeTab.EnqueueFileWithAllIds(item.InputFile, item.OutputFile, mediaInfo);
+                foreach (var id in allJobIds)
+                    _jobToItem[id] = item;
                 item.Status = "Queued";
 
                 // Restore original encode tab settings if we applied a per-file profile
@@ -151,6 +166,7 @@ public partial class BatchItemViewModel : ObservableObject
     [ObservableProperty] private string _outputFile = string.Empty;
     [ObservableProperty] private string _status = "Pending";
     [ObservableProperty] private string _profileOverride = "(Use Encode Tab Settings)";
+    [ObservableProperty] private double _progress;
 
     public string FileName => Path.GetFileName(InputFile);
     public bool HasProfileOverride => ProfileOverride != "(Use Encode Tab Settings)";

@@ -95,7 +95,7 @@ public sealed partial class X264CliProcessor : CommandLineProcessor
         var vj = (VideoJob)job;
         var x264Args = BuildX264Args(vj);
         var filterArgs = !string.IsNullOrWhiteSpace(vj.FilterScript)
-            ? $"-filter_complex {ShellEscape(vj.FilterScript)}"
+            ? $"-vf {ShellEscape(vj.FilterScript)}"
             : "";
 
         // Use shell to handle pipe: ffmpeg | x264

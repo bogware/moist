@@ -35,7 +35,7 @@ public partial class FFmpegAudioProcessor : CommandLineProcessor
         var s = aj.Settings;
         var args = new List<string>
         {
-            "-y", "-hide_banner",
+            "-y", "-hide_banner", "-progress", "pipe:1",
             "-i", Quote(aj.InputFile),
             "-vn",
             // Select specific audio stream
