@@ -1,0 +1,19 @@
+# Build outputs (any project, including legacy/)
+[Bb]in/
+[Oo]bj/
+publish/
+dist/
+
+# User-specific IDE files
+*.user
+*.suo
+.vs/
+.idea/
+*.DotSettings.user
+
+# NuGet
+*.nupkg
+
+# OS
+.DS_Store
+Thumbs.db
