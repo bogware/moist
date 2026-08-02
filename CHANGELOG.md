@@ -7,7 +7,12 @@ minor version carries breaking changes.
 
 ---
 
-## [0.9.0] — 2026-08-02
+## [0.9.1] — 2026-08-02
+
+The first published release. (0.9.0 was tagged but never built: the test suite
+assumed an FFmpeg with libsvtav1 and libvmaf compiled in, which most builds do
+not have, so it failed on the release runners. No artifacts were published under
+that tag.)
 
 The first release worth using. moist began as a GUI that could not reliably
 complete an encode; this release makes the encoding correct, adds a CLI that
