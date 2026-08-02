@@ -360,14 +360,14 @@ it. Finishing the passthrough needs the tools and some real Dolby Vision content
 
 ---
 
-## Tier 7 — Scale & automation 🚧
+## Tier 7 — Scale & automation ✅
 
 | Item | Status | Notes |
 |---|---|---|
 | Watch folders | ✅ | `moist watch <dir> --output-dir <dir>` |
 | Library health checking | ✅ | `moist health <dir> [--deep]` |
-| Headless server mode | ⬜ | |
-| Docker | ⬜ | |
+| Headless server mode | ✅ | `moist serve`, authenticated by default |
+| Docker | ✅ | Built and run, not just written |
 | Distributed workers | ⬜ | Not planned; see the positioning note |
 
 ### Watch folders
@@ -409,6 +409,38 @@ Finding the hang this had is worth recording: `--deep` runs ffprobe to count
 frames, and the code drained only stdout while stderr was redirected. A damaged
 file makes ffprobe flood stderr, which fills the pipe buffer and deadlocks — so
 the scanner hung on precisely the files it exists to find, and only on those.
+
+### Headless server
+
+`moist serve` puts an HTTP API over the same queue: health, tool discovery, probe,
+submit an encode, list the queue, start and stop it.
+
+An encode names its own input and output paths and can carry custom encoder
+arguments, so **anyone who can reach the API can read and write files as the user
+running it**. It therefore authenticates by default, binds to loopback by default,
+and refuses to do neither — `--no-auth` is rejected on any non-loopback address. A
+token is generated and printed rather than defaulted, and compared in fixed time.
+
+Submitted options are turned back into a command line and parsed by the same code
+the CLI uses, so `{"crf": 22}` means exactly what `--crf 22` means. There is one
+definition of an option rather than two that drift.
+
+`HttpListener` rather than ASP.NET Core: it is in the base library, so the
+self-contained binary stays a single file and gains no dependencies for seven
+endpoints.
+
+### Docker
+
+Built and run, not merely written — which is how both of its bugs were found. The
+`/config` volume is created by Docker as root while the container runs as uid 1000,
+so moist could not write its own settings; and the entrypoint hard-coded `serve`,
+so `docker run moist tools` silently started a server instead. Both fixed, then
+verified by encoding a file through the API in the container and checking the
+output landed on the host volume.
+
+Worth knowing: Debian's FFmpeg (5.1 in the image) has x264, x265 and VP9 but
+**not** libsvtav1 or libvmaf, so AV1 encoding and `--target-vmaf` do not work in
+the stock image. `moist tools` reports what was actually found.
 
 ---
 

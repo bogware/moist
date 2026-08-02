@@ -49,6 +49,25 @@ selection, chapters, attachments and container metadata.
 **Queue persistence.** Queued encodes survive a crash or a closed window and come
 back queued — not running — on the next launch.
 
+**Watch folders.** `moist watch <dir> --output-dir <dir>` encodes whatever lands
+in a folder, using every option `moist encode` takes. Files are picked up only
+once they have stopped changing, because one still being copied has a valid header
+and produces a truncated encode with no error. What it has already done survives a
+restart, and sources are only moved or deleted after the encode succeeded.
+
+**Library health checking.** `moist health <dir>` finds damaged and unplayable
+files and exits non-zero if there are any. `--deep` decodes everything rather than
+reading headers, which is the only way to catch a file that is corrupt in the
+middle — that has a perfectly good header and a plausible duration.
+
+**A headless server.** `moist serve` exposes the queue over HTTP: submit encodes,
+watch progress, probe files. Authenticated by default and bound to loopback by
+default, because an encode names its own input and output paths.
+
+**A Docker image.** `docker run -p 7788:7788 -v /media:/media moist`. Note that
+Debian's FFmpeg has no libsvtav1 or libvmaf, so AV1 and VMAF targeting are
+unavailable in the stock image; `moist tools` reports what is actually present.
+
 ### Fixed
 
 Bugs that made ordinary encodes fail or silently produce the wrong file:

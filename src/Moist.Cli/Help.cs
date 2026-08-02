@@ -15,6 +15,7 @@ public static class Help
             case "tools": Tools(); return;
             case "watch": Watch(); return;
             case "health": Health(); return;
+            case "serve": Serve(); return;
         }
 
         Console.WriteLine("""
@@ -31,6 +32,7 @@ public static class Help
               crf-search <input>    Find the CRF that reaches a quality target
               watch <folder>        Encode whatever lands in a folder
               health <folder>       Find damaged or unplayable files in a library
+              serve                 Run an HTTP API over the encode queue
               list <what>           List encoders, hardware, containers, profiles or filters
               tools                 Check external tool prerequisites
 
@@ -47,6 +49,7 @@ public static class Help
               moist batch *.mkv --container mp4 --jobs 4
               moist watch ./inbox --output-dir ./done --crf 22
               moist health /media/films --deep
+              moist serve --port 7788
               moist compare source.mkv encoded.mkv
               moist probe in.mkv --json
             """);
@@ -310,6 +313,44 @@ public static class Help
           moist watch ./inbox --output-dir ./encoded --crf 22 --preset slow
           moist watch /mnt/dropbox --output-dir /mnt/library -r --on-success delete
           moist watch ./inbox --output-dir ./done --target-vmaf 95 --json
+        """);
+
+    private static void Serve() => Console.WriteLine("""
+        moist serve — HTTP API over the encode queue
+
+        USAGE
+          moist serve [--host <addr>] [--port <n>] [--token <secret>]
+
+        OPTIONS
+          --host <addr>         Address to bind          (default: 127.0.0.1)
+          --port <n>            Port                     (default: 7788)
+          --token <secret>      Required bearer token. One is generated and
+                                printed if you do not supply it.
+          --no-auth             Disable authentication. Loopback only.
+          -j, --jobs <n>        Concurrent encodes
+
+        ROUTES
+          GET  /api/health              Status and version
+          GET  /api/tools               External tool discovery
+          GET  /api/probe?path=<file>   Media information
+          GET  /api/queue               Jobs and their progress
+          POST /api/encode              Queue an encode
+          POST /api/queue/start         Begin processing
+          POST /api/queue/stop          Stop processing
+
+        An encode names its own input and output paths and may carry custom encoder
+        arguments, so anyone who can reach this API can read and write files as the
+        user running it. That is why it authenticates by default, binds to loopback
+        by default, and refuses to do neither.
+
+        QUEUEING AN ENCODE
+          The body takes an input, an optional output, and any option 'moist encode'
+          accepts — parsed by the same code, so an option means the same thing here
+          as it does on the command line.
+
+          curl -X POST http://127.0.0.1:7788/api/encode             -H "Authorization: Bearer $TOKEN"             -H "Content-Type: application/json"             -d '{"input":"/media/in.mkv","options":{"crf":22,"preset":"slow"}}'
+
+          curl -X POST http://127.0.0.1:7788/api/queue/start             -H "Authorization: Bearer $TOKEN"
         """);
 
     private static void Health() => Console.WriteLine("""

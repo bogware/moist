@@ -64,6 +64,7 @@ public static class Program
                 "crf-search" or "search" => await CrfSearchCommand.RunAsync(cl, cancellation.Token),
                 "watch" => await WatchCommand.RunAsync(cl, cancellation.Token),
                 "health" => await HealthCommand.RunAsync(cl, cancellation.Token),
+                "serve" => await ServeCommand.RunAsync(cl, cancellation.Token),
                 "list" => ListCommand.Run(cl),
                 "tools" => await ToolsCommand.RunAsync(cl, cancellation.Token),
                 _ => UnknownCommand(command),

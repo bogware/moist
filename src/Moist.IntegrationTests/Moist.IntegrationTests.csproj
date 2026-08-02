@@ -23,6 +23,7 @@
     <ProjectReference Include="..\Moist.Core\Moist.Core.csproj" />
     <ProjectReference Include="..\Moist.Filters\Moist.Filters.csproj" />
     <ProjectReference Include="..\Moist.Services\Moist.Services.csproj" />
+    <ProjectReference Include="..\Moist.Cli\Moist.Cli.csproj" />
   </ItemGroup>
 
 </Project>

@@ -1,0 +1,13 @@
+# Build output would be copied in and then overwritten, which only costs time —
+# and a Windows obj/ directory in a Linux build actively breaks the restore.
+**/bin/
+**/obj/
+publish/
+
+.git/
+.github/
+.vs/
+.idea/
+
+*.md
+!README.md

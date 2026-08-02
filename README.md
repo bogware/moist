@@ -364,6 +364,49 @@ moist list encoders | hardware | containers | profiles | filters
 moist tools
 ```
 
+### Automation
+
+```bash
+# encode whatever lands in a folder, with any encode option you like
+moist watch ./inbox --output-dir ./encoded --crf 22 --preset slow
+moist watch /mnt/dropbox --output-dir /mnt/library -r --on-success move --move-to ./done
+
+# find damaged files; exit code 1 if any, so it can drive a scheduled check
+moist health /media/films
+moist health /media/films --deep --json > report.json
+
+# HTTP API over the same queue
+moist serve --port 7788
+```
+
+A file that has just appeared in a watch folder is usually still being copied — it
+has a valid header and a plausible duration the whole way through, so encoding it
+early produces a truncated result with nothing to explain it. `moist watch` waits
+for a file to stop changing first, remembers what it has already encoded across
+restarts, and only deletes or moves a source once its encode has succeeded.
+
+`moist health` without `--deep` reads container headers, which catches an
+interrupted write but not damage inside an otherwise complete file — that has a
+perfectly good header too. `--deep` decodes everything and compares the frames it
+actually got against what the container claims.
+
+`moist serve` can read and write files anywhere the server process can, so it
+authenticates by default, binds to loopback by default, and refuses to do neither.
+Submitted options are parsed by the same code as the command line, so
+`{"crf": 22}` means exactly what `--crf 22` means.
+
+### Docker
+
+```bash
+docker build -t moist .
+docker run -p 7788:7788 -v /media:/media -e MOIST_TOKEN=secret moist
+docker run --rm -v /media:/media moist health /media --deep
+```
+
+Debian's FFmpeg has x264, x265 and VP9 but **not** libsvtav1 or libvmaf, so AV1
+encoding and `--target-vmaf` are unavailable in the stock image. `moist tools`
+reports what was actually found.
+
 - `--dry-run` prints the plan (including the exact FFmpeg commands) without encoding
 - `--json` emits machine-readable results; logs go to stderr so stdout stays clean for pipes
 - Exit codes: `0` success, `1` encode failed, `2` bad usage, `3` missing prerequisite

@@ -25,8 +25,8 @@ public sealed class CommandLine
         "chunked", "no-resume", "no-verify", "per-scene", "per-scene-full",
         "burn-subtitles",
         "quiet", "q", "verbose", "v", "help", "h", "version", "no-progress", "keep-going",
-        // watch / health
-        "recursive", "r", "new-only", "deep", "no-recursive",
+        // watch / health / serve
+        "recursive", "r", "new-only", "deep", "no-recursive", "no-auth",
     };
 
     public static CommandLine Parse(IEnumerable<string> args)
