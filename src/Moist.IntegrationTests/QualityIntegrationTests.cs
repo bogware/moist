@@ -27,17 +27,23 @@ public sealed class QualityIntegrationTests(MediaFixture media) : PipelineTestBa
     }
 
     [FfmpegTheory]
-    [InlineData(QualityMetric.Xpsnr)]
     [InlineData(QualityMetric.Ssim)]
     [InlineData(QualityMetric.Psnr)]
     public async Task EveryMetricProducesAScore(QualityMetric metric) => await MetricScores(metric);
 
     /// <summary>
     /// VMAF is its own test because libvmaf is a build-time component that most FFmpeg
-    /// packages leave out, while the other three metrics are always present.
+    /// packages leave out — Ubuntu's 6.1.1 has no libvmaf at all.
     /// </summary>
     [FfmpegFact(filter: "libvmaf")]
     public async Task VmafProducesAScore() => await MetricScores(QualityMetric.Vmaf);
+
+    /// <summary>
+    /// XPSNR likewise: the filter arrived in FFmpeg 7.1, so anything older simply does
+    /// not have it. SSIM and PSNR have always been there.
+    /// </summary>
+    [FfmpegFact(filter: "xpsnr")]
+    public async Task XpsnrProducesAScore() => await MetricScores(QualityMetric.Xpsnr);
 
     private async Task MetricScores(QualityMetric metric)
     {

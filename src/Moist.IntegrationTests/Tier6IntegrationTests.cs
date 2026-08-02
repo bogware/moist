@@ -142,9 +142,18 @@ public sealed class Tier6IntegrationTests(MediaFixture media) : PipelineTestBase
 
     // ---------------- SVT-AV1 tuning ----------------
 
+    /// <summary>
+    /// Only Vq is encoded for real. The tunings are passed through as numbers and which
+    /// ones exist depends on the SVT-AV1 version FFmpeg was built against — Ubuntu's
+    /// 6.1.1 carries SVT-AV1 1.4, which knows tune 0 and 1 and rejects the rest, so
+    /// asserting that tune 5 encodes would only be asserting that the runner is new.
+    /// Vq is tune 0 and has existed as long as the option has.
+    ///
+    /// The name-to-number mapping for every tuning is covered in the unit suite
+    /// (Tier6Tests.SvtTuneNamesParse / the numbering assertions), which needs no encoder.
+    /// </summary>
     [FfmpegTheory(encoder: "libsvtav1")]
     [InlineData(SvtAv1Tune.Vq)]
-    [InlineData(SvtAv1Tune.Vmaf)]
     public async Task SvtAv1AcceptsItsTuning(SvtAv1Tune tune)
     {
         using var services = CreateServices();

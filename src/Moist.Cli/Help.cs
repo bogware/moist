@@ -80,6 +80,9 @@ public static class Help
                                     SVT-AV1 only. 'vq' is the perceptual tuning that
                                     SVT-AV1 4.0 merged from the PSY fork; the encoder's
                                     own default optimises PSNR instead.
+                                    Which tunings exist depends on the SVT-AV1 your
+                                    FFmpeg was built against — older builds know only
+                                    vq and psnr and reject the others outright.
               --video-args <args>   Extra arguments passed to the encoder verbatim
 
         AUDIO
