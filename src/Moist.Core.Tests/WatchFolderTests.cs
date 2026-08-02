@@ -237,7 +237,7 @@ public sealed class WatchFolderTests : IDisposable
     }
 
     [Fact]
-    public void FilesAlreadyThereCanBeWrittenOffAtStartup()
+    public async Task FilesAlreadyThereCanBeWrittenOffAtStartup()
     {
         Drop("preexisting.mkv");
 
@@ -245,9 +245,14 @@ public sealed class WatchFolderTests : IDisposable
 
         // RunAsync marks them; a cancelled token stops it after that first pass.
         using var cancelled = new CancellationTokenSource();
-        cancelled.Cancel();
-        try { service.RunAsync((_, _) => Task.FromResult(new WatchResult("", null, true, null)), null, cancelled.Token).Wait(); }
-        catch { /* cancellation is the expected end */ }
+        await cancelled.CancelAsync();
+
+        try
+        {
+            await service.RunAsync(
+                (_, _) => Task.FromResult(new WatchResult("", null, true, null)), null, cancelled.Token);
+        }
+        catch (OperationCanceledException) { /* the expected end */ }
 
         service.Ready();
         Assert.Empty(service.Ready());
