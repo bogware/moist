@@ -239,7 +239,12 @@ public static class EncodeJobBuilder
                 var chunk = chunks.Plan.Chunks[i];
                 var settings = CreateVideoSettings(req);
                 settings.Mode = req.Mode;
-                settings.Quality = req.Quality;
+
+                // Per-scene optimisation gives each chunk its own CRF so quality is
+                // uniform across the file instead of bitrate being uniform.
+                settings.Quality = chunks.PerChunkQuality.TryGetValue(i, out var sceneQuality)
+                    ? sceneQuality
+                    : req.Quality;
                 settings.Bitrate = req.Bitrate;
                 settings.Preset = req.Preset;
                 settings.Tune = req.Tune;

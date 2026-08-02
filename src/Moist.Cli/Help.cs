@@ -112,6 +112,23 @@ public static class Help
               --no-resume           Re-encode chunks left by an interrupted run
               --no-verify           Skip the frame-count check on the joined result
 
+        PER-SCENE QUALITY  (needs --chunked and a target)
+              --per-scene           Give every scene its own CRF so the target is reached
+                                    everywhere, instead of over-spending on easy scenes
+                                    and starving hard ones
+              --per-scene-full      Search every scene properly instead of modelling most
+                                    of them. Slower, marginally more accurate.
+              --calibration-scenes <n>  Scenes to search before modelling the rest (default 3)
+
+          A single CRF gives every scene the same effort, not the same quality. On a clip
+          whose scenes differ sharply, fixed CRF 25 averaged VMAF 93.4 but its hardest
+          scene sat at 83.6, while per-scene held every scene at 93.8+. Against a fixed
+          CRF chosen low enough that no scene falls short, per-scene came out 15% smaller.
+
+          Scenes the model predicts are then checked and re-searched if they miss, because
+          compressibility and perceptual tolerance are not the same thing — a test pattern
+          compresses to nothing yet its sharp edges fall apart when quantised hard.
+
           How much this helps depends entirely on whether your encoder can already use
           all your cores. A well-threaded x265 on a 16-core machine leaves little room,
           so expect around 1.2x. It pays off with encoders that thread poorly, with very

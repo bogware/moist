@@ -85,6 +85,9 @@ public partial class EncodeTabViewModel : ViewModelBase, IDisposable
     [ObservableProperty] private bool _chunkSceneDetection = true;
     [ObservableProperty] private int _maxChunkSeconds = 60;
 
+    /// <summary>Give each scene its own CRF, aiming for the target quality everywhere.</summary>
+    [ObservableProperty] private bool _usePerSceneQuality;
+
     // Target quality
     [ObservableProperty] private QualityMetric _targetMetric = QualityMetric.Vmaf;
     [ObservableProperty] private double _targetScore = 95;
@@ -698,13 +701,38 @@ public partial class EncodeTabViewModel : ViewModelBase, IDisposable
                 coordinator.DetectionProgress += p => Avalonia.Threading.Dispatcher.UIThread.Post(
                     () => StatusMessage = $"Detecting scenes… {p * 100:F0}%");
 
-                chunks = await coordinator.PrepareAsync(
-                    BuildRequest(InputFile, OutputFile), MediaInfo, BuildChunkingOptions());
+                var request = BuildRequest(InputFile, OutputFile);
+                var chunkOptions = BuildChunkingOptions();
+                var chunkPlan = await coordinator.PlanAsync(request, MediaInfo, chunkOptions);
 
-                StatusMessage = chunks is null
-                    ? "Too short to be worth chunking; queued as a single encode."
-                    : $"Queued as {chunks.Plan.Chunks.Count} chunks" +
-                      (chunks.AlreadyDone.Count > 0 ? $" ({chunks.AlreadyDone.Count} reused)" : "") + ".";
+                if (chunkPlan is null)
+                {
+                    StatusMessage = "Too short to be worth chunking; queued as a single encode.";
+                }
+                else
+                {
+                    // Per-scene assignments feed into the chunk directory name, so they
+                    // have to be settled before the chunk files are named.
+                    IReadOnlyDictionary<int, double>? perScene = null;
+                    if (UsePerSceneQuality)
+                    {
+                        var optimizer = new PerSceneOptimizer(_services, _services.LoggerFactory);
+                        optimizer.Progress += (done, total, message) =>
+                            Avalonia.Threading.Dispatcher.UIThread.Post(() => StatusMessage = message);
+
+                        var perSceneResult = await optimizer.OptimizeAsync(
+                            request, chunkPlan,
+                            new PerSceneOptions { Metric = TargetMetric, Target = TargetScore },
+                            MediaInfo);
+
+                        perScene = perSceneResult.ChunkQuality;
+                        QualitySearchStatus = "Per-scene: " + perSceneResult.Summary;
+                    }
+
+                    chunks = coordinator.Prepare(request, chunkPlan, chunkOptions, perScene);
+                    StatusMessage = $"Queued as {chunks.Plan.Chunks.Count} chunks" +
+                        (chunks.AlreadyDone.Count > 0 ? $" ({chunks.AlreadyDone.Count} reused)" : "") + ".";
+                }
             }
             catch (Exception ex)
             {

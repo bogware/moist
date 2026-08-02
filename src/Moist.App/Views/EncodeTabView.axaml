@@ -193,6 +193,10 @@
                                                    Increment="10" Width="100" FontSize="11"/>
                                     <TextBlock Text="s" VerticalAlignment="Center" FontSize="11"/>
                                 </StackPanel>
+                                <CheckBox Content="Per-scene quality"
+                                          IsChecked="{Binding UsePerSceneQuality}"
+                                          IsEnabled="{Binding UseChunkedEncoding}"
+                                          ToolTip.Tip="Give every scene its own CRF so the target quality is reached everywhere, instead of over-spending on easy scenes and starving hard ones. Uses the Target Quality setting above."/>
                             </StackPanel>
                         </Grid>
                     </StackPanel>

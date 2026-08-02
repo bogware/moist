@@ -87,11 +87,18 @@ public sealed class TargetQualitySearch(AppServices services, ILoggerFactory? lo
     /// <summary>Progress callback: (probesDone, probeBudget, message).</summary>
     public event Action<int, int, string>? Progress;
 
+    /// <param name="sceneOffset">
+    /// Shift every sample by this much into the source. Per-scene optimisation uses it to
+    /// search inside one scene: the caller passes a <see cref="MediaFileInfo"/> describing
+    /// just that scene's duration, and this positions the samples at the right place in
+    /// the real file.
+    /// </param>
     public async Task<TargetQualityResult> SearchAsync(
         EncodeRequest request,
         TargetQualityOptions options,
         MediaFileInfo? info = null,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        TimeSpan? sceneOffset = null)
     {
         var started = DateTime.UtcNow;
         info ??= await services.MediaAnalyzer.AnalyzeAsync(request.InputFile, ct);
@@ -116,6 +123,9 @@ public sealed class TargetQualitySearch(AppServices services, ILoggerFactory? lo
 
         var (minCrf, maxCrf) = CrfRange(request.VideoEncoderId);
         var samples = PlanSamples(info.Duration, options);
+
+        if (sceneOffset is { } offset && offset > TimeSpan.Zero)
+            samples = samples.Select(s => s with { Start = s.Start + offset }).ToList();
 
         _logger.LogInformation(
             "Target-quality search on {File}: {Metric} >= {Target}, CRF {Min}-{Max}, {Samples} sample(s)",

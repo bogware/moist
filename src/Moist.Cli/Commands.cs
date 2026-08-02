@@ -304,6 +304,7 @@ public static class EncodeRunner
 
         // Chunked encoding: split the video, encode the pieces in parallel, join them back.
         ChunkedEncodePreparation? chunks = null;
+        PerSceneResult? perSceneResult = null;
         var chunkOptions = EncodeOptions.Chunking(cl);
         if (chunkOptions is not null && !request.AudioOnly)
         {
@@ -323,7 +324,22 @@ public static class EncodeRunner
 
             try
             {
-                chunks = await coordinator.PrepareAsync(request, info, chunkOptions, ct);
+                var chunkPlan = await coordinator.PlanAsync(request, info, chunkOptions, ct);
+
+                if (chunkPlan is not null)
+                {
+                    // Per-scene: give every scene its own CRF before the chunk files are
+                    // named, since the assignments are part of the resume fingerprint.
+                    IReadOnlyDictionary<int, double>? perScene = null;
+                    if (cl.Flag("per-scene"))
+                    {
+                        perSceneResult = await RunPerSceneAsync(
+                            cl, services, request, chunkPlan, info, quiet, ct);
+                        perScene = perSceneResult.ChunkQuality;
+                    }
+
+                    chunks = coordinator.Prepare(request, chunkPlan, chunkOptions, perScene);
+                }
             }
             catch (OperationCanceledException) { throw; }
             catch (Exception ex)
@@ -349,6 +365,8 @@ public static class EncodeRunner
                         : "";
                     Console.Error.WriteLine(
                         $"  {chunks.Plan.Chunks.Count} chunks over {chunks.Plan.TotalFrames} frames{reused}");
+                    if (perSceneResult is not null)
+                        Console.Error.WriteLine($"  per-scene: {perSceneResult.Summary}");
                 }
             }
         }
@@ -419,6 +437,53 @@ public static class EncodeRunner
                 ? QualityOptions.Metric(cl).ToString().ToLowerInvariant()
                 : null,
         };
+    }
+
+    /// <summary>Give every scene its own CRF so quality is even across the file.</summary>
+    private static async Task<PerSceneResult> RunPerSceneAsync(
+        CommandLine cl, AppServices services, EncodeRequest request,
+        Core.Chunking.ChunkPlan plan, MediaFileInfo info, bool quiet, CancellationToken ct)
+    {
+        var requested = QualityOptions.Target(cl);
+        var metric = requested?.Metric ?? QualityOptions.Metric(cl);
+
+        var options = new PerSceneOptions
+        {
+            Metric = metric,
+            Target = requested?.Target,
+            Strategy = cl.Flag("per-scene-full") ? PerSceneStrategy.Full : PerSceneStrategy.Modeled,
+            CalibrationScenes = cl.Int("calibration-scenes") ?? 3,
+        };
+
+        var optimizer = new PerSceneOptimizer(services, services.LoggerFactory);
+
+        if (!quiet)
+        {
+            var lastMessage = "";
+            optimizer.Progress += (done, total, message) =>
+            {
+                if (message == lastMessage) return;
+                lastMessage = message;
+                Console.Error.Write($"\r  {message}".PadRight(60));
+            };
+        }
+
+        var result = await optimizer.OptimizeAsync(request, plan, options, info, ct);
+
+        if (!quiet)
+        {
+            Console.Error.Write("\r".PadRight(62) + "\r");
+            foreach (var a in result.Assignments)
+            {
+                var how = a.Calibrated
+                    ? $"searched -> {metric.Format(a.MeasuredScore ?? 0)}"
+                    : "modelled";
+                Console.Error.WriteLine(
+                    $"    scene {a.ChunkIndex + 1,2}  CRF {a.Crf,2}  ({how})");
+            }
+        }
+
+        return result;
     }
 
     private static string Summarize(Job? failed)

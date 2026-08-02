@@ -44,7 +44,7 @@ public sealed class ChunkedEncodeTests(MediaFixture media) : PipelineTestBase(me
 
         var coordinator = new ChunkedEncode(services);
         var request = Request("chunked.mkv");
-        var chunks = await coordinator.PrepareAsync(request, info, Options(), CancellationToken.None);
+        var chunks = await coordinator.PrepareAsync(request, info, Options(), ct: CancellationToken.None);
 
         Assert.NotNull(chunks);
         Assert.True(chunks!.Plan.Chunks.Count > 1, "the source should have split into several chunks");
@@ -72,7 +72,7 @@ public sealed class ChunkedEncodeTests(MediaFixture media) : PipelineTestBase(me
         var info = await services.MediaAnalyzer.AnalyzeAsync(Media.SceneVideo, CancellationToken.None);
 
         var request = Request("chunked_quality.mkv");
-        var chunks = await new ChunkedEncode(services).PrepareAsync(request, info, Options(), CancellationToken.None);
+        var chunks = await new ChunkedEncode(services).PrepareAsync(request, info, Options(), ct: CancellationToken.None);
 
         var plan = EncodeJobBuilder.Build(request, info, chunks, ffprobePath: "ffprobe");
         var jobs = plan.AllJobs.ToList();
@@ -99,7 +99,7 @@ public sealed class ChunkedEncodeTests(MediaFixture media) : PipelineTestBase(me
         Assert.True(await RunAsync(services, singleJobs), Failure(singleJobs));
 
         var chunkedRequest = Request("compare_chunked.mkv");
-        var chunks = await new ChunkedEncode(services).PrepareAsync(chunkedRequest, info, Options(), CancellationToken.None);
+        var chunks = await new ChunkedEncode(services).PrepareAsync(chunkedRequest, info, Options(), ct: CancellationToken.None);
         var chunkedPlan = EncodeJobBuilder.Build(chunkedRequest, info, chunks, ffprobePath: "ffprobe");
         var chunkedJobs = chunkedPlan.AllJobs.ToList();
         Assert.True(await RunAsync(services, chunkedJobs), Failure(chunkedJobs));
@@ -121,7 +121,7 @@ public sealed class ChunkedEncodeTests(MediaFixture media) : PipelineTestBase(me
         var info = await services.MediaAnalyzer.AnalyzeAsync(Media.SceneVideo, CancellationToken.None);
 
         var request = Request("truncated.mkv");
-        var chunks = await new ChunkedEncode(services).PrepareAsync(request, info, Options(), CancellationToken.None);
+        var chunks = await new ChunkedEncode(services).PrepareAsync(request, info, Options(), ct: CancellationToken.None);
         Assert.NotNull(chunks);
 
         var plan = EncodeJobBuilder.Build(request, info, chunks, ffprobePath: "ffprobe");
@@ -181,7 +181,7 @@ public sealed class ChunkedEncodeTests(MediaFixture media) : PipelineTestBase(me
         var request = Request("resume.mkv");
         var coordinator = new ChunkedEncode(services);
 
-        var first = await coordinator.PrepareAsync(request, info, options, CancellationToken.None);
+        var first = await coordinator.PrepareAsync(request, info, options, ct: CancellationToken.None);
         Assert.NotNull(first);
         Assert.Empty(first!.AlreadyDone);
 
@@ -191,7 +191,7 @@ public sealed class ChunkedEncodeTests(MediaFixture media) : PipelineTestBase(me
         Assert.True(await RunAsync(services, partial), Failure(partial));
 
         // Re-preparing must recognise them and leave the rest to do.
-        var second = await coordinator.PrepareAsync(request, info, options, CancellationToken.None);
+        var second = await coordinator.PrepareAsync(request, info, options, ct: CancellationToken.None);
         Assert.NotNull(second);
         Assert.Equal(2, second!.AlreadyDone.Count);
         Assert.Equal(second.Plan.Chunks.Count - 2, second.RemainingCount);
@@ -215,7 +215,7 @@ public sealed class ChunkedEncodeTests(MediaFixture media) : PipelineTestBase(me
 
         var request = Request("partial.mkv");
         var coordinator = new ChunkedEncode(services);
-        var prep = await coordinator.PrepareAsync(request, info, options, CancellationToken.None);
+        var prep = await coordinator.PrepareAsync(request, info, options, ct: CancellationToken.None);
         Assert.NotNull(prep);
 
         // Write a plausible but short file where the first chunk belongs.
@@ -224,7 +224,7 @@ public sealed class ChunkedEncodeTests(MediaFixture media) : PipelineTestBase(me
         victim.TrimFrames = 1;
         Assert.True(await RunAsync(services, [victim]), Failure([victim]));
 
-        var again = await coordinator.PrepareAsync(request, info, options, CancellationToken.None);
+        var again = await coordinator.PrepareAsync(request, info, options, ct: CancellationToken.None);
 
         Assert.NotNull(again);
         Assert.DoesNotContain(0, again!.AlreadyDone);
@@ -246,7 +246,7 @@ public sealed class ChunkedEncodeTests(MediaFixture media) : PipelineTestBase(me
             },
             info,
             new ChunkingOptions { MinChunkDuration = TimeSpan.FromSeconds(30) },
-            CancellationToken.None);
+            ct: CancellationToken.None);
 
         Assert.Null(prep);
     }
@@ -270,7 +270,7 @@ public sealed class ChunkedEncodeTests(MediaFixture media) : PipelineTestBase(me
             AudioTracks = [0, 1, 2],
         };
 
-        var chunks = await new ChunkedEncode(services).PrepareAsync(request, info, Options(), CancellationToken.None);
+        var chunks = await new ChunkedEncode(services).PrepareAsync(request, info, Options(), ct: CancellationToken.None);
         Assert.NotNull(chunks);
 
         var plan = EncodeJobBuilder.Build(request, info, chunks, ffprobePath: "ffprobe");

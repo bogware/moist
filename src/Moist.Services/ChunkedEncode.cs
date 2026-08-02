@@ -19,7 +19,15 @@ public sealed class ChunkedEncodePreparation
     /// <summary>Chunks already encoded and verified from an earlier run.</summary>
     public required IReadOnlySet<int> AlreadyDone { get; init; }
 
+    /// <summary>
+    /// Per-chunk quality override, set by per-scene optimisation. Chunks absent from the
+    /// map use the request's quality.
+    /// </summary>
+    public IReadOnlyDictionary<int, double> PerChunkQuality { get; init; }
+        = new Dictionary<int, double>();
+
     public int RemainingCount => Plan.Chunks.Count - AlreadyDone.Count;
+
 }
 
 /// <summary>
@@ -39,9 +47,24 @@ public sealed class ChunkedEncode(AppServices services, ILoggerFactory? loggerFa
     public event Action<double>? DetectionProgress;
 
     /// <summary>
-    /// Returns null when chunking isn't worthwhile — the caller should encode normally.
+    /// Plan and prepare in one step. Returns null when chunking isn't worthwhile.
     /// </summary>
     public async Task<ChunkedEncodePreparation?> PrepareAsync(
+        EncodeRequest request, MediaFileInfo info, ChunkingOptions options,
+        IReadOnlyDictionary<int, double>? perChunkQuality = null, CancellationToken ct = default)
+    {
+        var plan = await PlanAsync(request, info, options, ct);
+        return plan is null ? null : Prepare(request, plan, options, perChunkQuality);
+    }
+
+    /// <summary>
+    /// Work out the chunk boundaries. Separate from <see cref="Prepare"/> because
+    /// per-scene optimisation needs the plan before it can decide each chunk's quality,
+    /// and that quality has to be known before the chunk directory is named.
+    ///
+    /// Returns null when chunking isn't worthwhile — the caller should encode normally.
+    /// </summary>
+    public async Task<ChunkPlan?> PlanAsync(
         EncodeRequest request, MediaFileInfo info, ChunkingOptions options, CancellationToken ct = default)
     {
         var video = info.Video;
@@ -78,9 +101,24 @@ public sealed class ChunkedEncode(AppServices services, ILoggerFactory? loggerFa
 
         var plan = ChunkPlanner.Plan(totalFrames, video.Framerate, options, sceneCuts);
 
-        // Deterministic directory so an interrupted run can be picked back up.
+        _logger.LogInformation(
+            "Chunk plan: {Chunks} chunk(s) over {Frames} frames ({Mode}, {Cuts} scene cut(s))",
+            plan.Chunks.Count, plan.TotalFrames, plan.Mode, sceneCuts.Count);
+
+        return plan;
+    }
+
+    /// <summary>
+    /// Settle on chunk file paths and work out what an earlier run left behind.
+    /// </summary>
+    public ChunkedEncodePreparation Prepare(
+        EncodeRequest request, ChunkPlan plan, ChunkingOptions options,
+        IReadOnlyDictionary<int, double>? perChunkQuality = null)
+    {
+        // The directory name covers the per-chunk qualities too, so a run at a different
+        // target can't reuse chunks encoded for the previous one.
         var chunkDir = Path.Combine(
-            request.TempDirectory, "chunks", FingerprintFor(request, plan, options));
+            request.TempDirectory, "chunks", FingerprintFor(request, plan, options, perChunkQuality));
         Directory.CreateDirectory(chunkDir);
 
         var files = plan.Chunks
@@ -88,7 +126,7 @@ public sealed class ChunkedEncode(AppServices services, ILoggerFactory? loggerFa
             .ToList();
 
         var done = options.Resume
-            ? await FindReusableAsync(plan, files, ct)
+            ? FindReusableAsync(plan, files, CancellationToken.None).GetAwaiter().GetResult()
             : new HashSet<int>();
 
         if (done.Count > 0)
@@ -97,16 +135,13 @@ public sealed class ChunkedEncode(AppServices services, ILoggerFactory? loggerFa
                 done.Count, plan.Chunks.Count);
         }
 
-        _logger.LogInformation(
-            "Chunk plan: {Chunks} chunk(s) over {Frames} frames ({Mode}, {Cuts} scene cut(s))",
-            plan.Chunks.Count, plan.TotalFrames, plan.Mode, sceneCuts.Count);
-
         return new ChunkedEncodePreparation
         {
             Plan = plan,
             ChunkDirectory = chunkDir,
             ChunkFiles = files,
             AlreadyDone = done,
+            PerChunkQuality = perChunkQuality ?? new Dictionary<int, double>(),
         };
     }
 
@@ -159,7 +194,9 @@ public sealed class ChunkedEncode(AppServices services, ILoggerFactory? loggerFa
     /// change a chunk's contents has to be in here, or a resumed run splices together
     /// chunks encoded with different settings.
     /// </summary>
-    internal static string FingerprintFor(EncodeRequest request, ChunkPlan plan, ChunkingOptions options)
+    internal static string FingerprintFor(
+        EncodeRequest request, ChunkPlan plan, ChunkingOptions options,
+        IReadOnlyDictionary<int, double>? perChunkQuality = null)
     {
         var identity = new StringBuilder();
         identity.Append(Path.GetFullPath(request.InputFile).ToLowerInvariant()).Append('|');
@@ -190,6 +227,13 @@ public sealed class ChunkedEncode(AppServices services, ILoggerFactory? loggerFa
                 // different chunks.
                 .Append(plan.Chunks.Count).Append('|')
                 .Append(string.Join(",", plan.Chunks.Select(c => c.StartFrame)));
+
+        // Per-scene assignments change what each chunk contains, so they belong here too.
+        if (perChunkQuality is { Count: > 0 })
+        {
+            identity.Append('|').Append(string.Join(",",
+                perChunkQuality.OrderBy(kv => kv.Key).Select(kv => $"{kv.Key}:{kv.Value:F1}")));
+        }
 
         var hash = SHA256.HashData(Encoding.UTF8.GetBytes(identity.ToString()));
         return Convert.ToHexString(hash)[..16];

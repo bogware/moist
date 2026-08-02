@@ -125,6 +125,38 @@ hits 95 on one encoder doesn't hit it on another — that's a fast wrong answer.
 Works with `--target-xpsnr`, `--target-ssim`, `--target-psnr` too, and in the GUI via
 the **Find CRF** button.
 
+### Per-Scene Quality — the same quality everywhere, not the same effort
+
+A single CRF gives every scene the same *effort*. That isn't the same as the same
+*quality*: the easy scene comes out better than it needs to be, and the hard one comes
+out worse than you wanted. Per-scene fixes that.
+
+```bash
+moist encode input.mkv --chunked --per-scene --target-vmaf 95
+```
+
+Every scene gets its own CRF, aimed at your target. Measured on a clip whose scenes span
+a ~400× complexity range:
+
+| | worst scene | mean VMAF | size |
+|---|---|---|---|
+| fixed CRF 25 | **83.55** | 93.40 | 1,557 KB |
+| fixed CRF 17 | 93.82 | 96.89 | 3,089 KB |
+| **per-scene** | 93.80 | 94.78 | **2,629 KB** |
+
+Read that carefully, because the framing matters. Against fixed CRF 25 the per-scene
+file is *bigger* — but CRF 25's average of 93.4 is hiding a scene sitting at **83.6**,
+which is the one you'd actually notice. Pick a CRF low enough that no scene falls short
+(CRF 17), and per-scene delivers the same worst-case quality **15% smaller**.
+
+Quality spread across scenes drops from **13.9 VMAF to 3.6**.
+
+Rather than searching every scene — which costs a full CRF search each — moist measures
+scene complexity cheaply, searches a few that span the range, and models the rest. Then
+it **checks its own predictions** and re-searches any that miss, because compressibility
+and perceptual tolerance aren't the same thing: a test pattern compresses to nothing yet
+falls apart when quantised hard. Use `--per-scene-full` to search every scene instead.
+
 ### Chunked Parallel Encoding
 
 Split the file, encode the pieces at the same time, join them back:
@@ -286,6 +318,9 @@ moist encode input.mkv --video-encoder hw-nvenc-hevc --audio-track all --bit-dep
 # split into parallel chunks; resumes if interrupted
 moist encode input.mkv --chunked --jobs 8
 
+# every scene gets its own CRF, aimed at the same quality throughout
+moist encode input.mkv --chunked --per-scene --target-vmaf 95
+
 moist batch *.mkv --container mp4 --output-dir ./out --jobs 4 --keep-going
 moist compare source.mkv encoded.mkv --metric vmaf
 moist probe input.mkv --json
@@ -344,9 +379,9 @@ dotnet test Moist.Core.Tests       # fast unit tests only
 dotnet test Moist.IntegrationTests # real FFmpeg encodes
 ```
 
-**157 unit tests** covering job models, queue behavior, encoder registry, profiles, settings, filter engines, audio processor argument building, hardware encoder plumbing, quality metric parsing, search arithmetic, chunk planning, and CLI parsing — none of which launch an external process.
+**171 unit tests** covering job models, queue behavior, encoder registry, profiles, settings, filter engines, audio processor argument building, hardware encoder plumbing, quality metric parsing, search arithmetic, chunk planning, the per-scene complexity model, and CLI parsing — none of which launch an external process.
 
-**88 integration tests** that run real encodes through the full pipeline and verify the output with ffprobe: every video encoder, every audio codec, every container, 10-bit and HDR sources, silent sources, multi-track audio, chapters and attachments, filter chains, subtitles, cancellation, concurrency, awkward filenames, temp-file cleanup, all four quality metrics, target-quality search, and chunked encoding — including a test that searches then encodes the full file and asserts the sampled prediction held, and one that deliberately truncates a chunk to prove the frame-count verification catches it. They skip automatically when FFmpeg isn't on your PATH (and hardware tests skip without a usable GPU), so check the skip count before trusting a green run.
+**96 integration tests** that run real encodes through the full pipeline and verify the output with ffprobe: every video encoder, every audio codec, every container, 10-bit and HDR sources, silent sources, multi-track audio, chapters and attachments, filter chains, subtitles, cancellation, concurrency, awkward filenames, temp-file cleanup, all four quality metrics, target-quality search, chunked encoding, and per-scene optimisation — including a test that searches then encodes the full file and asserts the sampled prediction held, one that deliberately truncates a chunk to prove the frame-count verification catches it, and one that checks per-scene beats a fixed CRF chosen for the hardest scene. They skip automatically when FFmpeg isn't on your PATH (and hardware tests skip without a usable GPU), so check the skip count before trusting a green run.
 
 If FFmpeg isn't on your PATH, set the path in the **Settings** tab after launching. moist won't hold it against you.
 

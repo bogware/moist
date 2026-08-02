@@ -273,7 +273,7 @@ It is **off by default** for that reason.
 
 ---
 
-## Tier 5 — Per-scene optimization ⬜  ← next
+## Tier 5 — Per-scene optimization ✅
 
 Tier 3 + Tier 4 combined: every scene gets its own CRF so perceptual quality is
 uniform across the file instead of uniform in *bitrate*.
@@ -282,18 +282,49 @@ This is [Netflix's Dynamic Optimizer](https://netflixtechblog.com/dynamic-optimi
 approach — 10–15% bitrate savings over per-title at the same quality. No consumer
 tool offers it behind a GUI.
 
-Both halves now exist: Tier 4 already splits the file at scene boundaries and
-encodes the pieces independently, and Tier 3 already finds the CRF that reaches a
-target on a sample. Per-scene optimisation is running the second over each of the
-first rather than over the file as a whole.
+| Item | Status | Notes |
+|---|---|---|
+| Per-scene CRF assignment | ✅ | Each chunk carries its own quality through to the encoder |
+| Cheap complexity measure | ✅ | Bytes per frame at a fixed CRF — how much is actually going on |
+| Calibrate + model | ✅ | Search a few scenes spanning the range, fit CRF against log complexity |
+| **Verify the model's work** | ✅ | Predictions are measured and re-searched when they miss |
+| Full per-scene search | ✅ | `--per-scene-full`, for when accuracy beats cost |
+| GUI + CLI exposure | ✅ | `--per-scene`, or the Per-scene checkbox |
 
-Note this makes chunking pay for itself even at 1.2x wall-clock: a per-scene
-encode has to be chunked anyway, so the parallelism comes free with the quality
-win.
+### What it actually buys you
+
+Measured on a clip whose four scenes span a ~400× complexity range:
+
+| | worst scene | mean VMAF | size |
+|---|---|---|---|
+| fixed CRF 25 | **83.55** | 93.40 | 1,557 KB |
+| fixed CRF 17 | 93.82 | 96.89 | 3,089 KB |
+| **per-scene** | 93.80 | 94.78 | **2,629 KB** |
+
+How this is framed matters. Against fixed CRF 25 the per-scene file is *bigger* —
+but that CRF 25 average of 93.4 hides a scene sitting at 83.6, which is the one a
+viewer would notice. A careful user picks a CRF low enough for the hardest scene,
+and against **that** — equal worst-case quality — per-scene is **15% smaller**,
+squarely in the range Netflix reported.
+
+Quality spread across scenes fell from **13.9 VMAF to 3.6**. That is the actual
+product: a single CRF gives every scene the same *effort*, not the same quality.
+
+### The trap: compressibility is not perceptual tolerance
+
+The first working version got this wrong in an instructive way. Complexity is
+measured as "bytes at a fixed CRF", and a SMPTE bars pattern compresses to almost
+nothing — so the model handed it CRF 42. It scored **80** against a target of 93,
+because razor-sharp edges are exactly what a perceptual metric punishes when
+quantised hard.
+
+So modelled predictions are now **measured and re-searched when they miss**: one
+cheap check per scene when the model is right, a real search only where it was
+wrong. The same "verify, don't trust" stance as the chunk frame counts.
 
 ---
 
-## Tier 6 — Professional / archival ⬜
+## Tier 6 — Professional / archival ⬜  ← next
 
 | Item | Status | Notes |
 |---|---|---|
@@ -322,7 +353,9 @@ library health checking.
 
 - **Queue persistence is half-wired.** `JobPersistence.Save()`/`Load()` both run, but
   `RestorePersistedJobs()` only reports a count and never re-enqueues, and `Load()`
-  deletes the file. Crash recovery is effectively absent.
+  deletes the file. Crash recovery is effectively absent — and now that a per-scene
+  chunked encode can run for hours, this matters more than it did. Chunk-level
+  resume already survives a crash; the *queue* does not.
 - **Tool discovery runs twice at startup.**
 - **Settings prerequisites list has overlapping text** (`OKFFmpeg`).
 - **x264/x265 CLI, VapourSynth and AviSynth paths are untested** — those tools

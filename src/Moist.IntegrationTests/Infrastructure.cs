@@ -131,6 +131,13 @@ public sealed class MediaFixture : IDisposable
     /// <summary>Three visually distinct segments spliced together, so scene detection has real cuts to find.</summary>
     public string SceneVideo { get; }
 
+    /// <summary>
+    /// Scenes with wildly different complexity — a flat colour field next to dense
+    /// fractal detail. A single CRF cannot suit all of it, which is what per-scene
+    /// optimisation exists for.
+    /// </summary>
+    public string VariedVideo { get; }
+
     public MediaFixture()
     {
         Root = Path.Combine(Path.GetTempPath(), "moist-itest-" + Guid.NewGuid().ToString("N")[..8]);
@@ -145,6 +152,7 @@ public sealed class MediaFixture : IDisposable
         RichVideo = Path.Combine(Root, "rich.mkv");
         NaturalVideo = Path.Combine(Root, "natural.mp4");
         SceneVideo = Path.Combine(Root, "scenes.mp4");
+        VariedVideo = Path.Combine(Root, "varied.mp4");
 
         if (!Ffmpeg.Available) return;
 
@@ -175,6 +183,20 @@ public sealed class MediaFixture : IDisposable
             $"-filter_complex \"[1:v]trim=duration=3,setpts=PTS-STARTPTS[m];[0:v][m][2:v]concat=n=3:v=1[v]\" " +
             $"-map \"[v]\" -map 3:a -c:v libx264 -preset ultrafast -pix_fmt yuv420p -c:a aac -shortest " +
             $"\"{SceneVideo}\"");
+
+        // Four scenes with a ~400x complexity spread at a fixed CRF: bars, fractal,
+        // test pattern, flat colour. Encoded at a high quality so it can serve as a
+        // reference the encodes are measured against.
+        Run("ffmpeg",
+            $"-y -v error " +
+            $"-f lavfi -i smptebars=size=320x180:rate=25:duration=3 " +
+            $"-f lavfi -i mandelbrot=size=320x180:rate=25 " +
+            $"-f lavfi -i testsrc2=size=320x180:rate=25:duration=3 " +
+            $"-f lavfi -i color=c=navy:size=320x180:rate=25:duration=3 " +
+            $"-f lavfi -i sine=frequency=440:duration=12 " +
+            $"-filter_complex \"[1:v]trim=duration=3,setpts=PTS-STARTPTS[m];[0:v][m][2:v][3:v]concat=n=4:v=1[v]\" " +
+            $"-map \"[v]\" -map 4:a -c:v libx264 -preset veryfast -crf 14 -pix_fmt yuv420p -c:a aac -shortest " +
+            $"\"{VariedVideo}\"");
     }
 
     /// <summary>10-bit HDR10: BT.2020 primaries, PQ transfer, mastering display and CLL.</summary>

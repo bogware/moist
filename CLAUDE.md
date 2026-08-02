@@ -175,6 +175,29 @@ using; measured here, x265 `slow` leaves ~23% headroom on 16 cores and SVT-AV1 l
 none (chunked is *slower*). It stays valuable for poorly-threaded encoders, very high
 core counts, and resumability. It is off by default.
 
+### Per-scene optimisation: compressibility is not perceptual tolerance
+
+`PerSceneOptimizer` gives every chunk its own CRF so quality is even across the file,
+rather than bitrate being even. It measures each scene's complexity cheaply (bytes per
+frame at a fixed CRF), searches a few scenes spanning that range properly, fits CRF
+against **log** complexity — complexity spans orders of magnitude while the useful CRF
+range spans a few points — and predicts the rest.
+
+**The prediction is then checked.** This is the part not to remove. Complexity is
+measured as compressibility, and the two come apart badly: a SMPTE bars pattern
+compresses to almost nothing, so the model handed it CRF 42, and it scored **80**
+against a target of 93 because sharp edges are exactly what a perceptual metric
+punishes when quantised hard. Every modelled scene is now measured at its assigned CRF
+and re-searched if it misses — one cheap check when the model is right, a real search
+only where it was wrong.
+
+Calibration scenes are chosen by spread in *complexity*, not position in the timeline;
+ten similar scenes teach the model nothing that one would not.
+
+When judging whether this helps, compare at equal **worst-case** quality, not equal
+mean. A fixed CRF's average flatters it by hiding the one scene that looks bad — which
+is the scene a viewer actually notices.
+
 ### Quality metrics: framesync will lie to you
 
 Every metric filter (`libvmaf`, `xpsnr`, `ssim`, `psnr`) is built on FFmpeg's
@@ -292,6 +315,7 @@ This isn't hypothetical defensiveness: `WindowX`/`WindowY` used to default to `d
 | Add a hardware encoder | One entry in `HardwareCapabilities.Known` (id must be `hw-<vendor>-<codec>`). Registration, detection, container validation and UI filtering all follow from it. A new *vendor* also needs rate-control and preset arms in `FFmpegHardwareVideoProcessor`. |
 | Add a quality metric | `QualityMetric` enum + `QualityMetrics` metadata → filter name and parser in `QualityMeasurer` (remember `FrameSync`) → it becomes available to `compare`, `--measure` and target search automatically |
 | Change chunk planning | `ChunkPlanner` only — and keep `ChunkPlan.Validate()` passing, since it's the guard against silently losing footage |
+| Change per-scene behaviour | `PerSceneOptimizer`. Per-chunk CRFs feed the chunk directory fingerprint, so a run at a different target can't reuse the previous run's chunks — keep that true |
 | Add an audio encoder | Settings class in `Core/Encoders/Audio/` → `AppServices.RegisterAudioEncoder()` (ID must be `ffmpeg-audio-{codec}`) → `FFmpegAudioProcessor.GetCodecSpecificArgs()` + `GetFfmpegCodecName()` → `EncodeJobBuilder.CreateAudioSettings()` + `AudioFileExtension()` → `ContainerCompatibility` |
 | Add an encode option | `EncodeRequest` first, then `EncodeJobBuilder`, then surface it in *both* `EncodeTabViewModel.BuildRequest()` and `EncodeOptions.Build()` + `Help.cs` |
 | Add a CLI command | `Commands.cs` + dispatch in `Program.Main` + a section in `Help.cs` |
