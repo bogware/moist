@@ -324,18 +324,39 @@ wrong. The same "verify, don't trust" stance as the chunk frame counts.
 
 ---
 
-## Tier 6 — Professional / archival ⬜  ← next
+## Tier 6 — Professional / archival ✅ (mostly)
 
 | Item | Status | Notes |
 |---|---|---|
-| HDR10 static metadata | ✅ | Verified: survives a re-encode once the bit-depth fix is in place |
-| HDR10+ dynamic metadata | ⬜ | Needs `hdr10plus_tool`; lost on re-encode today |
-| Dolby Vision RPU | ⬜ | Needs [`dovi_tool`](https://github.com/quietvoid/dovi_tool) |
-| HDR-aware UI | ⬜ | Detect HDR input, warn before tone-mapping it away |
-| Subtitle burn-in | ⬜ | Hard-sub for devices that can't render |
-| Per-track subtitle control | ⬜ | Currently all-or-nothing |
-| 4:2:2 / 4:4:4 chroma | ⬜ | Bit-depth work laid the groundwork |
-| SVT-AV1 `--tune vq` | ⬜ | [SVT-AV1 4.0](https://wiki.x266.mov/docs/encoders/SVT-AV1) merged the PSY perceptual work into mainline; moist doesn't expose it |
+| HDR10 static metadata | ✅ | Survives a re-encode once the bit depth is right |
+| HDR detection | ✅ | Reported by `probe`, and drives the warnings below |
+| HDR-aware warnings | ✅ | Forcing 8-bit, tone-mapping, or losing dynamic metadata all say so first |
+| Subtitle burn-in | ✅ | Verified by measuring the picture, not by exit code |
+| Per-track subtitle control | ✅ | `--subtitle-track`, repeatable |
+| 4:2:2 / 4:4:4 chroma | ✅ | Combines with bit depth; asking for chroma alone keeps the source's depth |
+| SVT-AV1 tuning | ✅ | `--av1-tune vq` and friends |
+| HDR10+ / Dolby Vision passthrough | ⬜ | Detected and warned about; the extract-and-reinject pipeline is not built |
+
+### HDR detection can't trust the colour tags
+
+Matroska doesn't necessarily surface `color_transfer` at container level — the HDR10
+fixture here reports it as `unknown` while the bitstream is plainly PQ. Detection
+therefore also reads frame **side data**, which is where mastering display, content
+light level, HDR10+ and Dolby Vision actually live. Reading only `-show_streams`
+misses every one of them.
+
+### What's deliberately not done
+
+The **HDR10+ / Dolby Vision passthrough pipeline** — extracting the RPU with
+[`dovi_tool`](https://github.com/quietvoid/dovi_tool) or `hdr10plus_tool`, encoding,
+then re-injecting — is not implemented. Neither tool is installed on the development
+machine, so the code could be written but never run, and untested binary-metadata
+surgery is worse than none.
+
+What *is* done is everything that can be verified: both tools are known to tool
+discovery so their absence is reported, dynamic metadata is detected in the source,
+and the user is told plainly that a re-encode will drop it and that remuxing preserves
+it. Finishing the passthrough needs the tools and some real Dolby Vision content.
 
 ---
 
@@ -349,13 +370,26 @@ library health checking.
 
 ---
 
-## Known gaps not yet tiered
+## Queue persistence ✅
 
-- **Queue persistence is half-wired.** `JobPersistence.Save()`/`Load()` both run, but
-  `RestorePersistedJobs()` only reports a count and never re-enqueues, and `Load()`
-  deletes the file. Crash recovery is effectively absent — and now that a per-scene
-  chunked encode can run for hours, this matters more than it did. Chunk-level
-  resume already survives a crash; the *queue* does not.
+Queued encodes survive a crash or a closed window, and come back on the next launch.
+
+The previous attempt stored a flattened snapshot of each job — id, name, input, output —
+which cannot be turned back into anything runnable, because the encoder settings weren't
+in it. That is why it was never wired up: restoring was structurally impossible, not
+merely unfinished.
+
+What is stored instead is the `EncodeRequest`, since `EncodeJobBuilder.Build` turns one
+deterministically back into the whole job graph. Chunked encodes recover better still:
+the chunk directory is keyed on the same settings, so a restored run picks up every
+chunk the previous one finished.
+
+Restored encodes are **queued, not started**. Coming back to a machine already grinding
+through work nobody asked for would be worse than losing the queue.
+
+## Known gaps not yet tiered
+- **HDR10+ / Dolby Vision passthrough.** Detected and warned about, but not preserved.
+  Needs `dovi_tool` / `hdr10plus_tool` and real Dolby Vision content to build against.
 - **Tool discovery runs twice at startup.**
 - **Settings prerequisites list has overlapping text** (`OKFFmpeg`).
 - **x264/x265 CLI, VapourSynth and AviSynth paths are untested** — those tools

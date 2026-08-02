@@ -34,6 +34,25 @@ public enum VideoBitDepth
     Twelve
 }
 
+/// <summary>
+/// Chroma sampling. <see cref="Auto"/> follows the source, which is what you want unless
+/// you are mastering — throwing away chroma resolution is not recoverable, and adding it
+/// only makes the file bigger.
+/// </summary>
+public enum ChromaSubsampling
+{
+    Auto,
+
+    /// <summary>4:2:0. What virtually all delivery formats use.</summary>
+    Yuv420,
+
+    /// <summary>4:2:2. Broadcast and intermediate codecs.</summary>
+    Yuv422,
+
+    /// <summary>4:4:4. No chroma subsampling; screen capture and mastering.</summary>
+    Yuv444,
+}
+
 public class VideoEncoderSettings
 {
     public VideoEncodingMode Mode { get; set; } = VideoEncodingMode.ConstantRateFactor;
@@ -52,6 +71,8 @@ public class VideoEncoderSettings
 
     public VideoBitDepth BitDepth { get; set; } = VideoBitDepth.Auto;
 
+    public ChromaSubsampling Chroma { get; set; } = ChromaSubsampling.Auto;
+
     public double? Framerate { get; set; }
     public int Passes => Mode == VideoEncodingMode.TwoPassBitrate ? 2 : 1;
     public string CustomArgs { get; set; } = string.Empty;
@@ -60,11 +81,33 @@ public class VideoEncoderSettings
     /// Resolve the pixel format to hand FFmpeg, or null to let it decide.
     /// An explicit <see cref="PixelFormat"/> always wins.
     /// </summary>
-    public string? ResolvePixelFormat() => PixelFormat ?? BitDepth switch
+    /// <param name="sourceBitDepth">
+    /// Source depth, used when only the chroma layout was specified — asking for 4:4:4
+    /// shouldn't silently drop a 10-bit master to 8-bit.
+    /// </param>
+    public string? ResolvePixelFormat(int sourceBitDepth = 8)
     {
-        VideoBitDepth.Eight => "yuv420p",
-        VideoBitDepth.Ten => "yuv420p10le",
-        VideoBitDepth.Twelve => "yuv420p12le",
-        _ => null,
-    };
+        if (PixelFormat is not null) return PixelFormat;
+
+        // Nothing asked for: let the encoder follow the source exactly.
+        if (BitDepth == VideoBitDepth.Auto && Chroma == ChromaSubsampling.Auto) return null;
+
+        var depth = BitDepth switch
+        {
+            VideoBitDepth.Eight => 8,
+            VideoBitDepth.Ten => 10,
+            VideoBitDepth.Twelve => 12,
+            _ => sourceBitDepth is 8 or 10 or 12 ? sourceBitDepth : 8,
+        };
+
+        var chroma = Chroma switch
+        {
+            ChromaSubsampling.Yuv422 => "yuv422p",
+            ChromaSubsampling.Yuv444 => "yuv444p",
+            _ => "yuv420p",
+        };
+
+        // 8-bit formats carry no depth suffix or endianness.
+        return depth == 8 ? chroma : $"{chroma}{depth}le";
+    }
 }

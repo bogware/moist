@@ -85,7 +85,7 @@ public sealed partial class FFmpegHardwareVideoProcessor : CommandLineProcessor
         args.AddRange(BuildPreset(s));
 
         // Pixel format. VA-API already handled it in the filter chain above.
-        if (_vendor != HardwareVendor.Vaapi && s.ResolvePixelFormat() is { } pixFmt)
+        if (_vendor != HardwareVendor.Vaapi && s.ResolvePixelFormat(vj.SourceBitDepth) is { } pixFmt)
             args.AddRange(["-pix_fmt", pixFmt]);
 
         if (!string.IsNullOrWhiteSpace(s.CustomArgs))

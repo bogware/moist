@@ -20,6 +20,12 @@ public sealed class MoistSettings
     public string VapourSynthPath { get; set; } = "vspipe";
     public string AviSynthPath { get; set; } = "avs2pipemod";
 
+    /// <summary>Dolby Vision RPU tooling. Optional; without it a re-encode drops the RPU.</summary>
+    public string DoviToolPath { get; set; } = "dovi_tool";
+
+    /// <summary>HDR10+ dynamic metadata tooling. Optional; without it a re-encode drops it.</summary>
+    public string Hdr10PlusToolPath { get; set; } = "hdr10plus_tool";
+
     // Job queue
     public int MaxConcurrentJobs { get; set; } = 1;
     public bool AutoStartQueue { get; set; }

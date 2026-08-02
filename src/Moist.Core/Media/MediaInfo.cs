@@ -22,6 +22,32 @@ public sealed class VideoStreamInfo
     public string PixelFormat { get; init; } = string.Empty;
     public string? DisplayAspectRatio { get; init; }
     public long BitrateKbps { get; init; }
+
+    // ---- Colour and HDR ----
+
+    public string? ColorPrimaries { get; init; }
+    public string? ColorTransfer { get; init; }
+    public string? ColorSpace { get; init; }
+
+    /// <summary>Static HDR10 metadata (mastering display / content light level) is present.</summary>
+    public bool HasHdr10Metadata { get; init; }
+
+    /// <summary>HDR10+ dynamic metadata is present. Lost on re-encode without hdr10plus_tool.</summary>
+    public bool HasHdr10Plus { get; init; }
+
+    /// <summary>A Dolby Vision RPU is present. Lost on re-encode without dovi_tool.</summary>
+    public bool HasDolbyVision { get; init; }
+
+    /// <summary>
+    /// The source carries an HDR transfer function. PQ (smpte2084) and HLG are the two
+    /// that matter; anything else is SDR regardless of what else is tagged.
+    /// </summary>
+    public bool IsHdr =>
+        ColorTransfer is "smpte2084" or "arib-std-b67"
+        || HasHdr10Metadata || HasHdr10Plus || HasDolbyVision;
+
+    /// <summary>Dynamic metadata needs external tooling to survive a re-encode.</summary>
+    public bool HasDynamicHdrMetadata => HasHdr10Plus || HasDolbyVision;
 }
 
 public sealed class AudioStreamInfo

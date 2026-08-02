@@ -371,6 +371,10 @@ public static class EncodeRunner
             }
         }
 
+        // Surface anything that will be quietly lost, before it is.
+        foreach (var warning in EncodeJobBuilder.Warnings(request, info, chunks is not null))
+            Console.Error.WriteLine($"warning: {warning}");
+
         var plan = EncodeJobBuilder.Build(
             request, info, chunks,
             verifyChunks: chunkOptions?.Verify ?? true,
@@ -528,6 +532,27 @@ public static class ProbeCommand
         {
             Console.WriteLine($"Video    : {v.Codec} {v.Width}x{v.Height} @ {v.Framerate:F3} fps" +
                               (v.TotalFrames > 0 ? $" ({v.TotalFrames:N0} frames)" : ""));
+            Console.WriteLine($"           {v.PixelFormat} ({v.BitDepth}-bit)");
+
+            if (v.IsHdr)
+            {
+                var kinds = new List<string>();
+                if (v.ColorTransfer == "smpte2084") kinds.Add("PQ");
+                if (v.ColorTransfer == "arib-std-b67") kinds.Add("HLG");
+                if (v.HasHdr10Metadata) kinds.Add("HDR10 static metadata");
+                if (v.HasHdr10Plus) kinds.Add("HDR10+");
+                if (v.HasDolbyVision) kinds.Add("Dolby Vision");
+
+                Console.WriteLine($"HDR      : {string.Join(", ", kinds)}");
+                if (v.ColorPrimaries is not null || v.ColorSpace is not null)
+                    Console.WriteLine($"           {v.ColorPrimaries ?? "?"} primaries, {v.ColorSpace ?? "?"} matrix");
+
+                if (v.HasDynamicHdrMetadata)
+                {
+                    Console.WriteLine(
+                        "           note: dynamic metadata does not survive a re-encode");
+                }
+            }
         }
         else Console.WriteLine("Video    : none");
 

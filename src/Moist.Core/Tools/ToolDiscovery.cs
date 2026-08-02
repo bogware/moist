@@ -58,6 +58,18 @@ public sealed class ToolDiscovery
         },
         new ToolDefinition
         {
+            Id = "dovi_tool", Name = "dovi_tool (Dolby Vision)", DefaultBinaryName = "dovi_tool", IsRequired = false,
+            Description = "Extracts and re-injects Dolby Vision RPUs, which a re-encode otherwise drops",
+            VersionArgs = "--version",
+        },
+        new ToolDefinition
+        {
+            Id = "hdr10plus_tool", Name = "hdr10plus_tool", DefaultBinaryName = "hdr10plus_tool", IsRequired = false,
+            Description = "Extracts and re-injects HDR10+ dynamic metadata, which a re-encode otherwise drops",
+            VersionArgs = "--version",
+        },
+        new ToolDefinition
+        {
             Id = "x264", Name = "x264 CLI", DefaultBinaryName = "x264", IsRequired = false,
             Description = "Standalone H.264 encoder for maximum control",
             VersionArgs = "--version",

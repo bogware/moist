@@ -90,23 +90,37 @@ public partial class MainWindowViewModel : ViewModelBase
         };
 
         // Restore any interrupted jobs from previous session
-        RestorePersistedJobs();
+        _ = RestorePersistedJobsAsync();
 
         // Run startup tool discovery in background
         _ = CheckToolsAtStartupAsync();
     }
 
-    private void RestorePersistedJobs()
+    /// <summary>
+    /// Put encodes from a previous session back on the queue. They are queued rather than
+    /// started: coming back to a machine already grinding through work you didn't ask for
+    /// would be worse than losing the queue.
+    /// </summary>
+    private async Task RestorePersistedJobsAsync()
     {
         try
         {
-            var restored = Core.Jobs.JobPersistence.Load();
-            if (restored.Count > 0)
-            {
-                StatusText = $"Restored {restored.Count} interrupted job(s) from previous session";
-            }
+            var restorer = new EncodeQueueRestorer(Services, Services.LoggerFactory);
+            var results = await restorer.RestoreAsync();
+            if (results.Count == 0) return;
+
+            var restored = results.Where(r => r.Restored).ToList();
+            if (restored.Count == 0) return;
+
+            var reusedChunks = restored.Sum(r => r.ReusedChunks);
+            var chunkNote = reusedChunks > 0 ? $", reusing {reusedChunks} finished chunk(s)" : "";
+
+            StatusText = $"Restored {restored.Count} interrupted encode(s) from the previous session{chunkNote} — press Run to continue";
         }
-        catch { /* non-critical */ }
+        catch
+        {
+            // Restoring is a convenience; never let it stop the app starting.
+        }
     }
 
     private async Task CheckToolsAtStartupAsync()

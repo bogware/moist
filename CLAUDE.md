@@ -288,9 +288,50 @@ Pass 1 additionally passes **`-f null`** for FFmpeg-based encoders. FFmpeg canno
 
 This isn't hypothetical defensiveness: `WindowX`/`WindowY` used to default to `double.NaN`, which `System.Text.Json` refuses to serialize. Every save threw, and the unguarded call in `MainWindow.OnClosing` left the process hung on exit with the window un-closable. Nullable doubles now mean "not set". Keep new settings fields JSON-representable, and keep the closing path exception-free.
 
-### Known gap: queue persistence is half-wired
+### Queue persistence stores the request, not the jobs
 
-`JobPersistence.Save()` runs on window close (`MainWindow.axaml.cs`) and `Load()` runs at startup, but `MainWindowViewModel.RestorePersistedJobs()` only reports the restored count in the status bar — it does not re-enqueue anything, and `Load()` deletes the file. Treat crash recovery as unimplemented, not broken-and-in-need-of-a-fix, unless asked to finish it.
+`EncodeQueueStore` persists the `EncodeRequest`, because `EncodeJobBuilder.Build` turns
+one deterministically back into the whole job graph. The previous implementation stored
+a flattened per-job snapshot (id, name, input, output) which carried no encoder settings
+and therefore could not be restored at all — if you find yourself adding fields to a
+persisted *job*, that's the wrong layer.
+
+Entries clear themselves: `AppServices` watches `JobStatusChanged` and calls
+`NotifyJobFinished` when a tracked final job settles, whether it succeeded or not.
+Restoring re-records under the *new* final job id, since ids are regenerated on rebuild.
+
+Reading the pending list does not consume it — the old version deleted the file on load,
+so a crash mid-restore lost the queue for good.
+
+### HDR detection can't trust the colour tags
+
+Matroska doesn't necessarily surface `color_transfer` at container level; the HDR10 test
+fixture reports `unknown` while the bitstream is plainly PQ. `FFprobeMediaAnalyzer`
+therefore also reads frame **side data**, which is where mastering display, content light
+level, HDR10+ and Dolby Vision live. That's why the ffprobe call passes `-show_frames
+-read_intervals "%+#1"` — reading only `-show_streams` misses every one of them, and
+`VideoStreamInfo.IsHdr` ORs the side-data flags in for the same reason.
+
+### Filter arguments need escaping, not quoting
+
+FFmpeg's filter parser treats `:` as an option separator, so a Windows path inside
+`subtitles=` breaks the whole graph. `EncodeJobBuilder.EscapeForFilter` flips separators
+and escapes the drive colon. Same class of problem as libvmaf's `log_path`, solved
+differently there (working directory) because that one is a bare filename.
+
+Burn-in and chunked encoding are **mutually exclusive**, and `Warnings()` says so: each
+chunk seeks independently, so subtitle timings would drift after the first chunk.
+
+### Known gap: HDR10+ / Dolby Vision passthrough
+
+Dynamic HDR metadata is **detected and warned about, but not preserved**. Extracting the
+RPU with `dovi_tool` / `hdr10plus_tool`, encoding, then re-injecting is not implemented:
+neither tool is installed on the development machine, so the code could be written but
+never run, and untested binary-metadata surgery is worse than none. Both tools are in
+`ToolDiscovery.KnownTools` so their absence is reported.
+
+If you pick this up, you'll need the tools and real Dolby Vision content — do not ship
+it on the strength of it compiling.
 
 ### Theming is additive
 

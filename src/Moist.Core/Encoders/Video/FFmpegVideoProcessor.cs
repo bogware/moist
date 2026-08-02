@@ -93,7 +93,7 @@ public sealed partial class FFmpegVideoProcessor : CommandLineProcessor
 
         // Pixel format. Left unset by default so the encoder follows the source —
         // forcing 8-bit would silently discard precision from a 10-bit master.
-        if (s.ResolvePixelFormat() is { } pixFmt)
+        if (s.ResolvePixelFormat(vj.SourceBitDepth) is { } pixFmt)
             args.AddRange(["-pix_fmt", pixFmt]);
 
         // Codec-specific settings
@@ -190,14 +190,29 @@ public sealed partial class FFmpegVideoProcessor : CommandLineProcessor
             .. x265.Level is not null ? new[] { "-level", x265.Level } : [],
             .. x265.Hdr ? new[] { "-tag:v", "hvc1" } : [],
         ],
-        SvtAv1Settings svt =>
-        [
-            .. svt.FilmGrain > 0
-                ? new[] { "-svtav1-params", $"film-grain={svt.FilmGrain}:film-grain-denoise={svt.FilmGrainDenoise}" }
-                : [],
-        ],
+        SvtAv1Settings svt => BuildSvtAv1Args(svt),
         _ => []
     };
+
+    /// <summary>
+    /// SVT-AV1 takes its own options as one colon-separated blob, so they have to be
+    /// gathered rather than emitted as separate flags.
+    /// </summary>
+    private static string[] BuildSvtAv1Args(SvtAv1Settings svt)
+    {
+        var parameters = new List<string>();
+
+        if (svt.SvtTune is { } tune)
+            parameters.Add($"tune={(int)tune}");
+
+        if (svt.FilmGrain > 0)
+        {
+            parameters.Add($"film-grain={svt.FilmGrain}");
+            parameters.Add($"film-grain-denoise={svt.FilmGrainDenoise}");
+        }
+
+        return parameters.Count == 0 ? [] : ["-svtav1-params", string.Join(":", parameters)];
+    }
 
     [GeneratedRegex(@"frame=\s*(\d+)")]
     private static partial Regex FrameRegex();

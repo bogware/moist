@@ -76,9 +76,18 @@ public partial class EncodeTabViewModel : ViewModelBase, IDisposable
     [ObservableProperty] private bool _copyAttachments = true;
     public ObservableCollection<string> SubtitleTrackLabels { get; } = [];
 
-    // Video bit depth
+    // Video bit depth and chroma
     [ObservableProperty] private VideoBitDepth _bitDepth = VideoBitDepth.Auto;
     public static VideoBitDepth[] BitDepthOptions { get; } = Enum.GetValues<VideoBitDepth>();
+
+    [ObservableProperty] private ChromaSubsampling _chroma = ChromaSubsampling.Auto;
+    public static ChromaSubsampling[] ChromaOptions { get; } = Enum.GetValues<ChromaSubsampling>();
+
+    /// <summary>Render subtitles into the picture rather than muxing them as a track.</summary>
+    [ObservableProperty] private bool _burnInSubtitles;
+
+    /// <summary>Anything about this encode that will quietly lose something.</summary>
+    [ObservableProperty] private string _encodeWarnings = string.Empty;
 
     // Chunked encoding
     [ObservableProperty] private bool _useChunkedEncoding;
@@ -690,6 +699,11 @@ public partial class EncodeTabViewModel : ViewModelBase, IDisposable
 
         HasError = false;
 
+        // Surface anything that will be quietly lost, before it is.
+        var warnings = EncodeJobBuilder.Warnings(
+            BuildRequest(InputFile, OutputFile), MediaInfo, UseChunkedEncoding);
+        EncodeWarnings = warnings.Count > 0 ? string.Join("\n", warnings.Select(w => "⚠ " + w)) : string.Empty;
+
         // Chunking needs a planning pass (scene detection) before any job exists.
         ChunkedEncodePreparation? chunks = null;
         if (UseChunkedEncoding && !AudioOnly && MediaInfo is not null)
@@ -790,15 +804,23 @@ public partial class EncodeTabViewModel : ViewModelBase, IDisposable
         // Use provided mediaInfo (batch mode) or fall back to shared MediaInfo (single encode)
         var info = mediaInfo ?? MediaInfo;
 
+        var request = BuildRequest(inputFile, outputFile);
         var plan = EncodeJobBuilder.Build(
-            BuildRequest(inputFile, outputFile), info, chunks,
-            ffprobePath: _services.Settings.FFprobePath);
+            request, info, chunks, ffprobePath: _services.Settings.FFprobePath);
 
         foreach (var job in plan.AllJobs)
         {
             _services.JobQueue.Enqueue(job);
             allJobIds?.Add(job.Id);
         }
+
+        // Remember it, so an interruption doesn't lose the queue. The entry clears
+        // itself when the final job settles.
+        _services.QueueStore.Record(
+            request,
+            plan.FinalJob.Id,
+            chunks is not null ? BuildChunkingOptions() : null,
+            chunks?.PerChunkQuality);
 
         return plan.FinalJob.Id;
     }
@@ -855,6 +877,8 @@ public partial class EncodeTabViewModel : ViewModelBase, IDisposable
             CopyChapters = CopyChapters,
             CopyAttachments = CopyAttachments,
             BitDepth = BitDepth,
+            Chroma = Chroma,
+            BurnInSubtitles = BurnInSubtitles,
 
             FilterScript = filterScript,
             FilterEngineId = _filterTab?.SelectedEngine?.Id,

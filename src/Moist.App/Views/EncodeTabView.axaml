@@ -55,6 +55,13 @@
                                    IsVisible="{Binding StatusMessage, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
                                    FontSize="12" Margin="0,4,0,0" Opacity="0.8"/>
 
+                        <!-- Anything that will be quietly lost: HDR, chroma, dynamic metadata -->
+                        <Border IsVisible="{Binding EncodeWarnings, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
+                                Background="#33FFAA00" BorderBrush="#FFAA00" BorderThickness="1"
+                                CornerRadius="4" Padding="10" Margin="0,4,0,0">
+                            <TextBlock Text="{Binding EncodeWarnings}" TextWrapping="Wrap" FontSize="12"/>
+                        </Border>
+
                         <!-- Media Info Display -->
                         <Border IsVisible="{Binding MediaInfo, Converter={x:Static ObjectConverters.IsNotNull}}"
                                 Background="{DynamicResource SystemControlBackgroundChromeMediumLowBrush}"
@@ -141,10 +148,12 @@
                             <StackPanel Grid.Row="3" Grid.Column="3" Orientation="Horizontal" Spacing="8">
                                 <ComboBox ItemsSource="{Binding BitDepthOptions}"
                                           SelectedItem="{Binding BitDepth}"
-                                          Width="110"
+                                          Width="100"
                                           ToolTip.Tip="Auto follows the source. Forcing 8-bit on a 10-bit master discards precision."/>
-                                <TextBlock Text="(Auto = match source)" VerticalAlignment="Center"
-                                           FontSize="11" Opacity="0.6"/>
+                                <ComboBox ItemsSource="{Binding ChromaOptions}"
+                                          SelectedItem="{Binding Chroma}"
+                                          Width="110"
+                                          ToolTip.Tip="Chroma sampling. Auto follows the source; dropping 4:4:4 to 4:2:0 throws away colour resolution permanently."/>
                             </StackPanel>
 
                             <TextBlock Text="Custom Args:" VerticalAlignment="Center" Grid.Row="4"/>
@@ -340,6 +349,8 @@
                                               ToolTip.Tip="Carry chapter markers over from the source."/>
                                     <CheckBox Content="Keep attachments" IsChecked="{Binding CopyAttachments}"
                                               ToolTip.Tip="Carry attached fonts over (needed for styled subtitles). MKV only."/>
+                                    <CheckBox Content="Burn in" IsChecked="{Binding BurnInSubtitles}"
+                                              ToolTip.Tip="Render subtitles permanently into the picture, for players that can't display them. Cannot be combined with chunked encoding."/>
                                 </StackPanel>
                             </StackPanel>
                         </Grid>

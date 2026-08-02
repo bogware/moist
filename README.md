@@ -253,6 +253,42 @@ bulk work; use x265 for masters.
 - **External subtitle import** — Add .srt/.ass files alongside the encode
 - **Per-track metadata** — Language and title preserved through muxing
 
+### Archival & Professional
+
+- **Chroma control** — 4:2:0, 4:2:2 or 4:4:4, combined with bit depth. Asking for 4:4:4
+  on a 10-bit master keeps it 10-bit rather than quietly flattening it
+- **Subtitle burn-in** — render subtitles into the picture for players that can't show them
+- **Per-track subtitle selection** — keep the tracks you want, not all or nothing
+- **SVT-AV1 tuning** — `--av1-tune vq` for the perceptual tuning [SVT-AV1 4.0](https://wiki.x266.mov/docs/encoders/SVT-AV1)
+  merged from the PSY fork; the encoder's own default optimises PSNR instead
+- **HDR-aware** — HDR sources are detected and reported, and moist tells you *before*
+  encoding if a setting will destroy something:
+
+```
+$ moist encode hdr.mkv --bit-depth 8 --dry-run
+warning: This source is HDR but the output is forced to 8-bit. HDR needs 10-bit;
+         the result will band badly. Use Auto or 10-bit.
+```
+
+Detection doesn't trust the container's colour tags — Matroska often reports
+`color_transfer` as unknown while the bitstream is plainly PQ — so it reads frame side
+data too, which is where mastering display, content light level, HDR10+ and Dolby Vision
+actually live.
+
+**Honest limitation:** HDR10+ and Dolby Vision dynamic metadata are *detected and warned
+about* but not yet preserved through a re-encode. The static HDR10 base layer survives, so
+the result stays HDR; the per-scene tone mapping doesn't. Remux instead of re-encoding to
+keep it.
+
+### Queue Survives a Crash
+
+Queued encodes are recorded as they're queued and come back on the next launch — queued,
+not auto-started, because returning to a machine already grinding through work you didn't
+ask for would be worse than losing the queue.
+
+Chunked encodes recover best: the chunk directory is keyed on the same settings, so a
+restored run picks up every chunk the previous one finished rather than starting over.
+
 ### Nothing Gets Left Behind
 
 A re-encode shouldn't quietly lose half your file.
@@ -379,9 +415,9 @@ dotnet test Moist.Core.Tests       # fast unit tests only
 dotnet test Moist.IntegrationTests # real FFmpeg encodes
 ```
 
-**171 unit tests** covering job models, queue behavior, encoder registry, profiles, settings, filter engines, audio processor argument building, hardware encoder plumbing, quality metric parsing, search arithmetic, chunk planning, the per-scene complexity model, and CLI parsing — none of which launch an external process.
+**208 unit tests** covering job models, queue behavior, encoder registry, profiles, settings, filter engines, audio processor argument building, hardware encoder plumbing, quality metric parsing, search arithmetic, chunk planning, the per-scene complexity model, and CLI parsing — none of which launch an external process.
 
-**96 integration tests** that run real encodes through the full pipeline and verify the output with ffprobe: every video encoder, every audio codec, every container, 10-bit and HDR sources, silent sources, multi-track audio, chapters and attachments, filter chains, subtitles, cancellation, concurrency, awkward filenames, temp-file cleanup, all four quality metrics, target-quality search, chunked encoding, and per-scene optimisation — including a test that searches then encodes the full file and asserts the sampled prediction held, one that deliberately truncates a chunk to prove the frame-count verification catches it, and one that checks per-scene beats a fixed CRF chosen for the hardest scene. They skip automatically when FFmpeg isn't on your PATH (and hardware tests skip without a usable GPU), so check the skip count before trusting a green run.
+**122 integration tests** that run real encodes through the full pipeline and verify the output with ffprobe: every video encoder, every audio codec, every container, 10-bit and HDR sources, silent sources, multi-track audio, chapters and attachments, chroma and subtitle handling, filter chains, cancellation, concurrency, awkward filenames, temp-file cleanup, all four quality metrics, target-quality search, chunked encoding, per-scene optimisation, and queue persistence — including a test that searches then encodes the full file and asserts the sampled prediction held, one that deliberately truncates a chunk to prove the frame-count verification catches it, one that checks per-scene beats a fixed CRF chosen for the hardest scene, and one that measures the picture to prove burned-in subtitles were actually rendered rather than merely not erroring. They skip automatically when FFmpeg isn't on your PATH (and hardware tests skip without a usable GPU), so check the skip count before trusting a green run.
 
 If FFmpeg isn't on your PATH, set the path in the **Settings** tab after launching. moist won't hold it against you.
 

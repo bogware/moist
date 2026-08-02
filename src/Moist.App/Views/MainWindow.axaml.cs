@@ -237,8 +237,9 @@ public partial class MainWindow : Window
             }
             s.Save();
 
-            // Persist any incomplete jobs for recovery on next startup
-            Core.Jobs.JobPersistence.Save(vm.Services.JobQueue.Jobs);
+            // Queued encodes are recorded as they're enqueued and cleared as they finish,
+            // so there is nothing to write here — whatever is still outstanding is already
+            // on disk and will be offered back on the next launch.
         }
         catch
         {

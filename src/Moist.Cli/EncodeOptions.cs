@@ -71,6 +71,8 @@ public static class EncodeOptions
             SvtAv1Preset = cl.Int("av1-preset") ?? profile?.SvtAv1Preset ?? 6,
             VideoCustomArgs = cl.String("video-args") ?? profile?.VideoCustomArgs ?? string.Empty,
             BitDepth = ParseBitDepth(cl.String("bit-depth")),
+            Chroma = ParseChroma(cl.String("chroma")),
+            SvtAv1Tune = ParseSvtTune(cl.String("av1-tune")),
 
             AudioEncoderId = audioEncoder,
             AudioBitrateMode = cl.Enum<AudioBitrateMode>("audio-mode") ?? profile?.AudioBitrateMode ?? AudioBitrateMode.Vbr,
@@ -96,6 +98,9 @@ public static class EncodeOptions
             AudioOnly = audioOnly,
             CopySubtitles = !cl.Flag("no-subtitles"),
             ExternalSubtitleFile = cl.String("subtitle"),
+            SubtitleTracks = ParseIndexList(cl, "subtitle-track"),
+            BurnInSubtitles = cl.Flag("burn-subtitles"),
+            BurnInSubtitleTrack = cl.Int("burn-subtitle-track") ?? 0,
             CopyChapters = !cl.Flag("no-chapters"),
             CopyAttachments = !cl.Flag("no-attachments"),
             CopyMetadata = !cl.Flag("no-metadata"),
@@ -162,6 +167,46 @@ public static class EncodeOptions
             Resume = !cl.Flag("no-resume"),
             Verify = !cl.Flag("no-verify"),
         };
+    }
+
+    /// <summary>Accepts "auto", "420", "422", "444", or the "4:2:0" spelling.</summary>
+    public static ChromaSubsampling ParseChroma(string? raw) => raw?.ToLowerInvariant().Replace(":", "") switch
+    {
+        null or "auto" or "source" => ChromaSubsampling.Auto,
+        "420" => ChromaSubsampling.Yuv420,
+        "422" => ChromaSubsampling.Yuv422,
+        "444" => ChromaSubsampling.Yuv444,
+        _ => throw new UsageException($"--chroma expects auto, 420, 422 or 444 (got '{raw}')"),
+    };
+
+    /// <summary>SVT-AV1 tuning by name; vq is the perceptual one.</summary>
+    public static SvtAv1Tune? ParseSvtTune(string? raw) => raw?.ToLowerInvariant() switch
+    {
+        null => null,
+        "vq" or "visual" => SvtAv1Tune.Vq,
+        "psnr" => SvtAv1Tune.Psnr,
+        "ssim" => SvtAv1Tune.Ssim,
+        "iq" => SvtAv1Tune.Iq,
+        "msssim" or "ms-ssim" => SvtAv1Tune.MsSsim,
+        "vmaf" => SvtAv1Tune.Vmaf,
+        _ => throw new UsageException($"--av1-tune expects vq, psnr, ssim, iq, ms-ssim or vmaf (got '{raw}')"),
+    };
+
+    /// <summary>Repeatable or comma-separated stream indices.</summary>
+    public static IReadOnlyList<int> ParseIndexList(CommandLine cl, string option)
+    {
+        var raw = cl.Many(option);
+        if (raw.Count == 0) return [];
+
+        var indices = new List<int>();
+        foreach (var part in raw.SelectMany(v => v.Split(',', StringSplitOptions.RemoveEmptyEntries)))
+        {
+            if (!int.TryParse(part.Trim(), out var index) || index < 0)
+                throw new UsageException($"--{option} expects a stream index (got '{part}')");
+            if (!indices.Contains(index)) indices.Add(index);
+        }
+
+        return indices;
     }
 
     /// <summary>Accepts "auto", "8", "10", "12" — the numbers people actually think in.</summary>

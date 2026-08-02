@@ -26,6 +26,12 @@ public sealed class VideoJob : Job
     public long TotalFrames { get; set; }
 
     /// <summary>
+    /// Source bit depth, so a request for a chroma layout alone doesn't accidentally
+    /// drop a 10-bit master to 8-bit.
+    /// </summary>
+    public int SourceBitDepth { get; set; } = 8;
+
+    /// <summary>
     /// Encode only from this point in the source. Emitted as <c>-ss</c> before the input,
     /// which is both fast and frame-aligned with a measurement pass that seeks the same way.
     /// </summary>

@@ -18,7 +18,12 @@ public sealed class FFprobeMediaAnalyzer
 
     public async Task<MediaFileInfo> AnalyzeAsync(string filePath, CancellationToken ct = default)
     {
-        var args = $"-v quiet -print_format json -show_format -show_streams \"{filePath}\"";
+        // Frame side data is where HDR actually lives: mastering display, content light
+        // level, HDR10+ and Dolby Vision RPUs are all attached to frames, not the stream,
+        // so reading only -show_streams misses every one of them.
+        var args = $"-v quiet -print_format json -show_format -show_streams " +
+                   $"-show_frames -read_intervals \"%+#1\" -show_entries frame=side_data_list " +
+                   $"\"{filePath}\"";
 
         var psi = new ProcessStartInfo
         {
@@ -79,6 +84,9 @@ public sealed class FFprobeMediaAnalyzer
             }
         }
 
+        if (video is not null)
+            video = ApplyHdrSideData(video, root);
+
         return new MediaFileInfo
         {
             FilePath = filePath,
@@ -87,6 +95,66 @@ public sealed class FFprobeMediaAnalyzer
             Video = video,
             AudioStreams = audioStreams,
             SubtitleStreams = subtitleStreams,
+        };
+    }
+
+    /// <summary>
+    /// HDR metadata rides on frames, not on the stream, so it has to be read from the
+    /// frame side data list rather than the stream properties.
+    /// </summary>
+    private static VideoStreamInfo ApplyHdrSideData(VideoStreamInfo video, JsonElement root)
+    {
+        if (!root.TryGetProperty("frames", out var frames) || frames.ValueKind != JsonValueKind.Array)
+            return video;
+
+        var hasStatic = false;
+        var hasHdr10Plus = false;
+        var hasDolbyVision = false;
+
+        foreach (var frame in frames.EnumerateArray())
+        {
+            if (!frame.TryGetProperty("side_data_list", out var list) || list.ValueKind != JsonValueKind.Array)
+                continue;
+
+            foreach (var sideData in list.EnumerateArray())
+            {
+                var type = sideData.TryGetProperty("side_data_type", out var t) ? t.GetString() ?? "" : "";
+
+                if (type.Contains("Mastering display", StringComparison.OrdinalIgnoreCase) ||
+                    type.Contains("Content light level", StringComparison.OrdinalIgnoreCase))
+                {
+                    hasStatic = true;
+                }
+                else if (type.Contains("HDR Dynamic Metadata", StringComparison.OrdinalIgnoreCase) ||
+                         type.Contains("HDR10+", StringComparison.OrdinalIgnoreCase))
+                {
+                    hasHdr10Plus = true;
+                }
+                else if (type.Contains("Dolby Vision", StringComparison.OrdinalIgnoreCase) ||
+                         type.Contains("DOVI", StringComparison.OrdinalIgnoreCase))
+                {
+                    hasDolbyVision = true;
+                }
+            }
+        }
+
+        return new VideoStreamInfo
+        {
+            Codec = video.Codec,
+            Width = video.Width,
+            Height = video.Height,
+            Framerate = video.Framerate,
+            TotalFrames = video.TotalFrames,
+            BitDepth = video.BitDepth,
+            PixelFormat = video.PixelFormat,
+            DisplayAspectRatio = video.DisplayAspectRatio,
+            BitrateKbps = video.BitrateKbps,
+            ColorPrimaries = video.ColorPrimaries,
+            ColorTransfer = video.ColorTransfer,
+            ColorSpace = video.ColorSpace,
+            HasHdr10Metadata = hasStatic,
+            HasHdr10Plus = hasHdr10Plus,
+            HasDolbyVision = hasDolbyVision,
         };
     }
 
@@ -146,7 +214,17 @@ public sealed class FFprobeMediaAnalyzer
             PixelFormat = pixFmt,
             DisplayAspectRatio = dar,
             BitrateKbps = bitrateKbps,
+            ColorPrimaries = ReadString(stream, "color_primaries"),
+            ColorTransfer = ReadString(stream, "color_transfer"),
+            ColorSpace = ReadString(stream, "color_space"),
         };
+
+        static string? ReadString(JsonElement element, string name)
+        {
+            if (!element.TryGetProperty(name, out var value)) return null;
+            var text = value.GetString();
+            return string.IsNullOrEmpty(text) || text == "unknown" ? null : text;
+        }
     }
 
     private static AudioStreamInfo ParseAudioStream(JsonElement stream)

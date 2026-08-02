@@ -66,6 +66,11 @@ public static class Help
               --tune <name>         film, animation, grain, …
               --av1-preset <0-13>   SVT-AV1 speed preset
               --bit-depth <d>       auto | 8 | 10 | 12                  (default: auto = match source)
+              --chroma <c>          auto | 420 | 422 | 444              (default: auto = match source)
+              --av1-tune <name>     vq | psnr | ssim | iq | ms-ssim | vmaf
+                                    SVT-AV1 only. 'vq' is the perceptual tuning that
+                                    SVT-AV1 4.0 merged from the PSY fork; the encoder's
+                                    own default optimises PSNR instead.
               --video-args <args>   Extra arguments passed to the encoder verbatim
 
         AUDIO
@@ -87,6 +92,13 @@ public static class Help
               --filter <spec>       Repeatable. e.g. --filter resize:width=1280,height=720
               --no-subtitles        Don't copy subtitles from the source
               --subtitle <file>     Mux an external subtitle file
+              --subtitle-track <n>  Keep only these source subtitle streams. Repeatable
+                                    or comma-separated; default keeps all of them.
+              --burn-subtitles      Render subtitles into the picture permanently, for
+                                    players that can't display them. Uses --subtitle when
+                                    given, otherwise --burn-subtitle-track from the source.
+                                    Cannot be combined with --chunked.
+              --burn-subtitle-track <n>  Which source subtitle stream to burn in
               --no-chapters         Don't carry chapter markers over
               --no-attachments      Don't carry attached fonts over (MKV only)
               --no-metadata         Don't carry container-level tags over

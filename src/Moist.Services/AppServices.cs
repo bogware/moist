@@ -38,6 +38,9 @@ public sealed class AppServices : IDisposable
     /// until that has run, everything reports unusable and the UI hides them.
     /// </summary>
     public HardwareCapabilities Hardware { get; }
+
+    /// <summary>Queued encodes that should survive a crash or a closed window.</summary>
+    public EncodeQueueStore QueueStore { get; }
     public string LogFilePath { get; private set; } = string.Empty;
 
     /// <summary>Media analyzer — uses current FFprobePath from settings. Recreated only if path changes.</summary>
@@ -120,6 +123,15 @@ public sealed class AppServices : IDisposable
         ToolDiscovery = new ToolDiscovery(LoggerFactory);
         PluginLoader = new PluginLoader(LoggerFactory);
         Hardware = new HardwareCapabilities(LoggerFactory);
+        QueueStore = new EncodeQueueStore(LoggerFactory);
+
+        // Clear a stored encode as soon as its final job settles, so a finished or failed
+        // encode doesn't reappear on the next launch.
+        JobQueue.JobStatusChanged += (_, job) =>
+        {
+            if (job.Status is JobStatus.Completed or JobStatus.Failed or JobStatus.Cancelled)
+                QueueStore.NotifyJobFinished(job.Id);
+        };
 
         RegisterDefaultEncoders();
         RegisterDefaultFilters();
@@ -324,6 +336,8 @@ public sealed class AppServices : IDisposable
         "ffmpeg" => Settings.FFmpegPath,
         "ffprobe" => Settings.FFprobePath,
         "mkvmerge" => Settings.MkvMergePath,
+        "dovi_tool" => Settings.DoviToolPath,
+        "hdr10plus_tool" => Settings.Hdr10PlusToolPath,
         "x264" => Settings.X264Path,
         "x265" => Settings.X265Path,
         "vspipe" => Settings.VapourSynthPath,
@@ -338,6 +352,8 @@ public sealed class AppServices : IDisposable
             case "ffmpeg": Settings.FFmpegPath = path; break;
             case "ffprobe": Settings.FFprobePath = path; break;
             case "mkvmerge": Settings.MkvMergePath = path; break;
+            case "dovi_tool": Settings.DoviToolPath = path; break;
+            case "hdr10plus_tool": Settings.Hdr10PlusToolPath = path; break;
             case "x264": Settings.X264Path = path; break;
             case "x265": Settings.X265Path = path; break;
             case "vspipe": Settings.VapourSynthPath = path; break;

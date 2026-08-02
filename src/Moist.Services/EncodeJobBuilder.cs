@@ -33,6 +33,12 @@ public sealed record EncodeRequest
     /// <summary>Output bit depth. Auto follows the source.</summary>
     public VideoBitDepth BitDepth { get; init; } = VideoBitDepth.Auto;
 
+    /// <summary>Chroma sampling. Auto follows the source.</summary>
+    public ChromaSubsampling Chroma { get; init; } = ChromaSubsampling.Auto;
+
+    /// <summary>SVT-AV1 tuning. Null leaves the encoder on its PSNR default.</summary>
+    public SvtAv1Tune? SvtAv1Tune { get; init; }
+
     // Audio
     public string AudioEncoderId { get; init; } = "ffmpeg-audio-opus";
     public AudioBitrateMode AudioBitrateMode { get; init; } = AudioBitrateMode.Vbr;
@@ -66,6 +72,21 @@ public sealed record EncodeRequest
     public bool AudioOnly { get; init; }
     public bool CopySubtitles { get; init; } = true;
     public string? ExternalSubtitleFile { get; init; }
+
+    /// <summary>
+    /// Source subtitle stream indices to keep. Empty means all of them.
+    /// </summary>
+    public IReadOnlyList<int> SubtitleTracks { get; init; } = [];
+
+    /// <summary>
+    /// Render subtitles permanently into the picture, for players that can't display
+    /// them. Takes the external file when one is given, otherwise
+    /// <see cref="BurnInSubtitleTrack"/> from the source.
+    /// </summary>
+    public bool BurnInSubtitles { get; init; }
+
+    /// <summary>Which source subtitle stream to burn in.</summary>
+    public int BurnInSubtitleTrack { get; init; }
 
     /// <summary>Carry chapter markers over from the source.</summary>
     public bool CopyChapters { get; init; } = true;
@@ -154,6 +175,67 @@ public static class EncodeJobBuilder
             audioCodec);
     }
 
+    /// <summary>
+    /// Things that won't stop the encode but that the user would want to know about
+    /// beforehand — mostly quiet losses that are impossible to undo afterwards.
+    /// </summary>
+    public static IReadOnlyList<string> Warnings(EncodeRequest req, MediaFileInfo? info, bool chunked = false)
+    {
+        var warnings = new List<string>();
+
+        if (req.BurnInSubtitles && chunked)
+        {
+            warnings.Add(
+                "Burned-in subtitles and chunked encoding don't mix: each chunk is seeked to " +
+                "independently, so subtitle timings would drift after the first chunk. " +
+                "Turn one of them off.");
+        }
+
+        if (info?.Video is not { } video) return warnings;
+
+        if (video.IsHdr)
+        {
+            if (req.BitDepth == VideoBitDepth.Eight)
+            {
+                warnings.Add(
+                    "This source is HDR but the output is forced to 8-bit. HDR needs 10-bit; " +
+                    "the result will band badly. Use Auto or 10-bit.");
+            }
+
+            if (req.FilterScript?.Contains("tonemap", StringComparison.OrdinalIgnoreCase) == true)
+            {
+                warnings.Add(
+                    "A tone-mapping filter is applied, so this HDR source will be converted to SDR. " +
+                    "That is not reversible — remove the filter to keep it HDR.");
+            }
+
+            if (video.HasDolbyVision)
+            {
+                warnings.Add(
+                    "This source carries a Dolby Vision RPU. Re-encoding drops it, and the result " +
+                    "will play back as plain HDR10. Remuxing instead of re-encoding preserves it.");
+            }
+
+            if (video.HasHdr10Plus)
+            {
+                warnings.Add(
+                    "This source carries HDR10+ dynamic metadata, which re-encoding drops. " +
+                    "The static HDR10 base layer survives, so the result stays HDR but loses " +
+                    "the per-scene tone mapping.");
+            }
+        }
+
+        if (req.Chroma is ChromaSubsampling.Yuv420 &&
+            video.PixelFormat.Contains("444", StringComparison.Ordinal))
+        {
+            warnings.Add(
+                "The source is 4:4:4 but the output is forced to 4:2:0, which throws away " +
+                "three quarters of the colour resolution. That cannot be recovered.");
+        }
+
+        return warnings;
+    }
+
     /// <param name="chunks">
     /// A prepared chunk plan, or null to encode the video in one pass. Produced by
     /// <see cref="ChunkedEncode.PrepareAsync"/>, which also decides whether chunking is
@@ -217,6 +299,14 @@ public static class EncodeJobBuilder
         videoSettings.Tune = req.Tune;
         videoSettings.CustomArgs = req.VideoCustomArgs;
         videoSettings.BitDepth = req.BitDepth;
+        videoSettings.Chroma = req.Chroma;
+
+        if (videoSettings is SvtAv1Settings svt && req.SvtAv1Tune is { } svtTune)
+            svt.SvtTune = svtTune;
+
+        // Burning subtitles in means rendering them into the picture, so it has to happen
+        // before the encoder sees the frames — ahead of any user filters.
+        var filterScript = ComposeFilters(req);
 
         var baseName = Path.GetFileNameWithoutExtension(req.OutputFile);
         var tempVideoFile = Path.Combine(req.TempDirectory, $"moist_v_{Guid.NewGuid():N}_{baseName}.mkv");
@@ -258,9 +348,10 @@ public static class EncodeJobBuilder
                     OutputFile = chunks.ChunkFiles[i],
                     EncoderId = req.VideoEncoderId,
                     Settings = settings,
-                    FilterScript = req.FilterScript,
+                    FilterScript = filterScript,
                     FilterEngineId = req.FilterEngineId,
                     TotalFrames = chunk.FrameCount,
+                    SourceBitDepth = info?.Video?.BitDepth ?? 8,
                     TrimStart = chunk.StartTime,
                     TrimFrames = chunk.FrameCount,
                 });
@@ -291,9 +382,10 @@ public static class EncodeJobBuilder
                 OutputFile = tempVideoFile,
                 EncoderId = req.VideoEncoderId,
                 Settings = videoSettings,
-                FilterScript = req.FilterScript,
+                FilterScript = filterScript,
                 FilterEngineId = req.FilterEngineId,
                 TotalFrames = info?.Video?.TotalFrames ?? 0,
+                SourceBitDepth = info?.Video?.BitDepth ?? 8,
             };
         }
 
@@ -331,8 +423,16 @@ public static class EncodeJobBuilder
 
         // ---- Subtitles ----
         var subtitleInputs = new List<SubtitleTrackInput>();
-        if (req.CopySubtitles && info?.SubtitleStreams is { Count: > 0 } subs)
+        if (req.CopySubtitles && info?.SubtitleStreams is { Count: > 0 } allSubs)
         {
+            // An empty selection means everything; otherwise keep only what was asked for.
+            var subs = req.SubtitleTracks.Count == 0
+                ? allSubs
+                : req.SubtitleTracks
+                    .Where(i => i >= 0 && i < allSubs.Count)
+                    .Select(i => allSubs[i])
+                    .ToList();
+
             foreach (var sub in subs)
             {
                 subtitleInputs.Add(new SubtitleTrackInput
@@ -411,6 +511,36 @@ public static class EncodeJobBuilder
             _ => new VideoEncoderSettings(),
         };
     }
+
+    /// <summary>
+    /// Combine burned-in subtitles with the user's filter chain. Burn-in renders text
+    /// into the picture, so it goes first — filtering the rendered result is what you
+    /// want if you're also scaling.
+    /// </summary>
+    internal static string? ComposeFilters(EncodeRequest req)
+    {
+        if (!req.BurnInSubtitles) return req.FilterScript;
+
+        var source = !string.IsNullOrWhiteSpace(req.ExternalSubtitleFile)
+            ? req.ExternalSubtitleFile!
+            : req.InputFile;
+
+        var burn = $"subtitles='{EscapeForFilter(source)}'";
+
+        // Only index into the source's own subtitle streams; an external file has one.
+        if (string.IsNullOrWhiteSpace(req.ExternalSubtitleFile) && req.BurnInSubtitleTrack > 0)
+            burn += $":si={req.BurnInSubtitleTrack}";
+
+        return string.IsNullOrWhiteSpace(req.FilterScript) ? burn : $"{burn},{req.FilterScript}";
+    }
+
+    /// <summary>
+    /// Escape a path for use inside a filter argument. FFmpeg's filter parser treats ':'
+    /// as an option separator, so a Windows drive letter breaks the whole graph unless
+    /// it's escaped and the separators are flipped.
+    /// </summary>
+    internal static string EscapeForFilter(string path)
+        => path.Replace('\\', '/').Replace(":", "\\:").Replace("'", "\\'");
 
     public static AudioEncoderSettings CreateAudioSettings(EncodeRequest req)
     {
