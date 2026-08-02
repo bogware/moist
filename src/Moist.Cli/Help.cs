@@ -13,6 +13,8 @@ public static class Help
             case "crf-search" or "search": CrfSearch(); return;
             case "list": List(); return;
             case "tools": Tools(); return;
+            case "watch": Watch(); return;
+            case "health": Health(); return;
         }
 
         Console.WriteLine("""
@@ -27,6 +29,8 @@ public static class Help
               probe <input>         Show media information
               compare <a> <b>       Measure quality of an encode against its source
               crf-search <input>    Find the CRF that reaches a quality target
+              watch <folder>        Encode whatever lands in a folder
+              health <folder>       Find damaged or unplayable files in a library
               list <what>           List encoders, hardware, containers, profiles or filters
               tools                 Check external tool prerequisites
 
@@ -41,6 +45,8 @@ public static class Help
               moist encode in.mkv --audio-only --audio-encoder ffmpeg-audio-flac
               moist encode in.mkv --chunked --jobs 8          # parallel, resumable
               moist batch *.mkv --container mp4 --jobs 4
+              moist watch ./inbox --output-dir ./done --crf 22
+              moist health /media/films --deep
               moist compare source.mkv encoded.mkv
               moist probe in.mkv --json
             """);
@@ -267,5 +273,70 @@ public static class Help
 
         Reports which tools were found, their versions and where they came from.
         Exit code 3 if a required tool (FFmpeg, FFprobe) is missing.
+        """);
+
+    private static void Watch() => Console.WriteLine("""
+        moist watch — encode whatever lands in a folder
+
+        USAGE
+          moist watch <folder> --output-dir <dir> [encode options]
+
+        WATCHING
+          --output-dir <dir>    Where encodes are written (required, must be outside
+                                the watched folder)
+          -r, --recursive       Include subdirectories
+          --extensions <list>   Comma-separated, e.g. mkv,mp4  (default: common video)
+          --interval <sec>      How often to re-list the folder      (default: 10)
+          --stable-for <sec>    How long a file must stop changing before it counts
+                                as finished being written            (default: 30)
+          --new-only            Ignore files already there when the watch starts
+
+        AFTER A SUCCESSFUL ENCODE
+          --on-success <what>   keep | move | delete                 (default: keep)
+          --move-to <dir>       Destination for --on-success move
+
+        Every 'moist encode' option works here and applies to each file, so the watch
+        encodes exactly the way the equivalent encode command would.
+
+        Files are only picked up once their size and timestamp have held still for
+        --stable-for. A file still being copied in has a valid header and a plausible
+        duration, so encoding one early produces a truncated result and no error.
+
+        What has been encoded is remembered between runs, so restarting the watcher
+        does not re-encode the folder. A file that changes afterwards is treated as
+        new work.
+
+        EXAMPLES
+          moist watch ./inbox --output-dir ./encoded --crf 22 --preset slow
+          moist watch /mnt/dropbox --output-dir /mnt/library -r --on-success delete
+          moist watch ./inbox --output-dir ./done --target-vmaf 95 --json
+        """);
+
+    private static void Health() => Console.WriteLine("""
+        moist health — find damaged or unplayable files
+
+        USAGE
+          moist health <folder> [--deep] [--json]
+
+        OPTIONS
+          --deep                Decode every file in full rather than only reading
+                                its header
+          --no-recursive        Scan only the top directory
+          --extensions <list>   Comma-separated, e.g. mkv,mp4
+          --json                Machine-readable report
+
+        Without --deep this reads container headers, which catches files whose write
+        was interrupted but not damage inside an otherwise complete file — that has a
+        perfectly good header and a plausible duration.
+
+        --deep decodes everything and discards it, reporting what FFmpeg complains
+        about, and compares the frames actually decoded against the number the
+        container claims. It takes roughly as long as playing the library.
+
+        Exit code 1 if any file has a problem, so this can drive a scheduled check.
+
+        EXAMPLES
+          moist health /media/films
+          moist health /media/films --deep --json > report.json
         """);
 }

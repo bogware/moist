@@ -360,13 +360,55 @@ it. Finishing the passthrough needs the tools and some real Dolby Vision content
 
 ---
 
-## Tier 7 — Scale & automation 💭
+## Tier 7 — Scale & automation 🚧
 
-Deliberately deprioritised — this is Tdarr's territory and a different product.
-Revisit only if the quality-intelligence direction is complete.
+| Item | Status | Notes |
+|---|---|---|
+| Watch folders | ✅ | `moist watch <dir> --output-dir <dir>` |
+| Library health checking | ✅ | `moist health <dir> [--deep]` |
+| Headless server mode | ⬜ | |
+| Docker | ⬜ | |
+| Distributed workers | ⬜ | Not planned; see the positioning note |
 
-Watch folders · distributed workers · REST API · headless server mode · Docker ·
-library health checking.
+### Watch folders
+
+`moist watch` takes every option `moist encode` does and applies it to each file,
+because a watch folder that encoded differently from the command that configured
+it would be its own source of surprises.
+
+Three things it has to get right, none of them obvious:
+
+- **A file that has just appeared is usually still being copied.** It has a valid
+  header and a plausible duration the whole way through, so encoding one early
+  produces a truncated result with nothing to explain it. Files are only picked
+  up once their size and timestamp have held still (`--stable-for`, default 30s).
+- **Writing output into the watched folder feeds the watcher its own output** —
+  it encodes the encode, then encodes that, until the disk fills. Refused up
+  front, along with a `--move-to` inside a recursive watch.
+- **What has been encoded is remembered between runs**, so restarting doesn't
+  re-encode the folder; a file that *changes* afterwards is new work again.
+  Sources are only deleted or moved after the encode actually succeeded.
+
+Polling, not `FileSystemWatcher`: watch folders are usually network shares or
+mounted volumes, where change notifications are unreliable or absent, and a
+dropped event means a file is silently never encoded.
+
+### Library health checking
+
+`moist health` reports files that are damaged or unplayable, and exits non-zero
+if any are, so it can drive a scheduled check.
+
+The distinction that makes it worth having is depth. A header scan catches a
+file whose write was interrupted. It does **not** catch damage: a file with a
+corrupt middle has a perfectly good header and reports a plausible duration.
+Measured on a deliberately corrupted fixture — the quick scan calls it healthy,
+`--deep` reports both decode errors and that it decoded 85 of the 180 frames the
+container claims. There is a test pinning each half of that.
+
+Finding the hang this had is worth recording: `--deep` runs ffprobe to count
+frames, and the code drained only stdout while stderr was redirected. A damaged
+file makes ffprobe flood stderr, which fills the pipe buffer and deadlocks — so
+the scanner hung on precisely the files it exists to find, and only on those.
 
 ---
 
