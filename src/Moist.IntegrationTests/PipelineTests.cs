@@ -77,9 +77,18 @@ public sealed class PipelineTests(MediaFixture media) : PipelineTestBase(media)
     [InlineData("ffmpeg-x264", "h264")]
     [InlineData("ffmpeg-x265", "hevc")]
     [InlineData("ffmpeg-vp9", "vp9")]
-    [InlineData("ffmpeg-svtav1", "av1")]
     [InlineData("ffmpeg-ffv1", "ffv1")]
     public async Task EveryVideoEncoder_ProducesItsCodec(string encoderId, string expectedCodec)
+        => await EncoderProducesCodec(encoderId, expectedCodec);
+
+    /// <summary>
+    /// AV1 is its own test because libsvtav1 is a build-time component most FFmpeg
+    /// packages leave out.
+    /// </summary>
+    [FfmpegFact(encoder: "libsvtav1")]
+    public async Task SvtAv1ProducesAv1() => await EncoderProducesCodec("ffmpeg-svtav1", "av1");
+
+    private async Task EncoderProducesCodec(string encoderId, string expectedCodec)
     {
         using var services = CreateServices();
         var info = await services.MediaAnalyzer.AnalyzeAsync(Media.SampleVideo, CancellationToken.None);

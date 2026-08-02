@@ -42,7 +42,7 @@ public sealed class PerSceneIntegrationTests(MediaFixture media) : PipelineTestB
         ComplexityProbeFrames = 25,
     };
 
-    [FfmpegFact]
+    [FfmpegFact(filter: "libvmaf")]
     public async Task DifferentScenesGetDifferentCrf()
     {
         // VariedVideo runs from a flat colour field to dense fractal detail, so a single
@@ -63,7 +63,7 @@ public sealed class PerSceneIntegrationTests(MediaFixture media) : PipelineTestB
             $"scenes this different should not all get the same CRF (got {result.MinCrf}-{result.MaxCrf})");
     }
 
-    [FfmpegFact]
+    [FfmpegFact(filter: "libvmaf")]
     public async Task ComplexScenesGetLowerCrfThanSimpleOnes()
     {
         using var services = CreateServices();
@@ -85,7 +85,7 @@ public sealed class PerSceneIntegrationTests(MediaFixture media) : PipelineTestB
             $"busiest scene got CRF {busiest.Crf} but the quietest got {quietest.Crf}");
     }
 
-    [FfmpegFact]
+    [FfmpegFact(filter: "libvmaf")]
     public async Task PerSceneEvensOutQualityAcrossTheFile()
     {
         // The headline claim, measured: every scene should land near the target rather
@@ -111,7 +111,7 @@ public sealed class PerSceneIntegrationTests(MediaFixture media) : PipelineTestB
             $"per-scene quality still varies by {spread:F1} VMAF across scenes: {string.Join(", ", scores.Select(s => s.ToString("F1")))}");
     }
 
-    [FfmpegFact]
+    [FfmpegFact(filter: "libvmaf")]
     public async Task PerSceneBeatsAFixedCrfChosenForTheHardestScene()
     {
         // The fair comparison. Judging on mean quality flatters fixed CRF, because the
@@ -154,7 +154,7 @@ public sealed class PerSceneIntegrationTests(MediaFixture media) : PipelineTestB
             "at comparable worst-case quality");
     }
 
-    [FfmpegFact]
+    [FfmpegFact(filter: "libvmaf")]
     public async Task ABadPredictionIsCaughtAndCorrected()
     {
         // Complexity is measured as compressibility, and the two come apart: a test
@@ -177,7 +177,7 @@ public sealed class PerSceneIntegrationTests(MediaFixture media) : PipelineTestB
         }
     }
 
-    [FfmpegFact]
+    [FfmpegFact(filter: "libvmaf")]
     public async Task FullStrategySearchesEveryScene()
     {
         using var services = CreateServices();
@@ -193,7 +193,7 @@ public sealed class PerSceneIntegrationTests(MediaFixture media) : PipelineTestB
         Assert.All(result.Assignments, a => Assert.NotNull(a.MeasuredScore));
     }
 
-    [FfmpegFact]
+    [FfmpegFact(filter: "libvmaf")]
     public async Task PerSceneQualityReachesTheChunkJobs()
     {
         using var services = CreateServices();
@@ -213,7 +213,7 @@ public sealed class PerSceneIntegrationTests(MediaFixture media) : PipelineTestB
             Assert.Equal(quality[i], built.ChunkJobs[i].Settings.Quality);
     }
 
-    [FfmpegFact]
+    [FfmpegFact(filter: "libvmaf")]
     public async Task DifferentPerSceneAssignmentsDoNotShareChunkFiles()
     {
         // Otherwise a second run at a different target would splice in chunks encoded

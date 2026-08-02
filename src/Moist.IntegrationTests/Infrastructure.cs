@@ -42,6 +42,63 @@ public static class Ffmpeg
         }
     }
 
+    // FFmpeg is not one program. Which encoders and filters a build contains depends on
+    // how it was compiled, and the ones these tests lean on — libsvtav1, libvmaf — are
+    // absent from most distribution packages. Assuming they're there made the suite pass
+    // on a developer's full build and fail on any ordinary one.
+
+    private static readonly Lazy<HashSet<string>> _encoders = new(() => Names("-encoders"));
+    private static readonly Lazy<HashSet<string>> _filters = new(() => Names("-filters"));
+
+    public static bool HasEncoder(string name) => _encoders.Value.Contains(name);
+    public static bool HasFilter(string name) => _filters.Value.Contains(name);
+
+    /// <summary>
+    /// Names from `ffmpeg -encoders` / `-filters`. Both list one per line as
+    /// "&lt;flags&gt; &lt;name&gt; &lt;description&gt;", so the name is the second field —
+    /// matching the whole line would also hit descriptions that mention other codecs.
+    /// </summary>
+    private static HashSet<string> Names(string listOption)
+    {
+        var names = new HashSet<string>(StringComparer.Ordinal);
+        if (!Available) return names;
+
+        try
+        {
+            using var p = Process.Start(new ProcessStartInfo("ffmpeg", $"-hide_banner {listOption}")
+            {
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+            })!;
+
+            var output = p.StandardOutput.ReadToEnd();
+            p.WaitForExit(30_000);
+
+            foreach (var line in output.Split('\n'))
+            {
+                var fields = line.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+                if (fields.Length >= 2) names.Add(fields[1]);
+            }
+        }
+        catch { /* an empty set just means everything gets skipped */ }
+
+        return names;
+    }
+
+    /// <summary>Why a test cannot run here, or null if it can.</summary>
+    public static string? Requirement(string? encoder, string? filter, bool frameExactCutting)
+    {
+        if (SkipReason is { } missing) return missing;
+        if (encoder is not null && !HasEncoder(encoder))
+            return $"this FFmpeg build has no '{encoder}' encoder — skipping.";
+        if (filter is not null && !HasFilter(filter))
+            return $"this FFmpeg build has no '{filter}' filter — skipping.";
+        if (frameExactCutting && FrameExactCutting.SkipReason is { } cutting) return cutting;
+        return null;
+    }
+
     /// <summary>Run ffprobe and return trimmed stdout.</summary>
     public static string Probe(string args, string file)
     {
@@ -99,21 +156,104 @@ public static class Ffmpeg
                 .Trim(',', ' ', '\r', '\n'), out var n) ? n : -1;
 }
 
-/// <summary>A [Fact] that skips itself when FFmpeg isn't installed, so CI stays green.</summary>
+/// <summary>
+/// A [Fact] that skips itself when the FFmpeg it needs isn't there.
+///
+/// <c>encoder</c> and <c>filter</c> name build-time components — libsvtav1 and libvmaf are
+/// absent from most distribution packages — and <c>frameExactCutting</c> covers the
+/// behaviour chunked encoding depends on.
+/// </summary>
 public sealed class FfmpegFactAttribute : FactAttribute
 {
-    public FfmpegFactAttribute()
+    public FfmpegFactAttribute(string? encoder = null, string? filter = null, bool frameExactCutting = false)
     {
-        if (Ffmpeg.SkipReason is { } reason) Skip = reason;
+        Skip = Ffmpeg.Requirement(encoder, filter, frameExactCutting);
     }
 }
 
-/// <summary>A [Theory] that skips itself when FFmpeg isn't installed.</summary>
+/// <summary>A [Theory] with the same requirements as <see cref="FfmpegFactAttribute"/>.</summary>
 public sealed class FfmpegTheoryAttribute : TheoryAttribute
 {
-    public FfmpegTheoryAttribute()
+    public FfmpegTheoryAttribute(string? encoder = null, string? filter = null, bool frameExactCutting = false)
     {
-        if (Ffmpeg.SkipReason is { } reason) Skip = reason;
+        Skip = Ffmpeg.Requirement(encoder, filter, frameExactCutting);
+    }
+}
+
+/// <summary>
+/// Whether this FFmpeg can cut a source into exact frame ranges and join them back
+/// without gaining or losing frames.
+///
+/// Chunked encoding is built entirely on that, and moist verifies the joined frame count
+/// rather than trusting it — so on a build that cannot do it, a chunked encode fails
+/// loudly and correctly. That makes it an environment limitation rather than a defect,
+/// and the tests for chunking have nothing to prove there. This measures it instead of
+/// guessing from a version number.
+/// </summary>
+public static class FrameExactCutting
+{
+    private static readonly Lazy<string?> _skip = new(Measure);
+
+    public static string? SkipReason => Ffmpeg.SkipReason ?? _skip.Value;
+
+    private static string? Measure()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "moist-cutprobe-" + Guid.NewGuid().ToString("N")[..8]);
+
+        try
+        {
+            Directory.CreateDirectory(root);
+
+            var source = Path.Combine(root, "src.mkv");
+            if (!Run($"-y -v error -f lavfi -i testsrc2=size=160x120:rate=25:duration=4 " +
+                     $"-c:v libx264 -preset ultrafast -pix_fmt yuv420p \"{source}\"")) return null;
+
+            // Two halves, addressed in frames exactly as chunked encoding does.
+            var first = Path.Combine(root, "a.mkv");
+            var second = Path.Combine(root, "b.mkv");
+
+            if (!Run($"-y -v error -i \"{source}\" -frames:v 50 -c:v libx264 -preset ultrafast \"{first}\"")) return null;
+            if (!Run($"-y -v error -ss 2 -i \"{source}\" -frames:v 50 -c:v libx264 -preset ultrafast \"{second}\"")) return null;
+
+            if (Ffmpeg.FrameCount(first) != 50 || Ffmpeg.FrameCount(second) != 50)
+                return "this FFmpeg does not cut exact frame ranges, so chunked encoding cannot line up — skipping.";
+
+            var list = Path.Combine(root, "list.txt");
+            File.WriteAllText(list, $"file '{first.Replace("\\", "/")}'\nfile '{second.Replace("\\", "/")}'\n");
+
+            var joined = Path.Combine(root, "joined.mkv");
+            if (!Run($"-y -v error -f concat -safe 0 -i \"{list}\" -c copy \"{joined}\"")) return null;
+
+            return Ffmpeg.FrameCount(joined) == 100
+                ? null
+                : "this FFmpeg loses frames when joining cut ranges, so chunked encoding cannot line up — skipping.";
+        }
+        catch
+        {
+            // A probe that cannot run should not silently disable the tests it guards.
+            return null;
+        }
+        finally
+        {
+            try { Directory.Delete(root, recursive: true); } catch { /* best effort */ }
+        }
+    }
+
+    private static bool Run(string arguments)
+    {
+        using var p = Process.Start(new ProcessStartInfo("ffmpeg", arguments)
+        {
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+        })!;
+
+        p.StandardOutput.ReadToEnd();
+        p.StandardError.ReadToEnd();
+        p.WaitForExit(60_000);
+
+        return p.HasExited && p.ExitCode == 0;
     }
 }
 

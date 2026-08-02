@@ -60,25 +60,36 @@ public sealed class RegressionTests(MediaFixture media) : PipelineTestBase(media
     }
 
     [Fact]
-    public void Save_ReportsFailureInsteadOfThrowing_WhenTheFileIsLocked()
+    public void Save_ReportsFailureInsteadOfThrowing_WhenTheFileCannotBeWritten()
     {
         // Save() runs on the shutdown path, where throwing leaves the window
         // un-closable and the process hung. It must degrade to a false return.
         using var sandbox = new SettingsSandbox();
 
         var path = MoistSettings.GetSettingsPath();
-        File.WriteAllText(path, "{}");
+        if (File.Exists(path)) File.Delete(path);
 
-        // Hold the destination open exclusively so the write cannot land.
-        using var hold = new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+        // A directory where the file should be. This used to hold the file open with
+        // FileShare.None instead, which only blocks a write on Windows — Unix file locks
+        // are advisory, so on Linux the save succeeded and the test failed. A directory
+        // in the way cannot be written on any platform.
+        Directory.CreateDirectory(path);
 
-        var settings = new MoistSettings();
-        var exception = Record.Exception(() => settings.Save(out _));
-        Assert.Null(exception);
+        try
+        {
+            var settings = new MoistSettings();
 
-        var saved = settings.Save(out var error);
-        Assert.False(saved, "a locked settings file must be reported as a failure");
-        Assert.NotNull(error);
+            var exception = Record.Exception(() => settings.Save(out _));
+            Assert.Null(exception);
+
+            var saved = settings.Save(out var error);
+            Assert.False(saved, "an unwritable settings path must be reported as a failure");
+            Assert.NotNull(error);
+        }
+        finally
+        {
+            Directory.Delete(path, recursive: true);
+        }
     }
 
     [Fact]

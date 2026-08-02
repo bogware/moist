@@ -17,7 +17,7 @@ public sealed class QualityIntegrationTests(MediaFixture media) : PipelineTestBa
 {
     private QualityMeasurer Measurer() => new("ffmpeg", "ffprobe");
 
-    [FfmpegFact]
+    [FfmpegFact(filter: "libvmaf")]
     public async Task IdenticalFilesScoreNearlyPerfect()
     {
         var result = await Measurer().MeasureAsync(
@@ -27,11 +27,19 @@ public sealed class QualityIntegrationTests(MediaFixture media) : PipelineTestBa
     }
 
     [FfmpegTheory]
-    [InlineData(QualityMetric.Vmaf)]
     [InlineData(QualityMetric.Xpsnr)]
     [InlineData(QualityMetric.Ssim)]
     [InlineData(QualityMetric.Psnr)]
-    public async Task EveryMetricProducesAScore(QualityMetric metric)
+    public async Task EveryMetricProducesAScore(QualityMetric metric) => await MetricScores(metric);
+
+    /// <summary>
+    /// VMAF is its own test because libvmaf is a build-time component that most FFmpeg
+    /// packages leave out, while the other three metrics are always present.
+    /// </summary>
+    [FfmpegFact(filter: "libvmaf")]
+    public async Task VmafProducesAScore() => await MetricScores(QualityMetric.Vmaf);
+
+    private async Task MetricScores(QualityMetric metric)
     {
         var encoded = Media.Output($"metric_{metric}.mkv");
         await EncodeAsync(Media.NaturalVideo, encoded, crf: 28);
@@ -42,7 +50,7 @@ public sealed class QualityIntegrationTests(MediaFixture media) : PipelineTestBa
         Assert.Equal(metric, result.Metric);
     }
 
-    [FfmpegFact]
+    [FfmpegFact(filter: "libvmaf")]
     public async Task QualityFallsAsCrfRises()
     {
         // The whole premise of target-quality encoding: the metric has to respond
@@ -61,7 +69,7 @@ public sealed class QualityIntegrationTests(MediaFixture media) : PipelineTestBa
             $"CRF 18 scored {lowCrf.Score:F1} and CRF 38 scored {highCrf.Score:F1} — expected a clear gap");
     }
 
-    [FfmpegFact]
+    [FfmpegFact(filter: "libvmaf")]
     public async Task ShortSampleIsNotPaddedAgainstALongReference()
     {
         // Regression: without framesync's shortest=1 the comparison ran on past the end
@@ -77,7 +85,7 @@ public sealed class QualityIntegrationTests(MediaFixture media) : PipelineTestBa
             $"a near-lossless 4s sample scored {result.Score:F1}; padding past its end is the usual cause");
     }
 
-    [FfmpegFact]
+    [FfmpegFact(filter: "libvmaf")]
     public async Task DownscaledEncodeIsStillComparable()
     {
         var small = Media.Output("downscaled.mkv");
@@ -89,7 +97,7 @@ public sealed class QualityIntegrationTests(MediaFixture media) : PipelineTestBa
         Assert.True(result.Score > 0);
     }
 
-    [FfmpegFact]
+    [FfmpegFact(filter: "libvmaf")]
     public async Task VmafReportsPooledStatistics()
     {
         var encoded = Media.Output("pooled.mkv");
@@ -107,7 +115,7 @@ public sealed class QualityIntegrationTests(MediaFixture media) : PipelineTestBa
 
     // ---------------- target-quality search ----------------
 
-    [FfmpegFact]
+    [FfmpegFact(filter: "libvmaf")]
     public async Task SearchFindsACrfThatMeetsTheTarget()
     {
         using var services = CreateServices();
@@ -133,7 +141,7 @@ public sealed class QualityIntegrationTests(MediaFixture media) : PipelineTestBa
         Assert.True(result.Probes.Count <= options.MaxProbes);
     }
 
-    [FfmpegFact]
+    [FfmpegFact(filter: "libvmaf")]
     public async Task SampledPredictionMatchesTheFullEncode()
     {
         // The entire approach rests on this: if a few short samples don't predict the
@@ -163,7 +171,7 @@ public sealed class QualityIntegrationTests(MediaFixture media) : PipelineTestBa
             $"predicted {result.PredictedScore:F2} from samples but the full encode scored {actual.Score:F2}");
     }
 
-    [FfmpegFact]
+    [FfmpegFact(filter: "libvmaf")]
     public async Task HigherTargetsChooseLowerCrf()
     {
         using var services = CreateServices();
@@ -187,7 +195,7 @@ public sealed class QualityIntegrationTests(MediaFixture media) : PipelineTestBa
             $"target 96 chose CRF {strict.Crf} but target 85 chose CRF {relaxed.Crf}");
     }
 
-    [FfmpegFact]
+    [FfmpegFact(filter: "libvmaf")]
     public async Task SearchIsCachedBetweenRuns()
     {
         using var services = CreateServices();

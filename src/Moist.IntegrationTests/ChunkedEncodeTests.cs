@@ -35,7 +35,7 @@ public sealed class ChunkedEncodeTests(MediaFixture media) : PipelineTestBase(me
         AudioEncoderId = "ffmpeg-audio-opus",
     };
 
-    [FfmpegFact]
+    [FfmpegFact(frameExactCutting: true)]
     public async Task ChunkedOutputHasExactlyTheSourceFrameCount()
     {
         using var services = CreateServices();
@@ -63,7 +63,7 @@ public sealed class ChunkedEncodeTests(MediaFixture media) : PipelineTestBase(me
         Assert.Equal(sourceFrames, outputFrames);
     }
 
-    [FfmpegFact]
+    [FfmpegFact(filter: "libvmaf", frameExactCutting: true)]
     public async Task ChunkedOutputMatchesTheSourceContent()
     {
         // A frame count can be right while the content is shifted, so compare the
@@ -86,7 +86,7 @@ public sealed class ChunkedEncodeTests(MediaFixture media) : PipelineTestBase(me
             $"chunked output scored {result.Score:F1} against the source; content is probably shifted");
     }
 
-    [FfmpegFact]
+    [FfmpegFact(filter: "libvmaf", frameExactCutting: true)]
     public async Task ChunkedMatchesSinglePassQuality()
     {
         // Chunking must not cost quality beyond the extra keyframe per boundary.
@@ -112,7 +112,7 @@ public sealed class ChunkedEncodeTests(MediaFixture media) : PipelineTestBase(me
             $"single-pass scored {singleScore.Score:F1} but chunked scored {chunkedScore.Score:F1}");
     }
 
-    [FfmpegFact]
+    [FfmpegFact(frameExactCutting: true)]
     public async Task VerificationCatchesATruncatedChunk()
     {
         // The whole reason the concat verifies rather than trusting FFmpeg's exit code:
@@ -140,7 +140,7 @@ public sealed class ChunkedEncodeTests(MediaFixture media) : PipelineTestBase(me
         Assert.Contains("frames", concat.ErrorMessage ?? "", StringComparison.OrdinalIgnoreCase);
     }
 
-    [FfmpegFact]
+    [FfmpegFact(frameExactCutting: true)]
     public async Task SceneModeCutsWhereTheScenesAre()
     {
         // SceneVideo is three visually distinct segments spliced together, so detection
@@ -164,7 +164,7 @@ public sealed class ChunkedEncodeTests(MediaFixture media) : PipelineTestBase(me
         Assert.True(plan.Chunks.Count >= 2);
     }
 
-    [FfmpegFact]
+    [FfmpegFact(frameExactCutting: true)]
     public async Task InterruptedRunReusesFinishedChunks()
     {
         using var services = CreateServices();
@@ -197,7 +197,7 @@ public sealed class ChunkedEncodeTests(MediaFixture media) : PipelineTestBase(me
         Assert.Equal(second.Plan.Chunks.Count - 2, second.RemainingCount);
     }
 
-    [FfmpegFact]
+    [FfmpegFact(frameExactCutting: true)]
     public async Task AHalfWrittenChunkIsNotReused()
     {
         // A chunk left behind by a kill is the dangerous case: it exists, so a naive
@@ -231,7 +231,7 @@ public sealed class ChunkedEncodeTests(MediaFixture media) : PipelineTestBase(me
         Assert.False(File.Exists(prep!.ChunkFiles[0]), "the short chunk should have been discarded");
     }
 
-    [FfmpegFact]
+    [FfmpegFact(frameExactCutting: true)]
     public async Task ShortSourcesDeclineChunkingRatherThanSplitting()
     {
         using var services = CreateServices();
@@ -251,7 +251,7 @@ public sealed class ChunkedEncodeTests(MediaFixture media) : PipelineTestBase(me
         Assert.Null(prep);
     }
 
-    [FfmpegFact]
+    [FfmpegFact(frameExactCutting: true)]
     public async Task ChunkedEncodePreservesAudioAndSubtitles()
     {
         // The chunking only applies to video; everything else must still come through.

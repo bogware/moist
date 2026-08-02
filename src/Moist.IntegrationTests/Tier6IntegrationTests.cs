@@ -142,7 +142,7 @@ public sealed class Tier6IntegrationTests(MediaFixture media) : PipelineTestBase
 
     // ---------------- SVT-AV1 tuning ----------------
 
-    [FfmpegTheory]
+    [FfmpegTheory(encoder: "libsvtav1")]
     [InlineData(SvtAv1Tune.Vq)]
     [InlineData(SvtAv1Tune.Vmaf)]
     public async Task SvtAv1AcceptsItsTuning(SvtAv1Tune tune)
@@ -169,7 +169,7 @@ public sealed class Tier6IntegrationTests(MediaFixture media) : PipelineTestBase
         Assert.Equal("av1", Ffmpeg.VideoCodec(request.OutputFile));
     }
 
-    [FfmpegFact]
+    [FfmpegFact(encoder: "libsvtav1")]
     public async Task WithoutTuningNoSvtParamsAreSent()
     {
         // Leaving it unset means leaving the encoder on its own default.

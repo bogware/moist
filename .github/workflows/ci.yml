@@ -41,15 +41,27 @@ jobs:
 
       # The integration suite drives real FFmpeg encodes. It skips itself when the
       # tools are absent, so this step is informational rather than a gate.
-      - name: Check FFmpeg availability
+      # Which encoders and filters a build contains is decided at compile time, and the
+      # tests skip themselves accordingly. Printing it here is what turns "19 tests
+      # failed" into "this runner has no libvmaf".
+      - name: Report FFmpeg build
         shell: pwsh
         continue-on-error: true
         run: |
           $ff = Get-Command ffmpeg -ErrorAction SilentlyContinue
-          if ($ff) {
-            Write-Host "FFmpeg found at $($ff.Source) — integration tests will run."
-          } else {
-            Write-Warning "FFmpeg not on PATH — integration tests will be SKIPPED. Install FFmpeg on this runner to enable them."
+          if (-not $ff) {
+            Write-Warning "FFmpeg not on PATH — integration tests will be SKIPPED."
+            exit 0
+          }
+          Write-Host "FFmpeg at $($ff.Source)"
+          & ffmpeg -hide_banner -version | Select-Object -First 1
+          $encoders = (& ffmpeg -hide_banner -encoders 2>$null) -join "`n"
+          $filters  = (& ffmpeg -hide_banner -filters  2>$null) -join "`n"
+          foreach ($name in @("libx264","libx265","libsvtav1","libvpx-vp9")) {
+            Write-Host ("encoder {0,-12} {1}" -f $name, $(if ($encoders -match "\s$name\s") { "yes" } else { "NO" }))
+          }
+          foreach ($name in @("libvmaf","ssim","psnr","xpsnr","scdet","subtitles")) {
+            Write-Host ("filter  {0,-12} {1}" -f $name, $(if ($filters -match "\s$name\s") { "yes" } else { "NO" }))
           }
 
       - name: Run tests
@@ -87,14 +99,32 @@ jobs:
 
       # The integration suite drives real FFmpeg encodes. It skips itself when the
       # tools are absent, so this step is informational rather than a gate.
-      - name: Check FFmpeg availability
+      # Which encoders and filters a build contains is decided at compile time, and the
+      # tests skip themselves accordingly. Printing it here is what turns "19 tests
+      # failed" into "this runner has no libvmaf".
+      - name: Report FFmpeg build
         continue-on-error: true
         run: |
-          if command -v ffmpeg >/dev/null 2>&1; then
-            echo "FFmpeg found at $(command -v ffmpeg) — integration tests will run."
-          else
-            echo "::warning::FFmpeg not on PATH — integration tests will be SKIPPED. Install FFmpeg on this runner to enable them."
+          if ! command -v ffmpeg >/dev/null 2>&1; then
+            echo "::warning::FFmpeg not on PATH — integration tests will be SKIPPED."
+            exit 0
           fi
+          echo "FFmpeg at $(command -v ffmpeg)"
+          ffmpeg -hide_banner -version | head -1
+          for name in libx264 libx265 libsvtav1 libvpx-vp9; do
+            if ffmpeg -hide_banner -encoders 2>/dev/null | awk '{print $2}' | grep -qx "$name"; then
+              echo "encoder $name: yes"
+            else
+              echo "encoder $name: NO"
+            fi
+          done
+          for name in libvmaf ssim psnr xpsnr scdet subtitles; do
+            if ffmpeg -hide_banner -filters 2>/dev/null | awk '{print $2}' | grep -qx "$name"; then
+              echo "filter $name: yes"
+            else
+              echo "filter $name: NO"
+            fi
+          done
 
       - name: Run tests
         working-directory: src
