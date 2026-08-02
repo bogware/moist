@@ -28,7 +28,7 @@ public static class Program
 
         if (command is "--version" or "version")
         {
-            Console.WriteLine($"moist {typeof(Program).Assembly.GetName().Version?.ToString(3) ?? "0.1.0"}");
+            Console.WriteLine($"moist {typeof(Program).Assembly.GetName().Version?.ToString(3) ?? "unknown"}");
             return ExitOk;
         }
 

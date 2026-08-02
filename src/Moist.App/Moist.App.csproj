@@ -6,11 +6,8 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
-    <Version>0.1.0</Version>
-    <Product>moist</Product>
     <AssemblyTitle>moist - Video Encoder</AssemblyTitle>
     <Description>Cross-platform video encoder GUI built with Avalonia UI</Description>
-    <Copyright>Copyright (c) 2024-2026 moist contributors</Copyright>
     <ApplicationIcon>Assets/moist.ico</ApplicationIcon>
   </PropertyGroup>
 

@@ -1,0 +1,14 @@
+<Project>
+
+  <!--
+    One version for the whole solution. It used to live in Moist.App.csproj and
+    Moist.Cli.csproj separately, which meant the GUI and the CLI could — and did —
+    report different versions of the same build.
+  -->
+  <PropertyGroup>
+    <Version>0.9.0</Version>
+    <Product>moist</Product>
+    <Copyright>Copyright (c) 2024-2026 moist contributors</Copyright>
+  </PropertyGroup>
+
+</Project>

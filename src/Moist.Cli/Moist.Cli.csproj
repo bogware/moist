@@ -7,8 +7,6 @@
     <Nullable>enable</Nullable>
     <AssemblyName>moist</AssemblyName>
     <RootNamespace>Moist.Cli</RootNamespace>
-    <Version>0.1.0</Version>
-    <Product>moist</Product>
     <AssemblyTitle>moist - Video Encoder CLI</AssemblyTitle>
     <Description>Command-line interface for the moist video encoder</Description>
     <InvariantGlobalization>true</InvariantGlobalization>
