@@ -26,6 +26,9 @@ public sealed class EncodeRequest
     public int SvtAv1Preset { get; init; } = 6;
     public string VideoCustomArgs { get; init; } = string.Empty;
 
+    /// <summary>Output bit depth. Auto follows the source.</summary>
+    public VideoBitDepth BitDepth { get; init; } = VideoBitDepth.Auto;
+
     // Audio
     public string AudioEncoderId { get; init; } = "ffmpeg-audio-opus";
     public AudioBitrateMode AudioBitrateMode { get; init; } = AudioBitrateMode.Vbr;
@@ -37,7 +40,13 @@ public sealed class EncodeRequest
     public double NormalizationTarget { get; init; } = -16.0;
     public double TruePeakLimit { get; init; } = -1.0;
     public string AudioCustomArgs { get; init; } = string.Empty;
-    public int AudioTrackIndex { get; init; }
+
+    /// <summary>
+    /// Source audio stream indices to encode, in output order. Every selected track gets
+    /// its own encode job and its own track in the mux, with language and title carried
+    /// across. Audio-only output uses the first entry.
+    /// </summary>
+    public IReadOnlyList<int> AudioTracks { get; init; } = [0];
 
     // Codec-specific
     public int OpusComplexity { get; init; } = 10;
@@ -54,6 +63,15 @@ public sealed class EncodeRequest
     public bool CopySubtitles { get; init; } = true;
     public string? ExternalSubtitleFile { get; init; }
 
+    /// <summary>Carry chapter markers over from the source.</summary>
+    public bool CopyChapters { get; init; } = true;
+
+    /// <summary>Carry attachments (subtitle fonts) over from the source. Matroska only.</summary>
+    public bool CopyAttachments { get; init; } = true;
+
+    /// <summary>Carry container-level tags over from the source.</summary>
+    public bool CopyMetadata { get; init; } = true;
+
     // Filters (already rendered to an engine-specific script)
     public string? FilterScript { get; init; }
     public string? FilterEngineId { get; init; }
@@ -63,21 +81,24 @@ public sealed class EncodeRequest
 public sealed class EncodePlan
 {
     public VideoJob? Video { get; init; }
-    public required AudioJob Audio { get; init; }
+    public required IReadOnlyList<AudioJob> AudioJobs { get; init; }
     public MuxJob? Mux { get; init; }
+
+    /// <summary>Convenience for the common single-track case.</summary>
+    public AudioJob Audio => AudioJobs[0];
 
     public IEnumerable<Job> AllJobs
     {
         get
         {
             if (Video is not null) yield return Video;
-            yield return Audio;
+            foreach (var audio in AudioJobs) yield return audio;
             if (Mux is not null) yield return Mux;
         }
     }
 
     /// <summary>The job whose completion means the whole encode is done.</summary>
-    public Job FinalJob => (Job?)Mux ?? Audio;
+    public Job FinalJob => (Job?)Mux ?? AudioJobs[0];
 }
 
 /// <summary>
@@ -107,44 +128,43 @@ public static class EncodeJobBuilder
         if (!string.IsNullOrEmpty(outputDir))
             Directory.CreateDirectory(outputDir);
 
-        var audioSettings = CreateAudioSettings(req);
+        var tracks = req.AudioTracks.Count > 0 ? req.AudioTracks : [0];
 
         // ---- Audio-only: one job straight to the final file ----
+        // A single file can't hold several encoded tracks without a mux step, so
+        // audio-only takes the first selection.
         if (req.AudioOnly)
         {
             return new EncodePlan
             {
-                Audio = new AudioJob
-                {
-                    Name = $"Audio: {Path.GetFileName(req.InputFile)}",
-                    InputFile = req.InputFile,
-                    OutputFile = req.OutputFile,
-                    EncoderId = req.AudioEncoderId,
-                    Settings = audioSettings,
-                    TotalDurationSeconds = info?.Duration.TotalSeconds ?? 0,
-                    AudioStreamIndex = req.AudioTrackIndex,
-                },
+                AudioJobs =
+                [
+                    new AudioJob
+                    {
+                        Name = $"Audio: {Path.GetFileName(req.InputFile)}",
+                        InputFile = req.InputFile,
+                        OutputFile = req.OutputFile,
+                        EncoderId = req.AudioEncoderId,
+                        Settings = CreateAudioSettings(req),
+                        TotalDurationSeconds = info?.Duration.TotalSeconds ?? 0,
+                        AudioStreamIndex = tracks[0],
+                    },
+                ],
             };
         }
 
         // ---- Video ----
-        VideoEncoderSettings videoSettings = req.VideoEncoderId switch
-        {
-            "ffmpeg-x264" or "cli-x264" => new X264Settings(),
-            "ffmpeg-x265" or "cli-x265" => new X265Settings(),
-            "ffmpeg-svtav1" => new SvtAv1Settings { SvtPreset = req.SvtAv1Preset },
-            _ => new VideoEncoderSettings(),
-        };
+        var videoSettings = CreateVideoSettings(req);
         videoSettings.Mode = req.Mode;
         videoSettings.Quality = req.Quality;
         videoSettings.Bitrate = req.Bitrate;
         videoSettings.Preset = req.Preset;
         videoSettings.Tune = req.Tune;
         videoSettings.CustomArgs = req.VideoCustomArgs;
+        videoSettings.BitDepth = req.BitDepth;
 
         var baseName = Path.GetFileNameWithoutExtension(req.OutputFile);
         var tempVideoFile = Path.Combine(req.TempDirectory, $"moist_v_{Guid.NewGuid():N}_{baseName}.mkv");
-        var tempAudioFile = Path.Combine(req.TempDirectory, $"moist_a_{Guid.NewGuid():N}_{baseName}.mka");
 
         var videoJob = new VideoJob
         {
@@ -158,16 +178,37 @@ public static class EncodeJobBuilder
             TotalFrames = info?.Video?.TotalFrames ?? 0,
         };
 
-        var audioJob = new AudioJob
+        // One encode job per selected source track, each to its own temp file.
+        var audioJobs = new List<AudioJob>();
+        var audioInputs = new List<AudioTrackInput>();
+
+        foreach (var (sourceIndex, position) in tracks.Select((t, i) => (t, i)))
         {
-            Name = $"Audio: {Path.GetFileName(req.InputFile)}",
-            InputFile = req.InputFile,
-            OutputFile = tempAudioFile,
-            EncoderId = req.AudioEncoderId,
-            Settings = audioSettings,
-            TotalDurationSeconds = info?.Duration.TotalSeconds ?? 0,
-            AudioStreamIndex = req.AudioTrackIndex,
-        };
+            var tempAudioFile = Path.Combine(
+                req.TempDirectory, $"moist_a{position}_{Guid.NewGuid():N}_{baseName}.mka");
+
+            var source = info?.AudioStreams.ElementAtOrDefault(sourceIndex);
+            var label = source?.Language is { } lang ? $" [{lang}]" : $" #{sourceIndex}";
+
+            audioJobs.Add(new AudioJob
+            {
+                Name = $"Audio{label}: {Path.GetFileName(req.InputFile)}",
+                InputFile = req.InputFile,
+                OutputFile = tempAudioFile,
+                EncoderId = req.AudioEncoderId,
+                Settings = CreateAudioSettings(req),
+                TotalDurationSeconds = info?.Duration.TotalSeconds ?? 0,
+                AudioStreamIndex = sourceIndex,
+            });
+
+            audioInputs.Add(new AudioTrackInput
+            {
+                FilePath = tempAudioFile,
+                Language = source?.Language,
+                TrackName = source?.Title,
+                IsDefault = position == 0,
+            });
+        }
 
         // ---- Subtitles ----
         var subtitleInputs = new List<SubtitleTrackInput>();
@@ -204,16 +245,45 @@ public static class EncodeJobBuilder
             Container = req.Container,
             VideoInput = tempVideoFile,
             VideoCodec = ContainerCompatibility.StreamCodecForEncoder(req.VideoEncoderId),
-            AudioInputs = [new AudioTrackInput { FilePath = tempAudioFile }],
+            AudioInputs = audioInputs,
             SubtitleInputs = subtitleInputs,
-            DependsOn = [videoJob.Id, audioJob.Id],
+            DependsOn = [videoJob.Id, .. audioJobs.Select(j => j.Id)],
             TotalDurationSeconds = info?.Duration.TotalSeconds ?? 0,
+            SourceFile = req.InputFile,
+            CopyChapters = req.CopyChapters,
+            CopyAttachments = req.CopyAttachments,
+            CopyGlobalMetadata = req.CopyMetadata,
         };
 
         muxJob.FilesToCleanup.Add(tempVideoFile);
-        muxJob.FilesToCleanup.Add(tempAudioFile);
+        muxJob.FilesToCleanup.AddRange(audioInputs.Select(a => a.FilePath));
 
-        return new EncodePlan { Video = videoJob, Audio = audioJob, Mux = muxJob };
+        return new EncodePlan { Video = videoJob, AudioJobs = audioJobs, Mux = muxJob };
+    }
+
+    /// <summary>
+    /// Pick the settings type matching the encoder. Hardware encoders need
+    /// <see cref="HardwareVideoSettings"/> so the processor knows which vendor dialect
+    /// to speak — and so <c>TwoPassProcessor</c> knows to leave them alone.
+    /// </summary>
+    public static VideoEncoderSettings CreateVideoSettings(EncodeRequest req)
+    {
+        if (HardwareCapabilities.Find(req.VideoEncoderId) is { } hardware)
+        {
+            return new HardwareVideoSettings
+            {
+                Vendor = hardware.Vendor,
+                Codec = hardware.Codec,
+            };
+        }
+
+        return req.VideoEncoderId switch
+        {
+            "ffmpeg-x264" or "cli-x264" => new X264Settings(),
+            "ffmpeg-x265" or "cli-x265" => new X265Settings(),
+            "ffmpeg-svtav1" => new SvtAv1Settings { SvtPreset = req.SvtAv1Preset },
+            _ => new VideoEncoderSettings(),
+        };
     }
 
     public static AudioEncoderSettings CreateAudioSettings(EncodeRequest req)

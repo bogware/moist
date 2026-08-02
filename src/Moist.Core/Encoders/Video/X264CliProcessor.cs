@@ -62,7 +62,8 @@ public sealed partial class X264CliProcessor : CommandLineProcessor
         // x264-specific settings
         if (s is X264Settings x264)
         {
-            args.AddRange(["--profile", x264.Profile]);
+            if (x264.Profile is not null)
+                args.AddRange(["--profile", x264.Profile]);
             if (x264.Level is not null)
                 args.AddRange(["--level", x264.Level]);
             args.AddRange(["--ref", x264.RefFrames.ToString()]);
@@ -134,7 +135,8 @@ public sealed partial class X264CliProcessor : CommandLineProcessor
 
         if (s is X264Settings x264)
         {
-            args.AddRange(["--profile", x264.Profile]);
+            if (x264.Profile is not null)
+                args.AddRange(["--profile", x264.Profile]);
             if (x264.Level is not null)
                 args.AddRange(["--level", x264.Level]);
         }

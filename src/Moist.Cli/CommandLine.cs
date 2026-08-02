@@ -20,7 +20,8 @@ public sealed class CommandLine
     /// <summary>Options that take no value, so "--audio-only input.mp4" doesn't eat the filename.</summary>
     private static readonly HashSet<string> KnownFlags = new(StringComparer.OrdinalIgnoreCase)
     {
-        "audio-only", "no-subtitles", "dry-run", "json", "overwrite", "y",
+        "audio-only", "no-subtitles", "no-chapters", "no-attachments", "no-metadata",
+        "dry-run", "json", "overwrite", "y",
         "quiet", "q", "verbose", "v", "help", "h", "version", "no-progress", "keep-going",
     };
 

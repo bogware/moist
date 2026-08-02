@@ -76,6 +76,9 @@ public static class Ffmpeg
     public static string StreamTypes(string file)
         => Probe("-v error -show_entries stream=codec_type -of csv=p=0", file).Replace("\r", "").Replace("\n", " ");
 
+    public static string PixelFormat(string file)
+        => Probe("-v error -select_streams v:0 -show_entries stream=pix_fmt -of csv=p=0", file).Trim(',', ' ', '\r', '\n');
+
     public static double Duration(string file)
         => double.TryParse(Probe("-v error -show_entries format=duration -of csv=p=0", file),
             System.Globalization.NumberStyles.Float,
@@ -112,6 +115,12 @@ public sealed class MediaFixture : IDisposable
     public string OutputDir { get; }
     public string TempDir { get; }
 
+    /// <summary>10-bit HDR10 source. Encoding this used to fail outright.</summary>
+    public string TenBitVideo { get; }
+
+    /// <summary>Three languaged audio tracks, subtitles, chapters and an attachment.</summary>
+    public string RichVideo { get; }
+
     public MediaFixture()
     {
         Root = Path.Combine(Path.GetTempPath(), "moist-itest-" + Guid.NewGuid().ToString("N")[..8]);
@@ -122,6 +131,8 @@ public sealed class MediaFixture : IDisposable
 
         SampleVideo = Path.Combine(Root, "sample.mp4");
         SubtitleFile = Path.Combine(Root, "sample.srt");
+        TenBitVideo = Path.Combine(Root, "tenbit.mkv");
+        RichVideo = Path.Combine(Root, "rich.mkv");
 
         if (!Ffmpeg.Available) return;
 
@@ -132,6 +143,57 @@ public sealed class MediaFixture : IDisposable
 
         File.WriteAllText(SubtitleFile,
             "1\n00:00:00,200 --> 00:00:01,500\nfirst line\n\n2\n00:00:01,800 --> 00:00:02,800\nsecond line\n");
+
+        BuildTenBitSource();
+        BuildRichSource();
+    }
+
+    /// <summary>10-bit HDR10: BT.2020 primaries, PQ transfer, mastering display and CLL.</summary>
+    private void BuildTenBitSource()
+    {
+        Run("ffmpeg",
+            $"-y -v error -f lavfi -i testsrc2=size=320x240:rate=25:duration=2 " +
+            $"-f lavfi -i sine=frequency=440:duration=2 " +
+            $"-c:v libx265 -pix_fmt yuv420p10le -preset ultrafast " +
+            $"-x265-params \"colorprim=bt2020:transfer=smpte2084:colormatrix=bt2020nc:" +
+            $"master-display=G(13250,34500)B(7500,3000)R(34000,16000)WP(15635,16450)L(10000000,1):max-cll=1000,400\" " +
+            $"-color_primaries bt2020 -color_trc smpte2084 -colorspace bt2020nc " +
+            $"-c:a aac -shortest \"{TenBitVideo}\"");
+    }
+
+    /// <summary>Three languaged audio tracks, a subtitle, chapters and a font attachment.</summary>
+    private void BuildRichSource()
+    {
+        var chapters = Path.Combine(Root, "chapters.txt");
+        var attachment = Path.Combine(Root, "TestFont.ttf");
+        var subtitle = Path.Combine(Root, "rich.srt");
+
+        // ffmetadata must not carry a BOM or FFmpeg rejects it.
+        File.WriteAllText(chapters,
+            ";FFMETADATA1\ntitle=Rich Test Source\n" +
+            "[CHAPTER]\nTIMEBASE=1/1000\nSTART=0\nEND=2000\ntitle=Opening\n" +
+            "[CHAPTER]\nTIMEBASE=1/1000\nSTART=2000\nEND=4000\ntitle=Middle\n" +
+            "[CHAPTER]\nTIMEBASE=1/1000\nSTART=4000\nEND=6000\ntitle=Ending\n",
+            new System.Text.UTF8Encoding(false));
+
+        File.WriteAllText(attachment, "TEST FONT ATTACHMENT PAYLOAD");
+        File.WriteAllText(subtitle, "1\n00:00:00,500 --> 00:00:02,000\nline one\n\n2\n00:00:03,000 --> 00:00:05,000\nline two\n");
+
+        Run("ffmpeg",
+            $"-y -v error " +
+            $"-f lavfi -i testsrc2=size=320x240:rate=25:duration=6 " +
+            $"-f lavfi -i sine=frequency=440:duration=6 " +
+            $"-f lavfi -i sine=frequency=880:duration=6 " +
+            $"-f lavfi -i sine=frequency=220:duration=6 " +
+            $"-i \"{subtitle}\" -f ffmetadata -i \"{chapters}\" " +
+            $"-map 0:v -map 1:a -map 2:a -map 3:a -map 4:s -map_metadata 5 " +
+            $"-metadata:s:a:0 language=eng -metadata:s:a:0 title=\"English Stereo\" " +
+            $"-metadata:s:a:1 language=jpn -metadata:s:a:1 title=\"Japanese Stereo\" " +
+            $"-metadata:s:a:2 language=fra -metadata:s:a:2 title=Commentary " +
+            $"-metadata:s:s:0 language=eng " +
+            $"-attach \"{attachment}\" -metadata:s:t:0 mimetype=application/x-truetype-font " +
+            $"-c:v libx264 -preset ultrafast -pix_fmt yuv420p -c:a aac -c:s srt " +
+            $"\"{RichVideo}\"");
     }
 
     private static void Run(string exe, string args)

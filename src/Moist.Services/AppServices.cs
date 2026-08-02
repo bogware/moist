@@ -31,6 +31,12 @@ public sealed class AppServices : IDisposable
     public ILoggerFactory LoggerFactory { get; }
     public ToolDiscovery ToolDiscovery { get; }
     public PluginLoader PluginLoader { get; }
+
+    /// <summary>
+    /// Which GPU encoders actually work here. Populated by <see cref="DetectHardwareAsync"/>;
+    /// until that has run, everything reports unusable and the UI hides them.
+    /// </summary>
+    public HardwareCapabilities Hardware { get; }
     public string LogFilePath { get; private set; } = string.Empty;
 
     /// <summary>Media analyzer — uses current FFprobePath from settings. Recreated only if path changes.</summary>
@@ -112,6 +118,7 @@ public sealed class AppServices : IDisposable
         FilterPresets = new FilterPresetManager();
         ToolDiscovery = new ToolDiscovery(LoggerFactory);
         PluginLoader = new PluginLoader(LoggerFactory);
+        Hardware = new HardwareCapabilities(LoggerFactory);
 
         RegisterDefaultEncoders();
         RegisterDefaultFilters();
@@ -141,6 +148,23 @@ public sealed class AppServices : IDisposable
             typeof(VideoEncoderSettings), "VP9 encoding via FFmpeg's libvpx-vp9");
         RegisterVideoEncoder("ffmpeg-ffv1", "FFV1 Lossless via FFmpeg", "ffv1",
             typeof(VideoEncoderSettings), "Lossless archival codec via FFmpeg");
+
+        // Hardware encoders. Registered unconditionally so the registry is stable, but
+        // hidden from users until HardwareCapabilities confirms they actually work —
+        // an encoder being compiled into FFmpeg says nothing about the installed GPU.
+        foreach (var hw in HardwareCapabilities.Known)
+        {
+            var definition = hw; // capture for the closure
+            Encoders.Register(new EncoderInfo
+            {
+                Id = definition.Id,
+                Name = definition.DisplayName,
+                Category = "Video",
+                SettingsType = typeof(HardwareVideoSettings),
+                Description = definition.Description,
+            }, () => new FFmpegHardwareVideoProcessor(
+                Settings.FFmpegPath, definition.Id, definition.FfmpegName, definition.Vendor));
+        }
 
         // Standalone CLI encoders
         Encoders.Register(new EncoderInfo
@@ -239,6 +263,19 @@ public sealed class AppServices : IDisposable
             JobQueue.RegisterProcessorFactory(() => Encoders.CreateProcessor(encoderId));
         }
     }
+
+    /// <summary>
+    /// Probe which GPU encoders work on this machine. Safe to call repeatedly; results
+    /// are cached until <paramref name="force"/> is set.
+    /// </summary>
+    public Task<IReadOnlyList<HardwareEncoderStatus>> DetectHardwareAsync(
+        bool force = false, CancellationToken ct = default)
+        => Hardware.DetectAsync(Settings.FFmpegPath, force, ct);
+
+    /// <summary>Video encoders worth showing: software plus any hardware that actually works.</summary>
+    public IEnumerable<EncoderInfo> GetUsableVideoEncoders()
+        => Encoders.GetVideoEncoders()
+            .Where(e => !e.Id.StartsWith("hw-", StringComparison.Ordinal) || Hardware.IsUsable(e.Id));
 
     /// <summary>
     /// Run tool discovery and auto-update settings with discovered paths.

@@ -62,6 +62,16 @@ public sealed partial class FFmpegMuxProcessor : CommandLineProcessor
         foreach (var sub in mj.SubtitleInputs)
             RegisterInput(sub.FilePath);
 
+        // Chapters, attachments and container tags live only in the original file — our
+        // intermediate video/audio files never carry them. Add the source as an extra
+        // input purely to copy those across. (It is often already registered, because
+        // source subtitles are muxed from the same path.)
+        var wantsSource = mj.SourceFile is not null
+                          && (mj.CopyChapters || mj.CopyAttachments || mj.CopyGlobalMetadata)
+                          && File.Exists(mj.SourceFile);
+        if (wantsSource)
+            RegisterInput(mj.SourceFile!);
+
         // Add -i arguments with -itsoffset before inputs that need delay
         foreach (var file in inputFiles)
         {
@@ -92,6 +102,11 @@ public sealed partial class FFmpegMuxProcessor : CommandLineProcessor
             }
         }
 
+        // Attachments (subtitle fonts). Matroska only — nothing else has the concept,
+        // and mapping them elsewhere fails the mux outright.
+        if (wantsSource && mj.CopyAttachments && mj.Container == ContainerFormat.Mkv)
+            args.AddRange(["-map", $"{fileIndexMap[mj.SourceFile!]}:t?"]);
+
         // Copy all streams (muxing, not re-encoding)
         args.AddRange(["-c", "copy"]);
 
@@ -105,23 +120,43 @@ public sealed partial class FFmpegMuxProcessor : CommandLineProcessor
         // Container format
         args.AddRange(["-f", mj.Container.GetFfmpegFormat()]);
 
-        // Metadata for audio tracks
-        var streamIdx = mj.VideoInput is not null ? 1 : 0;
-        foreach (var audio in mj.AudioInputs)
+        // Per-track audio metadata. Indexed as s:a:N (Nth audio stream) rather than a
+        // global stream number, which would shift depending on whether video is present.
+        for (var i = 0; i < mj.AudioInputs.Count; i++)
         {
+            var audio = mj.AudioInputs[i];
             if (audio.Language is not null)
-                args.AddRange([$"-metadata:s:{streamIdx}", $"language={audio.Language}"]);
+                args.AddRange([$"-metadata:s:a:{i}", $"language={audio.Language}"]);
             if (audio.TrackName is not null)
-                args.AddRange([$"-metadata:s:{streamIdx}", $"title={audio.TrackName}"]);
-            streamIdx++;
+                args.AddRange([$"-metadata:s:a:{i}", $"title={Quote(audio.TrackName)}"]);
+            if (audio.IsDefault)
+                args.AddRange([$"-disposition:a:{i}", "default"]);
         }
 
-        // Chapter file
+        // Chapters: an explicit chapter file wins, otherwise take them from the source.
+        // Not every container can hold them, and asking for chapters where they aren't
+        // supported is a no-op at best.
+        var containerHasChapters = mj.Container is ContainerFormat.Mkv or ContainerFormat.Mp4 or ContainerFormat.Mov;
+
         if (mj.ChapterFile is not null)
         {
             var chapterIdx = inputFiles.Count;
             args.AddRange(["-i", Quote(mj.ChapterFile), "-map_chapters", chapterIdx.ToString()]);
         }
+        else if (wantsSource && mj.CopyChapters && containerHasChapters)
+        {
+            args.AddRange(["-map_chapters", fileIndexMap[mj.SourceFile!].ToString()]);
+        }
+        else
+        {
+            // Otherwise be explicit: without this FFmpeg copies chapters from whichever
+            // input happens to have them first.
+            args.AddRange(["-map_chapters", "-1"]);
+        }
+
+        // Container-level tags (title and friends) from the source.
+        if (wantsSource && mj.CopyGlobalMetadata)
+            args.AddRange(["-map_metadata", fileIndexMap[mj.SourceFile!].ToString()]);
 
         args.Add(Quote(mj.OutputFile));
 

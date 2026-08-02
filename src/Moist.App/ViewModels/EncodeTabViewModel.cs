@@ -64,10 +64,19 @@ public partial class EncodeTabViewModel : ViewModelBase, IDisposable
     [ObservableProperty] private int _selectedAudioTrackIndex;
     public ObservableCollection<string> AudioTrackLabels { get; } = [];
 
-    // Subtitle options
+    /// <summary>Encode every audio track in the source rather than just the selected one.</summary>
+    [ObservableProperty] private bool _encodeAllAudioTracks;
+
+    // Container extras
     [ObservableProperty] private bool _copySubtitles = true;
     [ObservableProperty] private string _externalSubtitleFile = string.Empty;
+    [ObservableProperty] private bool _copyChapters = true;
+    [ObservableProperty] private bool _copyAttachments = true;
     public ObservableCollection<string> SubtitleTrackLabels { get; } = [];
+
+    // Video bit depth
+    [ObservableProperty] private VideoBitDepth _bitDepth = VideoBitDepth.Auto;
+    public static VideoBitDepth[] BitDepthOptions { get; } = Enum.GetValues<VideoBitDepth>();
 
     // Preview
     [ObservableProperty] private Bitmap? _previewImage;
@@ -117,7 +126,9 @@ public partial class EncodeTabViewModel : ViewModelBase, IDisposable
         _services = services;
         _filterTab = filterTab;
 
-        foreach (var enc in services.Encoders.GetVideoEncoders())
+        // Hardware encoders are withheld until probing confirms they work — offering a
+        // GPU encoder that isn't there just produces a baffling FFmpeg error later.
+        foreach (var enc in services.Encoders.GetVideoEncoders().Where(e => !IsHardware(e.Id)))
             VideoEncoders.Add(enc);
         foreach (var enc in services.Encoders.GetAudioEncoders())
             AudioEncoders.Add(enc);
@@ -126,7 +137,45 @@ public partial class EncodeTabViewModel : ViewModelBase, IDisposable
         SelectedAudioEncoder = AudioEncoders.FirstOrDefault();
 
         RefreshProfiles();
+        _ = AddUsableHardwareEncodersAsync();
     }
+
+    private static bool IsHardware(string id) => id.StartsWith("hw-", StringComparison.Ordinal);
+
+    /// <summary>
+    /// Probe for GPU encoders in the background and add the ones that work. Runs off the
+    /// constructor so startup isn't blocked on spawning FFmpeg a dozen times.
+    /// </summary>
+    private async Task AddUsableHardwareEncodersAsync()
+    {
+        try
+        {
+            var statuses = await _services.DetectHardwareAsync();
+            var usable = statuses.Where(s => s.Usable).Select(s => s.Encoder.Id).ToHashSet(StringComparer.Ordinal);
+            if (usable.Count == 0) return;
+
+            var toAdd = _services.Encoders.GetVideoEncoders()
+                .Where(e => usable.Contains(e.Id))
+                .OrderBy(e => e.Name)
+                .ToList();
+
+            Avalonia.Threading.Dispatcher.UIThread.Post(() =>
+            {
+                foreach (var enc in toAdd)
+                {
+                    if (VideoEncoders.All(v => v.Id != enc.Id))
+                        VideoEncoders.Add(enc);
+                }
+                HardwareStatus = $"{toAdd.Count} hardware encoder(s) available";
+            });
+        }
+        catch
+        {
+            // Detection is a convenience; software encoding still works without it.
+        }
+    }
+
+    [ObservableProperty] private string _hardwareStatus = string.Empty;
 
     // === Drag-and-Drop ===
 
@@ -632,7 +681,7 @@ public partial class EncodeTabViewModel : ViewModelBase, IDisposable
             NormalizationTarget = NormalizationTarget,
             TruePeakLimit = TruePeakLimit,
             AudioCustomArgs = CustomAudioArgs,
-            AudioTrackIndex = SelectedAudioTrackIndex,
+            AudioTracks = ResolveAudioTracks(),
 
             OpusComplexity = OpusComplexity,
             AacProfile = AacProfile,
@@ -646,10 +695,25 @@ public partial class EncodeTabViewModel : ViewModelBase, IDisposable
             AudioOnly = AudioOnly,
             CopySubtitles = CopySubtitles,
             ExternalSubtitleFile = ExternalSubtitleFile,
+            CopyChapters = CopyChapters,
+            CopyAttachments = CopyAttachments,
+            BitDepth = BitDepth,
 
             FilterScript = filterScript,
             FilterEngineId = _filterTab?.SelectedEngine?.Id,
         };
+    }
+
+    /// <summary>
+    /// Which source audio streams to encode. "All tracks" needs the analysed source to
+    /// know how many there are; without it we fall back to the selected one.
+    /// </summary>
+    private IReadOnlyList<int> ResolveAudioTracks()
+    {
+        if (!EncodeAllAudioTracks) return [SelectedAudioTrackIndex];
+
+        var count = MediaInfo?.AudioStreams.Count ?? 0;
+        return count > 1 ? Enumerable.Range(0, count).ToList() : [SelectedAudioTrackIndex];
     }
 
     public void Dispose()

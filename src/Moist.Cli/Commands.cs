@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Moist.Core.Jobs;
+using Moist.Core.Encoders.Video;
 using Moist.Core.Media;
 using Moist.Core.Muxers;
 using Microsoft.Extensions.Logging;
@@ -234,10 +235,31 @@ public static class EncodeRunner
         }
 
         var (filterScript, filterEngineId) = EncodeOptions.BuildFilters(cl, services, input);
-        var request = EncodeOptions.Build(cl, services, input, output, filterScript, filterEngineId);
+        var request = EncodeOptions.Build(
+            cl, services, input, output, filterScript, filterEngineId,
+            sourceAudioTrackCount: info.AudioStreams.Count);
 
         if (EncodeJobBuilder.Validate(request) is { } invalid)
             return new EncodeResult { Input = input, Output = output, Success = false, Error = invalid };
+
+        // A GPU encoder that isn't present fails deep inside FFmpeg with an unhelpful
+        // message. Probe first and say something useful instead.
+        if (!request.AudioOnly && HardwareCapabilities.Find(request.VideoEncoderId) is not null)
+        {
+            await services.DetectHardwareAsync(ct: ct);
+            if (!services.Hardware.IsUsable(request.VideoEncoderId))
+            {
+                var status = services.Hardware.Statuses.FirstOrDefault(s => s.Encoder.Id == request.VideoEncoderId);
+                var why = status?.Reason ?? "not available on this machine";
+                return new EncodeResult
+                {
+                    Input = input,
+                    Output = output,
+                    Success = false,
+                    Error = $"{request.VideoEncoderId} is unavailable: {why}. Run 'moist list hardware' to see what works here.",
+                };
+            }
+        }
 
         var plan = EncodeJobBuilder.Build(request, info);
         var jobs = plan.AllJobs.ToList();
@@ -352,11 +374,46 @@ public static class ListCommand
 
         switch (what)
         {
+            case "hardware":
+            case "hw":
+            {
+                var statuses = services.DetectHardwareAsync().GetAwaiter().GetResult();
+
+                if (json)
+                {
+                    Console.WriteLine(JsonSerializer.Serialize(statuses.Select(s => new
+                    {
+                        id = s.Encoder.Id,
+                        name = s.Encoder.DisplayName,
+                        vendor = s.Encoder.Vendor.ToString(),
+                        codec = s.Encoder.Codec,
+                        compiledIn = s.CompiledIn,
+                        usable = s.Usable,
+                        reason = s.Reason,
+                    }), Cli.Json));
+                    return Program.ExitOk;
+                }
+
+                foreach (var s in statuses.OrderBy(s => s.Encoder.Vendor).ThenBy(s => s.Encoder.Id))
+                {
+                    var mark = s.Usable ? "ok " : "-- ";
+                    Console.WriteLine($"  {mark} {s.Encoder.Id,-18} {s.Encoder.DisplayName}");
+                    if (!s.Usable && s.Reason is not null)
+                        Console.WriteLine($"       {s.Reason}");
+                }
+
+                var count = statuses.Count(s => s.Usable);
+                Console.WriteLine($"\n{count} hardware encoder(s) usable on this machine.");
+                return Program.ExitOk;
+            }
+
             case "encoders":
             case "video-encoders":
             case "audio-encoders":
             {
-                var video = services.Encoders.GetVideoEncoders().OrderBy(e => e.Id).ToList();
+                // Only advertise hardware encoders that were proven to work.
+                services.DetectHardwareAsync().GetAwaiter().GetResult();
+                var video = services.GetUsableVideoEncoders().OrderBy(e => e.Id).ToList();
                 var audio = services.Encoders.GetAudioEncoders().OrderBy(e => e.Id).ToList();
 
                 if (json)
@@ -449,7 +506,8 @@ public static class ListCommand
             }
 
             default:
-                throw new UsageException($"don't know how to list '{what}'. Try encoders, containers, profiles or filters.");
+                throw new UsageException(
+                    $"don't know how to list '{what}'. Try encoders, hardware, containers, profiles or filters.");
         }
 
         static object Describe(Moist.Core.Encoders.EncoderInfo e) => new { e.Id, e.Name, e.Description };

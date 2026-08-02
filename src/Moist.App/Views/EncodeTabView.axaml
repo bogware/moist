@@ -137,6 +137,16 @@
                                            FontSize="11" Opacity="0.6"/>
                             </StackPanel>
 
+                            <TextBlock Text="Bit Depth:" VerticalAlignment="Center" Grid.Row="3" Grid.Column="2"/>
+                            <StackPanel Grid.Row="3" Grid.Column="3" Orientation="Horizontal" Spacing="8">
+                                <ComboBox ItemsSource="{Binding BitDepthOptions}"
+                                          SelectedItem="{Binding BitDepth}"
+                                          Width="110"
+                                          ToolTip.Tip="Auto follows the source. Forcing 8-bit on a 10-bit master discards precision."/>
+                                <TextBlock Text="(Auto = match source)" VerticalAlignment="Center"
+                                           FontSize="11" Opacity="0.6"/>
+                            </StackPanel>
+
                             <TextBlock Text="Custom Args:" VerticalAlignment="Center" Grid.Row="4"/>
                             <TextBox Grid.Row="4" Grid.Column="1" Grid.ColumnSpan="3"
                                      Text="{Binding CustomVideoArgs}"
@@ -250,10 +260,15 @@
 
                             <!-- Row 6: Audio Track -->
                             <TextBlock Text="Audio Track:" VerticalAlignment="Center" Grid.Row="6"/>
-                            <ComboBox Grid.Row="6" Grid.Column="1" Grid.ColumnSpan="3"
-                                      ItemsSource="{Binding AudioTrackLabels}"
-                                      SelectedIndex="{Binding SelectedAudioTrackIndex}"
-                                      HorizontalAlignment="Stretch"/>
+                            <StackPanel Grid.Row="6" Grid.Column="1" Grid.ColumnSpan="3" Spacing="4">
+                                <ComboBox ItemsSource="{Binding AudioTrackLabels}"
+                                          SelectedIndex="{Binding SelectedAudioTrackIndex}"
+                                          IsEnabled="{Binding !EncodeAllAudioTracks}"
+                                          HorizontalAlignment="Stretch"/>
+                                <CheckBox Content="Encode all audio tracks"
+                                          IsChecked="{Binding EncodeAllAudioTracks}"
+                                          ToolTip.Tip="Encode every audio track in the source, keeping language and title on each."/>
+                            </StackPanel>
 
                             <!-- Row 7: Subtitles -->
                             <TextBlock Text="Subtitles:" VerticalAlignment="Center" Grid.Row="7"/>
@@ -272,6 +287,12 @@
                                     <TextBox Text="{Binding ExternalSubtitleFile}" Width="250"
                                              Watermark="(optional) .srt/.ass file"
                                              FontSize="11"/>
+                                </StackPanel>
+                                <StackPanel Orientation="Horizontal" Spacing="12">
+                                    <CheckBox Content="Keep chapters" IsChecked="{Binding CopyChapters}"
+                                              ToolTip.Tip="Carry chapter markers over from the source."/>
+                                    <CheckBox Content="Keep attachments" IsChecked="{Binding CopyAttachments}"
+                                              ToolTip.Tip="Carry attached fonts over (needed for styled subtitles). MKV only."/>
                                 </StackPanel>
                             </StackPanel>
                         </Grid>

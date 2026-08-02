@@ -21,6 +21,24 @@ public sealed class MuxJob : Job
     public string? ChapterFile { get; set; }
     public List<string> Attachments { get; set; } = [];
 
+    /// <summary>
+    /// Original source file, used to recover things that only exist in the container and
+    /// therefore never reach our intermediate files: chapters, attachments, global tags.
+    /// </summary>
+    public string? SourceFile { get; set; }
+
+    /// <summary>Copy chapter markers from <see cref="SourceFile"/>.</summary>
+    public bool CopyChapters { get; set; } = true;
+
+    /// <summary>
+    /// Copy attachments (typically the fonts styled subtitles reference) from
+    /// <see cref="SourceFile"/>. Matroska only — other containers have no equivalent.
+    /// </summary>
+    public bool CopyAttachments { get; set; } = true;
+
+    /// <summary>Copy container-level tags (title, encoder notes, …) from <see cref="SourceFile"/>.</summary>
+    public bool CopyGlobalMetadata { get; set; } = true;
+
     /// <summary>Total duration in seconds, used for mux progress percentage.</summary>
     public double TotalDurationSeconds { get; set; }
 }

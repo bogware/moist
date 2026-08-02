@@ -32,7 +32,8 @@ public static class EncodeOptions
         string inputFile,
         string outputFile,
         string? filterScript,
-        string? filterEngineId)
+        string? filterEngineId,
+        int sourceAudioTrackCount = 1)
     {
         var profile = ResolveProfile(cl, services);
 
@@ -68,6 +69,7 @@ public static class EncodeOptions
             Tune = cl.Enum<VideoTune>("tune") ?? profile?.VideoTune ?? VideoTune.None,
             SvtAv1Preset = cl.Int("av1-preset") ?? profile?.SvtAv1Preset ?? 6,
             VideoCustomArgs = cl.String("video-args") ?? profile?.VideoCustomArgs ?? string.Empty,
+            BitDepth = ParseBitDepth(cl.String("bit-depth")),
 
             AudioEncoderId = audioEncoder,
             AudioBitrateMode = cl.Enum<AudioBitrateMode>("audio-mode") ?? profile?.AudioBitrateMode ?? AudioBitrateMode.Vbr,
@@ -79,7 +81,7 @@ public static class EncodeOptions
             NormalizationTarget = cl.Double("normalize-target") ?? profile?.NormalizationTarget ?? -16.0,
             TruePeakLimit = cl.Double("true-peak") ?? profile?.TruePeakLimit ?? -1.0,
             AudioCustomArgs = cl.String("audio-args") ?? profile?.AudioCustomArgs ?? string.Empty,
-            AudioTrackIndex = cl.Int("audio-track") ?? 0,
+            AudioTracks = ParseAudioTracks(cl, sourceAudioTrackCount),
 
             OpusComplexity = cl.Int("opus-complexity") ?? 10,
             AacProfile = cl.String("aac-profile"),
@@ -93,11 +95,54 @@ public static class EncodeOptions
             AudioOnly = audioOnly,
             CopySubtitles = !cl.Flag("no-subtitles"),
             ExternalSubtitleFile = cl.String("subtitle"),
+            CopyChapters = !cl.Flag("no-chapters"),
+            CopyAttachments = !cl.Flag("no-attachments"),
+            CopyMetadata = !cl.Flag("no-metadata"),
 
             FilterScript = filterScript,
             FilterEngineId = filterEngineId,
         };
     }
+
+    /// <summary>
+    /// Resolve which source audio tracks to encode.
+    /// Accepts <c>--audio-track</c> repeated, a comma list, or <c>all</c>.
+    /// </summary>
+    public static IReadOnlyList<int> ParseAudioTracks(CommandLine cl, int sourceTrackCount)
+    {
+        var raw = cl.Many("audio-track").ToList();
+        raw.AddRange(cl.Many("audio-tracks"));
+
+        if (raw.Count == 0) return [0];
+
+        if (raw.Any(v => v.Equals("all", StringComparison.OrdinalIgnoreCase)))
+            return Enumerable.Range(0, Math.Max(1, sourceTrackCount)).ToList();
+
+        var indices = new List<int>();
+        foreach (var part in raw.SelectMany(v => v.Split(',', StringSplitOptions.RemoveEmptyEntries)))
+        {
+            if (!int.TryParse(part.Trim(), out var index) || index < 0)
+                throw new UsageException($"--audio-track expects a stream index or 'all' (got '{part}')");
+
+            if (sourceTrackCount > 0 && index >= sourceTrackCount)
+                throw new UsageException(
+                    $"--audio-track {index}: the source only has {sourceTrackCount} audio track(s) (0-{sourceTrackCount - 1})");
+
+            if (!indices.Contains(index)) indices.Add(index);
+        }
+
+        return indices.Count > 0 ? indices : [0];
+    }
+
+    /// <summary>Accepts "auto", "8", "10", "12" — the numbers people actually think in.</summary>
+    public static VideoBitDepth ParseBitDepth(string? raw) => raw?.ToLowerInvariant() switch
+    {
+        null or "auto" or "source" => VideoBitDepth.Auto,
+        "8" or "eight" => VideoBitDepth.Eight,
+        "10" or "ten" => VideoBitDepth.Ten,
+        "12" or "twelve" => VideoBitDepth.Twelve,
+        _ => throw new UsageException($"--bit-depth expects auto, 8, 10 or 12 (got '{raw}')"),
+    };
 
     public static EncodingProfile? ResolveProfile(CommandLine cl, AppServices services)
     {

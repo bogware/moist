@@ -71,6 +71,45 @@ MuxJob    → final output, DependsOn = [videoJob.Id, audioJob.Id]
 
 Audio-only mode (`EncodeRequest.AudioOnly`) short-circuits this: no VideoJob, no MuxJob, and the AudioJob writes straight to the final path. The output extension comes from `EncodeJobBuilder.AudioFileExtension()`; the GUI re-applies it whenever `Container`, `AudioOnly`, or `SelectedAudioEncoder` changes.
 
+### Bit depth: never hardcode a profile
+
+`-profile:v` is sent **only when the user explicitly sets one**. `X264Settings.Profile`
+and `X265Settings.Profile` default to null for a reason: they used to default to
+`"high"`/`"main"`, which are 8-bit-only, so every 10-bit source — HDR, anime, Blu-ray
+remuxes, ProRes masters — died with *"profile doesn't support a bit depth of 10"*.
+Left unset, the encoder picks a profile matching the actual bit depth.
+
+`VideoBitDepth.Auto` (the default) likewise emits no `-pix_fmt`, so the source's depth
+carries through. Only `Eight`/`Ten`/`Twelve` force one. If you add a codec-specific
+setting that touches profile or pixel format, keep both opt-in.
+
+Source bit depth comes from `FFprobeMediaAnalyzer.BitDepthFromPixelFormat`, which reads
+the plane marker rather than trailing digits — `nv12` and `yuyv422` end in digits that
+describe chroma layout, not depth.
+
+### Streams that only exist in the container
+
+The mux reads from intermediate files, so anything that lives only in the *source*
+container is lost unless deliberately carried over. `MuxJob.SourceFile` exists purely
+so the muxer can add the original as an extra input and copy:
+
+- **chapters** (`-map_chapters`) — only for MKV/MP4/MOV; other containers can't hold them.
+  When not copying, moist passes `-map_chapters -1`, because FFmpeg's default is to take
+  them from whichever input happens to have some.
+- **attachments** (`-map <i>:t?`) — subtitle fonts. **Matroska only**; mapping them into
+  anything else fails the mux outright.
+- **global tags** (`-map_metadata`).
+
+### Multiple audio tracks
+
+`EncodeRequest.AudioTracks` is a list. Each entry becomes its own `AudioJob` writing to
+its own temp file, and its own `AudioTrackInput` in the mux carrying the source's
+language and title. Per-track metadata is indexed `-metadata:s:a:N` (Nth *audio* stream),
+not a global stream number, which would shift depending on whether video is present.
+
+Audio-only output uses the first selected track — a single file can't hold several
+encoded tracks without a mux step.
+
 ### Codec ↔ container compatibility
 
 `ContainerCompatibility` (in `Moist.Core/Muxers`) holds the allow-lists for what each container can carry under `-c copy`, plus the bitstream filter some containers need. Both front-ends call `EncodeJobBuilder.Validate()` **before** enqueuing, because otherwise the video and audio encodes run to completion and only the final mux fails.
@@ -96,6 +135,34 @@ Factories, not singletons: processors hold mutable state (`Stopwatch`, frame cou
 ### Tool paths are late-bound through closures
 
 Encoder factories capture `Settings` (the object), not the path string — e.g. `() => new FFmpegVideoProcessor(Settings.FFmpegPath, codec)`. The path is read when the factory runs, i.e. per job, so changing a tool path in Settings takes effect on the next job without restart. `AppServices.MediaAnalyzer` and `PreviewService` achieve the same via lazy properties that rebuild when the path changes. Don't hoist these into constructor-time fields.
+
+### Hardware encoders are a separate world
+
+`FFmpegHardwareVideoProcessor` is deliberately *not* a branch inside
+`FFmpegVideoProcessor`, because almost nothing transfers: GPU encoders reject `-crf`,
+use their own preset scales, and each vendor spells rate control differently
+(`-rc vbr -cq`, `-global_quality`, `-rc cqp -qp_i`, an inverted `-q:v`, `-rc_mode CQP`).
+
+Three things to know before touching this:
+
+1. **A listed encoder is not a working one.** `ffmpeg -encoders` reports what the binary
+   was compiled with — a stock Windows build advertises NVENC, QSV, AMF and VA-API on a
+   machine with none of them. `HardwareCapabilities.DetectAsync` encodes a few frames and
+   keeps only what succeeds. Never register or offer a hardware encoder on the strength
+   of the listing alone.
+2. **`TwoPassProcessor` must keep refusing hardware jobs.** They have no `-pass`; NVENC
+   does its analysis in one run via `-multipass`. The guard is a type check on
+   `HardwareVideoSettings` — keep it if you refactor the settings hierarchy.
+3. **Encoder ids encode their codec**: `hw-<vendor>-<codec>`.
+   `ContainerCompatibility.StreamCodecForEncoder` parses that, so a new hardware encoder
+   participates in container validation automatically — but the id format must hold.
+
+VA-API additionally needs `-vaapi_device` before the input and `format=nv12,hwupload`
+appended to the filter chain, since it encodes from GPU memory.
+
+Only NVENC is verified on real hardware here (RTX 4080). QSV, AMF, VideoToolbox and
+VA-API are implemented from their documented interfaces and correctly *detected* as
+absent, but their encode paths are unproven.
 
 ### Two-pass encoding mutates the job
 
@@ -140,7 +207,8 @@ This isn't hypothetical defensiveness: `WindowX`/`WindowY` used to default to `d
 
 | Task | Touch these |
 |------|-------------|
-| Add a video encoder | Settings class in `Core/Encoders/Video/` → `AppServices.RegisterVideoEncoder()` (ID must be `ffmpeg-{codec}`) → switch in `EncodeJobBuilder.Build()` → codec name in `FFmpegVideoProcessor.GetFfmpegCodecName()` → `ContainerCompatibility.StreamCodecForEncoder()` and the container tables |
+| Add a video encoder | Settings class in `Core/Encoders/Video/` → `AppServices.RegisterVideoEncoder()` (ID must be `ffmpeg-{codec}`) → switch in `EncodeJobBuilder.CreateVideoSettings()` → codec name in `FFmpegVideoProcessor.GetFfmpegCodecName()` → `ContainerCompatibility.StreamCodecForEncoder()` and the container tables |
+| Add a hardware encoder | One entry in `HardwareCapabilities.Known` (id must be `hw-<vendor>-<codec>`). Registration, detection, container validation and UI filtering all follow from it. A new *vendor* also needs rate-control and preset arms in `FFmpegHardwareVideoProcessor`. |
 | Add an audio encoder | Settings class in `Core/Encoders/Audio/` → `AppServices.RegisterAudioEncoder()` (ID must be `ffmpeg-audio-{codec}`) → `FFmpegAudioProcessor.GetCodecSpecificArgs()` + `GetFfmpegCodecName()` → `EncodeJobBuilder.CreateAudioSettings()` + `AudioFileExtension()` → `ContainerCompatibility` |
 | Add an encode option | `EncodeRequest` first, then `EncodeJobBuilder`, then surface it in *both* `EncodeTabViewModel.BuildRequest()` and `EncodeOptions.Build()` + `Help.cs` |
 | Add a CLI command | `Commands.cs` + dispatch in `Program.Main` + a section in `Help.cs` |

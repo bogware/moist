@@ -42,6 +42,13 @@ public static class ContainerCompatibility
     {
         if (string.IsNullOrWhiteSpace(encoderId)) return null;
 
+        // Hardware encoder ids carry their codec: hw-<vendor>-<codec>.
+        if (encoderId.StartsWith("hw-", StringComparison.Ordinal))
+        {
+            var codec = encoderId[(encoderId.LastIndexOf('-') + 1)..];
+            return codec is "h264" or "hevc" or "av1" or "vp9" ? codec : null;
+        }
+
         return encoderId switch
         {
             "ffmpeg-x264" or "cli-x264" or "x264" => "h264",

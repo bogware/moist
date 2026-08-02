@@ -62,7 +62,8 @@ public sealed partial class X265CliProcessor : CommandLineProcessor
 
         if (s is X265Settings x265)
         {
-            x265Args.AddRange(["--profile", x265.Profile]);
+            if (x265.Profile is not null)
+                x265Args.AddRange(["--profile", x265.Profile]);
             if (x265.Level is not null)
                 x265Args.AddRange(["--level-idc", x265.Level]);
             if (x265.Hdr)

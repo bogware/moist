@@ -20,6 +20,11 @@ public sealed class TwoPassProcessor : IJobProcessor
     public bool CanProcess(Job job)
     {
         if (job is not VideoJob vj) return false;
+
+        // Hardware encoders have no -pass; they do their own multi-pass analysis in a
+        // single run. Wrapping one here would feed it flags it doesn't understand.
+        if (vj.Settings is Encoders.Video.HardwareVideoSettings) return false;
+
         return vj.Settings.Mode == Encoders.Video.VideoEncodingMode.TwoPassBitrate
                && _innerProcessor.CanProcess(job);
     }

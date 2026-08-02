@@ -115,11 +115,15 @@ public sealed class FFprobeMediaAnalyzer
             totalFrames = parsed;
         }
 
-        var bitDepth = 8;
+        var pixFmt = stream.TryGetProperty("pix_fmt", out var pf) ? pf.GetString() ?? "" : "";
+
+        // bits_per_raw_sample is frequently missing, so fall back to the pixel format.
+        // Getting this wrong means treating a 10-bit master as 8-bit.
+        var bitDepth = 0;
         if (stream.TryGetProperty("bits_per_raw_sample", out var bps))
             int.TryParse(bps.GetString(), out bitDepth);
-
-        var pixFmt = stream.TryGetProperty("pix_fmt", out var pf) ? pf.GetString() ?? "" : "";
+        if (bitDepth <= 0)
+            bitDepth = BitDepthFromPixelFormat(pixFmt);
         var codec = stream.TryGetProperty("codec_name", out var cn) ? cn.GetString() ?? "" : "";
 
         string? dar = null;
@@ -184,5 +188,40 @@ public sealed class FFprobeMediaAnalyzer
             tags.TryGetProperty(tag, out var val))
             return val.GetString();
         return null;
+    }
+
+    /// <summary>
+    /// Derive bit depth from an FFmpeg pixel format name (yuv420p10le -> 10).
+    /// Names encode the depth only when it isn't 8, so a name with no digits is 8-bit.
+    /// </summary>
+    internal static int BitDepthFromPixelFormat(string pixelFormat)
+    {
+        if (string.IsNullOrEmpty(pixelFormat)) return 8;
+
+        // Trim the endianness suffix so "p10le" doesn't hide the digits.
+        var name = pixelFormat;
+        foreach (var suffix in new[] { "le", "be" })
+        {
+            if (name.EndsWith(suffix, StringComparison.Ordinal))
+            {
+                name = name[..^suffix.Length];
+                break;
+            }
+        }
+
+        // Trailing digits alone are not enough: "nv12" and "yuyv422" end in digits that
+        // describe the chroma layout, not the depth. Depth follows the plane marker 'p'
+        // (yuv420p10, p010) or the "gray" prefix.
+        var lastP = name.LastIndexOf('p');
+        if (lastP >= 0 && lastP + 1 < name.Length && name[(lastP + 1)..].All(char.IsDigit))
+            return Clamp(name[(lastP + 1)..]);
+
+        if (name.StartsWith("gray", StringComparison.Ordinal) && name.Length > 4 && name[4..].All(char.IsDigit))
+            return Clamp(name[4..]);
+
+        return 8;
+
+        static int Clamp(string digits)
+            => int.TryParse(digits, out var depth) && depth is >= 8 and <= 16 ? depth : 8;
     }
 }

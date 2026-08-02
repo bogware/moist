@@ -58,6 +58,7 @@ public static class Help
               --preset <name>       ultrafast … placebo                 (default: medium)
               --tune <name>         film, animation, grain, …
               --av1-preset <0-13>   SVT-AV1 speed preset
+              --bit-depth <d>       auto | 8 | 10 | 12                  (default: auto = match source)
               --video-args <args>   Extra arguments passed to the encoder verbatim
 
         AUDIO
@@ -66,7 +67,8 @@ public static class Help
               --audio-mode <mode>   vbr | cbr | constrainedvbr
               --channels <mode>     keeporiginal | mono | stereo | surround51 | surround71
               --sample-rate <hz>    0 keeps the source rate
-              --audio-track <n>     Source audio stream index          (default: 0)
+              --audio-track <n>     Source audio stream index. Repeatable, comma-separated,
+                                    or 'all' to keep every track       (default: 0)
               --normalize <mode>    none | ebur128 | peak | rms
               --normalize-target <lufs>   Default -16
               --true-peak <db>      Default -1
@@ -78,6 +80,9 @@ public static class Help
               --filter <spec>       Repeatable. e.g. --filter resize:width=1280,height=720
               --no-subtitles        Don't copy subtitles from the source
               --subtitle <file>     Mux an external subtitle file
+              --no-chapters         Don't carry chapter markers over
+              --no-attachments      Don't carry attached fonts over (MKV only)
+              --no-metadata         Don't carry container-level tags over
 
         BEHAVIOUR
           -j, --jobs <n>            Concurrent jobs                     (default: from settings)
@@ -123,7 +128,19 @@ public static class Help
         moist list — enumerate what's available
 
         USAGE
-          moist list <encoders|video-encoders|audio-encoders|containers|profiles|filters> [--json]
+          moist list <what> [--json]
+
+        WHAT
+          encoders          Video and audio encoders (hardware ones only if usable)
+          video-encoders    Video only
+          audio-encoders    Audio only
+          hardware          GPU encoders, with the reason any are unavailable
+          containers        Containers and the codecs each can carry
+          profiles          Saved encoding profiles
+          filters           Filters available to --filter
+
+        Hardware encoders are probed by encoding a few frames, because an encoder being
+        compiled into FFmpeg says nothing about the GPU actually being present.
         """);
 
     private static void Tools() => Console.WriteLine("""

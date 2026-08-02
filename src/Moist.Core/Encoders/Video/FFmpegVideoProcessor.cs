@@ -83,9 +83,10 @@ public sealed partial class FFmpegVideoProcessor : CommandLineProcessor
         if (s.Tune != VideoTune.None && _codec != "svtav1")
             args.AddRange(["-tune", s.Tune.ToString().ToLowerInvariant()]);
 
-        // Pixel format
-        if (s.PixelFormat is not null)
-            args.AddRange(["-pix_fmt", s.PixelFormat]);
+        // Pixel format. Left unset by default so the encoder follows the source —
+        // forcing 8-bit would silently discard precision from a 10-bit master.
+        if (s.ResolvePixelFormat() is { } pixFmt)
+            args.AddRange(["-pix_fmt", pixFmt]);
 
         // Codec-specific settings
         args.AddRange(GetCodecSpecificArgs(s));
@@ -165,17 +166,19 @@ public sealed partial class FFmpegVideoProcessor : CommandLineProcessor
         return ["-preset", s.Preset.ToString().ToLowerInvariant()];
     }
 
+    // A profile is only sent when the user asked for one. Deriving it ourselves means
+    // guessing the encoder's internal bit depth, and guessing wrong is a hard failure.
     private string[] GetCodecSpecificArgs(VideoEncoderSettings s) => s switch
     {
         X264Settings x264 =>
         [
-            "-profile:v", x264.Profile,
+            .. x264.Profile is not null ? new[] { "-profile:v", x264.Profile } : [],
             .. x264.Level is not null ? new[] { "-level", x264.Level } : [],
             .. x264.BlurayCompat ? new[] { "-bluray-compat", "1" } : [],
         ],
         X265Settings x265 =>
         [
-            "-profile:v", x265.Profile,
+            .. x265.Profile is not null ? new[] { "-profile:v", x265.Profile } : [],
             .. x265.Level is not null ? new[] { "-level", x265.Level } : [],
             .. x265.Hdr ? new[] { "-tag:v", "hvc1" } : [],
         ],

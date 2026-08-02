@@ -17,6 +17,8 @@ It won't judge your source material. It'll just make it better.
 The heart of the operation. No shortcuts, no compromises.
 
 - **Video Codecs**: x264, x265, SVT-AV1, VP9, FFV1 — via FFmpeg or standalone CLI
+- **Hardware Encoding**: NVENC, Quick Sync, AMF, VideoToolbox and VA-API (H.264 / H.265 / AV1)
+- **Bit Depth**: 8, 10 or 12-bit, or Auto to follow the source — 10-bit HDR masters stay 10-bit
 - **Encoding Modes**: CRF, constant quality, single-pass bitrate, two-pass bitrate
 - **Full Preset & Tune Control**: Every x264/x265/SVT-AV1 preset and tune option exposed
 - **SVT-AV1 Numeric Preset**: Direct 0-13 preset control for fine-grained AV1 speed/quality tradeoff
@@ -80,11 +82,61 @@ Drop your files. Walk away. Come back to finished encodes.
 - **Per-item status tracking** — Pending, Queued, Encoding, Completed, Failed
 - **Flexible output paths** — Source directory or custom output with configurable suffix
 
+### Hardware Encoding
+
+Your GPU is sitting right there. Use it.
+
+| | H.264 | H.265 | AV1 |
+|---|---|---|---|
+| **NVIDIA NVENC** | ✓ | ✓ | ✓ (RTX 40+) |
+| **Intel Quick Sync** | ✓ | ✓ | ✓ (Arc / 12th gen+) |
+| **AMD AMF** | ✓ | ✓ | ✓ (RX 7000+) |
+| **Apple VideoToolbox** | ✓ | ✓ | — |
+| **VA-API (Linux)** | ✓ | ✓ | ✓ |
+
+moist doesn't take FFmpeg's word for what your machine can do. `ffmpeg -encoders` lists
+everything the binary was *compiled* with — a stock Windows build claims NVENC, Quick
+Sync, AMF and VA-API whether or not you own the hardware. moist encodes a few frames
+through each one and only offers the ones that actually work, telling you why the rest
+didn't:
+
+```
+$ moist list hardware
+  ok  hw-nvenc-av1       AV1 (NVIDIA NVENC)
+  ok  hw-nvenc-h264      H.264 (NVIDIA NVENC)
+  ok  hw-nvenc-hevc      H.265 (NVIDIA NVENC)
+  --  hw-qsv-h264        H.264 (Intel Quick Sync)
+       Error creating a MFX session: -9.
+  --  hw-amf-h264        H.264 (AMD AMF)
+       DLL amfrt64.dll failed to open
+```
+
+**What it costs you.** 40 seconds of 1080p HEVC at CRF 26, preset slow, on an RTX 4080:
+
+| | Time | Size | VMAF |
+|---|---|---|---|
+| NVENC | **4.9 s** | 37.5 MB | 74.16 |
+| x265 | 85.1 s | 29.2 MB | 74.10 |
+
+17× faster at the same perceptual quality — for a 28% larger file. Fixed-function
+silicon skips the expensive search work software encoders do. Use it for previews and
+bulk work; use x265 for masters.
+
 ### Subtitle Support
 
 - **Copy all subtitles** from source with proper default/forced disposition
 - **External subtitle import** — Add .srt/.ass files alongside the encode
 - **Per-track metadata** — Language and title preserved through muxing
+
+### Nothing Gets Left Behind
+
+A re-encode shouldn't quietly lose half your file.
+
+- **Every audio track** — encode all of them, or pick a subset. Language and title ride along.
+- **Chapters** — preserved through the mux, not dropped on the floor
+- **Attachments** — subtitle fonts survive, so styled ASS still renders right
+- **HDR10** — BT.2020 primaries, PQ transfer, mastering display and content light level all carry through
+- **10-bit and 12-bit** — kept at their source depth unless you say otherwise
 
 ### Profiles
 
@@ -131,9 +183,12 @@ moist encode input.mkv --audio-only --audio-encoder ffmpeg-audio-flac
 moist encode input.mkv --mode twopass --bitrate 8000 --container mp4
 moist encode input.mkv --filter resize:width=1920,height=1080 --filter unsharp:luma_amount=1.2
 
+# hardware, all audio tracks, forced 10-bit
+moist encode input.mkv --video-encoder hw-nvenc-hevc --audio-track all --bit-depth 10
+
 moist batch *.mkv --container mp4 --output-dir ./out --jobs 4 --keep-going
 moist probe input.mkv --json
-moist list encoders | containers | profiles | filters
+moist list encoders | hardware | containers | profiles | filters
 moist tools
 ```
 
@@ -188,9 +243,9 @@ dotnet test Moist.Core.Tests       # fast unit tests only
 dotnet test Moist.IntegrationTests # real FFmpeg encodes
 ```
 
-**88 unit tests** covering job models, queue behavior, encoder registry, profiles, settings, filter engines, audio processor argument building, and CLI parsing — none of which launch an external process.
+**111 unit tests** covering job models, queue behavior, encoder registry, profiles, settings, filter engines, audio processor argument building, hardware encoder plumbing, and CLI parsing — none of which launch an external process.
 
-**43 integration tests** that run real encodes through the full pipeline and verify the output with ffprobe: every video encoder, every audio codec, every container, filter chains, subtitles, cancellation, concurrency, awkward filenames, and temp-file cleanup. They skip automatically when FFmpeg isn't on your PATH, so check the skip count before trusting a green run.
+**64 integration tests** that run real encodes through the full pipeline and verify the output with ffprobe: every video encoder, every audio codec, every container, 10-bit and HDR sources, multi-track audio, chapters and attachments, filter chains, subtitles, cancellation, concurrency, awkward filenames, and temp-file cleanup. They skip automatically when FFmpeg isn't on your PATH (and hardware tests skip without a usable GPU), so check the skip count before trusting a green run.
 
 If FFmpeg isn't on your PATH, set the path in the **Settings** tab after launching. moist won't hold it against you.
 
