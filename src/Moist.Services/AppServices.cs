@@ -1,4 +1,6 @@
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Console;
 using Moist.Core.Encoders;
 using Moist.Core.Encoders.Audio;
 using Moist.Core.Encoders.Video;
@@ -12,7 +14,7 @@ using Moist.Core.Tools;
 using Moist.Filters;
 using Moist.Filters.Engines;
 
-namespace Moist.App.Services;
+namespace Moist.Services;
 
 /// <summary>
 /// Central service container. Initializes all core systems and wires them together.
@@ -63,7 +65,12 @@ public sealed class AppServices : IDisposable
     private VideoPreviewService? _previewService;
     private string _lastFfmpegPathPreview = string.Empty;
 
-    public AppServices()
+    /// <param name="minimumLogLevel">Console verbosity. The CLI raises this so logs don't mix into its output.</param>
+    /// <param name="logToStandardError">
+    /// Send log lines to stderr instead of stdout. Required for the CLI, whose stdout
+    /// carries machine-readable results that must not be polluted.
+    /// </param>
+    public AppServices(LogLevel minimumLogLevel = LogLevel.Debug, bool logToStandardError = false)
     {
         // Set up logging to both console and file
         var logDir = Path.Combine(
@@ -75,12 +82,19 @@ public sealed class AppServices : IDisposable
         LoggerFactory = Microsoft.Extensions.Logging.LoggerFactory.Create(builder =>
         {
             builder
-                .SetMinimumLevel(LogLevel.Debug)
+                .SetMinimumLevel(minimumLogLevel)
                 .AddSimpleConsole(options =>
                 {
                     options.TimestampFormat = "[yyyy-MM-dd HH:mm:ss] ";
                     options.SingleLine = true;
                 });
+
+            if (logToStandardError)
+            {
+                // The threshold lives on the provider options, not the formatter's.
+                builder.Services.Configure<ConsoleLoggerOptions>(
+                    o => o.LogToStandardErrorThreshold = LogLevel.Trace);
+            }
         });
 
         // Start a background task to write job logs to file

@@ -39,6 +39,19 @@ jobs:
         working-directory: src
         run: dotnet build --no-restore --configuration Release
 
+      # The integration suite drives real FFmpeg encodes. It skips itself when the
+      # tools are absent, so this step is informational rather than a gate.
+      - name: Check FFmpeg availability
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          $ff = Get-Command ffmpeg -ErrorAction SilentlyContinue
+          if ($ff) {
+            Write-Host "FFmpeg found at $($ff.Source) — integration tests will run."
+          } else {
+            Write-Warning "FFmpeg not on PATH — integration tests will be SKIPPED. Install FFmpeg on this runner to enable them."
+          }
+
       - name: Run tests
         working-directory: src
         run: dotnet test --no-build --configuration Debug --verbosity normal
@@ -71,6 +84,17 @@ jobs:
       - name: Build (Release)
         working-directory: src
         run: dotnet build --no-restore --configuration Release
+
+      # The integration suite drives real FFmpeg encodes. It skips itself when the
+      # tools are absent, so this step is informational rather than a gate.
+      - name: Check FFmpeg availability
+        continue-on-error: true
+        run: |
+          if command -v ffmpeg >/dev/null 2>&1; then
+            echo "FFmpeg found at $(command -v ffmpeg) — integration tests will run."
+          else
+            echo "::warning::FFmpeg not on PATH — integration tests will be SKIPPED. Install FFmpeg on this runner to enable them."
+          fi
 
       - name: Run tests
         working-directory: src

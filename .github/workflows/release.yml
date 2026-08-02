@@ -55,11 +55,23 @@ jobs:
           --self-contained false
           --output ../publish/win-x64-fdd
 
+      - name: Publish CLI (Windows x64, self-contained)
+        working-directory: src
+        run: >
+          dotnet publish Moist.Cli/Moist.Cli.csproj
+          --configuration Release
+          --runtime win-x64
+          --self-contained true
+          -p:PublishSingleFile=true
+          -p:EnableCompressionInSingleFile=true
+          --output ../publish/win-x64-cli
+
       - name: Create ZIP archives
         shell: pwsh
         run: |
           Compress-Archive -Path publish/win-x64/* -DestinationPath publish/moist-${{ github.ref_name }}-win-x64.zip
           Compress-Archive -Path publish/win-x64-fdd/* -DestinationPath publish/moist-${{ github.ref_name }}-win-x64-fdd.zip
+          Compress-Archive -Path publish/win-x64-cli/* -DestinationPath publish/moist-cli-${{ github.ref_name }}-win-x64.zip
 
       - name: Upload Windows artifacts
         uses: actions/upload-artifact@v4
@@ -104,10 +116,23 @@ jobs:
           -p:EnableCompressionInSingleFile=true
           --output ../publish/linux-x64
 
-      - name: Create tar.gz archive
+      - name: Publish CLI (Linux x64, self-contained)
+        working-directory: src
+        run: >
+          dotnet publish Moist.Cli/Moist.Cli.csproj
+          --configuration Release
+          --runtime linux-x64
+          --self-contained true
+          -p:PublishSingleFile=true
+          -p:EnableCompressionInSingleFile=true
+          --output ../publish/linux-x64-cli
+
+      - name: Create tar.gz archives
         run: |
           cd publish/linux-x64
           tar -czf ../moist-${{ github.ref_name }}-linux-x64.tar.gz *
+          cd ../linux-x64-cli
+          tar -czf ../moist-cli-${{ github.ref_name }}-linux-x64.tar.gz *
 
       - name: Upload Linux artifacts
         uses: actions/upload-artifact@v4

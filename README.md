@@ -118,6 +118,30 @@ Profiles store everything: video encoder, audio encoder, all codec-specific sett
 
 MKV, MP4, WebM, AVI, TS, MOV
 
+moist knows which codecs each container can actually carry and tells you *before* it burns CPU on an encode that can't be muxed. The rules were derived by muxing every combination and re-probing the result — not by reading a spec and hoping. Run `moist list containers` to see them.
+
+### Command Line
+
+Everything the GUI does, scriptable. The CLI and the GUI share the same pipeline code, so they produce identical output.
+
+```bash
+moist encode input.mkv -o output.mp4 --crf 20 --preset slow
+moist encode input.mkv --profile "Web - H.265 High Quality"
+moist encode input.mkv --audio-only --audio-encoder ffmpeg-audio-flac
+moist encode input.mkv --mode twopass --bitrate 8000 --container mp4
+moist encode input.mkv --filter resize:width=1920,height=1080 --filter unsharp:luma_amount=1.2
+
+moist batch *.mkv --container mp4 --output-dir ./out --jobs 4 --keep-going
+moist probe input.mkv --json
+moist list encoders | containers | profiles | filters
+moist tools
+```
+
+- `--dry-run` prints the plan (including the exact FFmpeg commands) without encoding
+- `--json` emits machine-readable results; logs go to stderr so stdout stays clean for pipes
+- Exit codes: `0` success, `1` encode failed, `2` bad usage, `3` missing prerequisite
+- `Ctrl+C` cancels gracefully and kills the FFmpeg process tree
+
 ### Tool Auto-Discovery
 
 - **Automatic detection** — Scans PATH, common install locations, and bundled tool directories at startup
@@ -144,7 +168,8 @@ git clone https://github.com/bogware/moist.git
 cd moist/src
 dotnet restore
 dotnet build
-dotnet run --project Moist.App
+dotnet run --project Moist.App                                # GUI
+dotnet run --project Moist.Cli -- encode input.mkv -o out.mp4 # CLI
 ```
 
 ### Release Build
@@ -158,10 +183,14 @@ dotnet publish Moist.App -c Release -o ../dist
 
 ```bash
 cd src
-dotnet test
+dotnet test                        # everything
+dotnet test Moist.Core.Tests       # fast unit tests only
+dotnet test Moist.IntegrationTests # real FFmpeg encodes
 ```
 
-71 unit tests covering job models, queue behavior, encoder registry, profiles, settings, filter engines, and audio processor argument building.
+**88 unit tests** covering job models, queue behavior, encoder registry, profiles, settings, filter engines, audio processor argument building, and CLI parsing — none of which launch an external process.
+
+**43 integration tests** that run real encodes through the full pipeline and verify the output with ffprobe: every video encoder, every audio codec, every container, filter chains, subtitles, cancellation, concurrency, awkward filenames, and temp-file cleanup. They skip automatically when FFmpeg isn't on your PATH, so check the skip count before trusting a green run.
 
 If FFmpeg isn't on your PATH, set the path in the **Settings** tab after launching. moist won't hold it against you.
 
@@ -178,24 +207,32 @@ src/
  Moist.Core/            Core library — no UI dependency
     Jobs/               Job queue, workers, processors, two-pass
     Encoders/           Video + Audio encoder abstractions & settings
-    Muxers/             Container muxing (FFmpeg, deduplicated input mapping)
+    Muxers/             Container muxing + codec/container compatibility
     Media/              FFprobe analysis, subtitle/audio stream parsing
     Settings/           JSON-based app settings
     Profiles/           Encoding profile save/load (7 built-in + user profiles)
     Tools/              Tool discovery, version detection, auto-download
-    Plugins/            Plugin interface
+    Plugins/            Plugin interface + assembly loader
  Moist.Filters/         Filter engine abstraction layer
     Engines/            FFmpeg, VapourSynth, AviSynth implementations
     FilterChain         Ordered, engine-agnostic filter chain
     FilterPreset        Built-in + user presets with JSON persistence
     PluginSource        Plugin source management + marketplace catalog
- Moist.App/             Avalonia UI application
-    Services/           AppServices — central DI/service wiring
+ Moist.Services/        Shared composition root — UI-free
+    AppServices         Service wiring, encoder/processor registration
+    EncodeJobBuilder    Settings -> job graph. The one pipeline both frontends use.
+ Moist.App/             Avalonia GUI application
     ViewModels/         MVVM ViewModels (CommunityToolkit.Mvvm)
     Views/              AXAML views with compiled bindings
     Themes/             Skinnable theme overlays (MoistDark, etc.)
- Moist.Core.Tests/      xUnit test suite (71 tests)
+ Moist.Cli/             'moist' command-line binary — no Avalonia dependency
+ Moist.Core.Tests/      Fast unit tests (88)
+ Moist.IntegrationTests/ Real FFmpeg encodes verified with ffprobe (43)
 ```
+
+The GUI and the CLI are both thin shells over `Moist.Services`. Neither contains encoding
+logic of its own — they build an `EncodeRequest` and hand it to `EncodeJobBuilder`, which is
+why the two front-ends can't drift apart.
 
 ### Key Design Patterns
 
@@ -335,15 +372,19 @@ FFmpeg, FFprobe, MKVMerge, x264, x265, VapourSynth — configurable in the Setti
 ### Adding a Video Encoder
 
 1. Create settings class in `Moist.Core/Encoders/Video/`
-2. Register in `AppServices.cs` via `RegisterVideoEncoder()`
-3. Handle in `EncodeTabViewModel.EnqueueFile` switch
+2. Register in `AppServices.cs` via `RegisterVideoEncoder()` — the id must be `ffmpeg-{codec}`
+3. Handle in `EncodeJobBuilder.Build()` switch
+4. Map it in `ContainerCompatibility.StreamCodecForEncoder()` and add it to the container tables
 
 ### Adding an Audio Encoder
 
 1. Create settings class extending `AudioEncoderSettings` in `Moist.Core/Encoders/Audio/`
-2. Register in `AppServices.cs` via `RegisterAudioEncoder()`
+2. Register in `AppServices.cs` via `RegisterAudioEncoder()` — the id must be `ffmpeg-audio-{codec}`
 3. Add codec-specific args in `FFmpegAudioProcessor.GetCodecSpecificArgs()`
-4. Handle in `EncodeTabViewModel.CreateAudioSettings()` switch
+4. Handle in `EncodeJobBuilder.CreateAudioSettings()` and `AudioFileExtension()`
+5. Map it in `ContainerCompatibility` so container validation knows about it
+
+Both front-ends pick these up automatically — there's nothing to add to the GUI or the CLI.
 
 ### Adding a Filter
 

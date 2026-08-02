@@ -15,7 +15,6 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <Folder Include="Models\" />
     <AvaloniaResource Include="Assets\**" />
   </ItemGroup>
 
@@ -38,5 +37,6 @@
   <ItemGroup>
     <ProjectReference Include="..\Moist.Core\Moist.Core.csproj" />
     <ProjectReference Include="..\Moist.Filters\Moist.Filters.csproj" />
+    <ProjectReference Include="..\Moist.Services\Moist.Services.csproj" />
   </ItemGroup>
 </Project>

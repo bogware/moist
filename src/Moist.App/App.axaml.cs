@@ -44,12 +44,20 @@ public partial class App : Application
 
             desktop.ShutdownRequested += (_, _) =>
             {
-                if (desktop.MainWindow?.DataContext is MainWindowViewModel vm)
+                // Each step is independent: a failure in one must not skip the others
+                // or leave the process hanging on exit.
+                try
                 {
-                    vm.Services.Save();
-                    vm.Services.JobQueue.Stop();
+                    if (desktop.MainWindow?.DataContext is MainWindowViewModel vm)
+                    {
+                        vm.Services.Save();
+                        vm.Services.JobQueue.Stop();
+                    }
                 }
-                VideoPreviewService.CleanupPreviewFiles();
+                catch { /* best effort */ }
+
+                try { VideoPreviewService.CleanupPreviewFiles(); }
+                catch { /* best effort */ }
             };
         }
 

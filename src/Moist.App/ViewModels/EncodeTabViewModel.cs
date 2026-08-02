@@ -2,7 +2,7 @@ using System.Collections.ObjectModel;
 using Avalonia.Media.Imaging;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
-using Moist.App.Services;
+using Moist.Services;
 using Moist.Core.Encoders;
 using Moist.Core.Encoders.Audio;
 using Moist.Core.Encoders.Video;
@@ -291,18 +291,8 @@ public partial class EncodeTabViewModel : ViewModelBase, IDisposable
         OutputFile = Path.Combine(dir, $"{name}{ext}");
     }
 
-    private static string GetAudioFileExtension(string? encoderId) => encoderId switch
-    {
-        "ffmpeg-audio-opus" => ".opus",
-        "ffmpeg-audio-aac" => ".m4a",
-        "ffmpeg-audio-mp3" => ".mp3",
-        "ffmpeg-audio-flac" => ".flac",
-        "ffmpeg-audio-ac3" => ".ac3",
-        "ffmpeg-audio-eac3" => ".eac3",
-        "ffmpeg-audio-vorbis" => ".ogg",
-        "ffmpeg-audio-copy" => ".mka",
-        _ => ".mka"
-    };
+    private static string GetAudioFileExtension(string? encoderId)
+        => EncodeJobBuilder.AudioFileExtension(encoderId);
 
     private CancellationTokenSource? _previewDebounce;
     private async Task UpdatePreviewDebounced()
@@ -534,6 +524,16 @@ public partial class EncodeTabViewModel : ViewModelBase, IDisposable
             StatusMessage = "Added to queue.";
         }
 
+        // Guard: the chosen codecs must actually fit in the chosen container, otherwise
+        // the encodes run to completion and only the final mux fails.
+        var incompatible = EncodeJobBuilder.Validate(BuildRequest(InputFile, OutputFile));
+        if (incompatible is not null)
+        {
+            HasError = true;
+            StatusMessage = incompatible;
+            return;
+        }
+
         // Guard: non-FFmpeg filter engines can't be used with FFmpeg-based encoders
         if (!AudioOnly && _filterTab?.SelectedEngine is not null
             && _filterTab.Chain.Filters.Count > 0
@@ -586,167 +586,70 @@ public partial class EncodeTabViewModel : ViewModelBase, IDisposable
         // Use provided mediaInfo (batch mode) or fall back to shared MediaInfo (single encode)
         var info = mediaInfo ?? MediaInfo;
 
-        // Ensure temp and output directories exist
-        Directory.CreateDirectory(_services.Settings.TempDirectory);
-        var outputDir = Path.GetDirectoryName(outputFile);
-        if (!string.IsNullOrEmpty(outputDir))
-            Directory.CreateDirectory(outputDir);
+        var plan = EncodeJobBuilder.Build(BuildRequest(inputFile, outputFile), info);
 
-        // Audio-only mode skips video entirely
-        VideoJob? videoJob = null;
-        string? tempVideoFile = null;
-
-        if (!AudioOnly)
+        foreach (var job in plan.AllJobs)
         {
-            var encoderId = SelectedVideoEncoder?.Id ?? "ffmpeg-x265";
-
-            VideoEncoderSettings videoSettings = encoderId switch
-            {
-                "ffmpeg-x264" or "cli-x264" => new X264Settings(),
-                "ffmpeg-x265" or "cli-x265" => new X265Settings(),
-                "ffmpeg-svtav1" => new SvtAv1Settings { SvtPreset = SvtAv1Preset },
-                _ => new VideoEncoderSettings()
-            };
-            videoSettings.Mode = EncodingMode;
-            videoSettings.Quality = Quality;
-            videoSettings.Bitrate = Bitrate;
-            videoSettings.Preset = Preset;
-            videoSettings.Tune = Tune;
-            videoSettings.CustomArgs = CustomVideoArgs;
-
-            string? filterScript = null;
-            if (_filterTab?.SelectedEngine is not null && _filterTab.Chain.Filters.Count > 0)
-                filterScript = _filterTab.SelectedEngine.GenerateScript(_filterTab.Chain, inputFile);
-
-            tempVideoFile = Path.Combine(
-                _services.Settings.TempDirectory,
-                $"moist_v_{Guid.NewGuid():N}_{Path.GetFileNameWithoutExtension(outputFile)}.mkv");
-
-            videoJob = new VideoJob
-            {
-                Name = $"Video: {Path.GetFileName(inputFile)}",
-                InputFile = inputFile,
-                OutputFile = tempVideoFile,
-                EncoderId = encoderId,
-                Settings = videoSettings,
-                FilterScript = filterScript,
-                FilterEngineId = _filterTab?.SelectedEngine?.Id,
-                TotalFrames = info?.Video?.TotalFrames ?? 0,
-            };
+            _services.JobQueue.Enqueue(job);
+            allJobIds?.Add(job.Id);
         }
 
-        var tempAudioFile = Path.Combine(
-            _services.Settings.TempDirectory,
-            $"moist_a_{Guid.NewGuid():N}_{Path.GetFileNameWithoutExtension(outputFile)}.mka");
-
-        var audioEncoderId = SelectedAudioEncoder?.Id ?? "ffmpeg-audio-opus";
-        var audioSettings = CreateAudioSettings(audioEncoderId);
-
-        var audioJob = new AudioJob
-        {
-            Name = $"Audio: {Path.GetFileName(inputFile)}",
-            InputFile = inputFile,
-            OutputFile = tempAudioFile,
-            EncoderId = audioEncoderId,
-            Settings = audioSettings,
-            TotalDurationSeconds = info?.Duration.TotalSeconds ?? 0,
-            AudioStreamIndex = SelectedAudioTrackIndex,
-        };
-
-        // Audio-only mode: encode audio directly to output, no video or mux
-        if (AudioOnly)
-        {
-            audioJob.OutputFile = outputFile;
-            _services.JobQueue.Enqueue(audioJob);
-            allJobIds?.Add(audioJob.Id);
-            return audioJob.Id;
-        }
-
-        // Build subtitle inputs if CopySubtitles is enabled
-        var subtitleInputs = new List<SubtitleTrackInput>();
-        if (CopySubtitles && info?.SubtitleStreams is { Count: > 0 } subs)
-        {
-            foreach (var sub in subs)
-            {
-                subtitleInputs.Add(new SubtitleTrackInput
-                {
-                    FilePath = inputFile,
-                    Language = sub.Language,
-                    TrackName = sub.Title,
-                    IsDefault = sub.IsDefault,
-                    IsForced = sub.IsForced,
-                });
-            }
-        }
-
-        // Add external subtitle file if specified
-        if (!string.IsNullOrWhiteSpace(ExternalSubtitleFile) && File.Exists(ExternalSubtitleFile))
-        {
-            subtitleInputs.Add(new SubtitleTrackInput
-            {
-                FilePath = ExternalSubtitleFile,
-                IsDefault = subtitleInputs.Count == 0,
-            });
-        }
-
-        var dependsOn = new List<string>();
-        if (videoJob is not null) dependsOn.Add(videoJob.Id);
-        dependsOn.Add(audioJob.Id);
-
-        var muxJob = new MuxJob
-        {
-            Name = $"Mux: {Path.GetFileName(outputFile)}",
-            InputFile = inputFile,
-            OutputFile = outputFile,
-            MuxerId = "ffmpeg-mux",
-            Container = Container,
-            VideoInput = tempVideoFile,
-            AudioInputs = [new AudioTrackInput { FilePath = tempAudioFile }],
-            SubtitleInputs = subtitleInputs,
-            DependsOn = dependsOn,
-            TotalDurationSeconds = info?.Duration.TotalSeconds ?? 0,
-        };
-
-        if (tempVideoFile is not null) muxJob.FilesToCleanup.Add(tempVideoFile);
-        muxJob.FilesToCleanup.Add(tempAudioFile);
-
-        if (videoJob is not null)
-        {
-            _services.JobQueue.Enqueue(videoJob);
-            allJobIds?.Add(videoJob.Id);
-        }
-        _services.JobQueue.Enqueue(audioJob);
-        allJobIds?.Add(audioJob.Id);
-        _services.JobQueue.Enqueue(muxJob);
-        allJobIds?.Add(muxJob.Id);
-
-        return muxJob.Id;
+        return plan.FinalJob.Id;
     }
 
-    private AudioEncoderSettings CreateAudioSettings(string audioEncoderId)
+    /// <summary>
+    /// Snapshot the current UI state as an <see cref="EncodeRequest"/>. The GUI and the CLI
+    /// both feed this into <see cref="EncodeJobBuilder"/>, so they build identical pipelines.
+    /// </summary>
+    private EncodeRequest BuildRequest(string inputFile, string outputFile)
     {
-        AudioEncoderSettings s = audioEncoderId switch
-        {
-            "ffmpeg-audio-opus" => new OpusSettings { Complexity = OpusComplexity },
-            "ffmpeg-audio-aac" => new AacSettings { Profile = string.IsNullOrEmpty(AacProfile) ? null : AacProfile },
-            "ffmpeg-audio-mp3" => new Mp3Settings { VbrScale = Mp3VbrScale },
-            "ffmpeg-audio-flac" => new FlacSettings { CompressionLevel = FlacCompressionLevel },
-            "ffmpeg-audio-ac3" => new Ac3Settings { DialogueNormalization = Ac3DialogueNorm },
-            "ffmpeg-audio-eac3" => new Eac3Settings { DialogueNormalization = Eac3DialogueNorm },
-            "ffmpeg-audio-vorbis" => new VorbisSettings { QualityScale = VorbisQuality },
-            _ => new AudioEncoderSettings()
-        };
+        string? filterScript = null;
+        if (!AudioOnly && _filterTab?.SelectedEngine is not null && _filterTab.Chain.Filters.Count > 0)
+            filterScript = _filterTab.SelectedEngine.GenerateScript(_filterTab.Chain, inputFile);
 
-        s.BitrateMode = AudioBitrateMode;
-        s.Bitrate = AudioBitrate;
-        s.ChannelMode = AudioChannelMode;
-        s.SampleRate = AudioSampleRate > 0 ? AudioSampleRate : null;
-        s.CustomArgs = CustomAudioArgs;
-        s.Normalization = AudioNormalization;
-        s.NormalizationTarget = NormalizationTarget;
-        s.TruePeakLimit = TruePeakLimit;
-        s.SampleFormat = AudioSampleFormat;
-        return s;
+        return new EncodeRequest
+        {
+            InputFile = inputFile,
+            OutputFile = outputFile,
+            TempDirectory = _services.Settings.TempDirectory,
+
+            VideoEncoderId = SelectedVideoEncoder?.Id ?? "ffmpeg-x265",
+            Mode = EncodingMode,
+            Quality = Quality,
+            Bitrate = Bitrate,
+            Preset = Preset,
+            Tune = Tune,
+            SvtAv1Preset = SvtAv1Preset,
+            VideoCustomArgs = CustomVideoArgs,
+
+            AudioEncoderId = SelectedAudioEncoder?.Id ?? "ffmpeg-audio-opus",
+            AudioBitrateMode = AudioBitrateMode,
+            AudioBitrate = AudioBitrate,
+            AudioChannelMode = AudioChannelMode,
+            AudioSampleRate = AudioSampleRate,
+            AudioSampleFormat = AudioSampleFormat,
+            AudioNormalization = AudioNormalization,
+            NormalizationTarget = NormalizationTarget,
+            TruePeakLimit = TruePeakLimit,
+            AudioCustomArgs = CustomAudioArgs,
+            AudioTrackIndex = SelectedAudioTrackIndex,
+
+            OpusComplexity = OpusComplexity,
+            AacProfile = AacProfile,
+            Mp3VbrScale = Mp3VbrScale,
+            FlacCompressionLevel = FlacCompressionLevel,
+            Ac3DialogueNorm = Ac3DialogueNorm,
+            Eac3DialogueNorm = Eac3DialogueNorm,
+            VorbisQuality = VorbisQuality,
+
+            Container = Container,
+            AudioOnly = AudioOnly,
+            CopySubtitles = CopySubtitles,
+            ExternalSubtitleFile = ExternalSubtitleFile,
+
+            FilterScript = filterScript,
+            FilterEngineId = _filterTab?.SelectedEngine?.Id,
+        };
     }
 
     public void Dispose()

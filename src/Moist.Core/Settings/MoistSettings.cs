@@ -27,11 +27,16 @@ public sealed class MoistSettings
 
     // UI
     public string Theme { get; set; } = "moist Dark";
-    public double WindowWidth { get; set; } = 1200;
-    public double WindowHeight { get; set; } = 800;
-    public double WindowX { get; set; } = double.NaN;
-    public double WindowY { get; set; } = double.NaN;
+    public double WindowWidth { get; set; } = DefaultWindowWidth;
+    public double WindowHeight { get; set; } = DefaultWindowHeight;
+
+    /// <summary>Saved window position. Null means "let the OS decide" — never NaN, which System.Text.Json cannot serialize.</summary>
+    public double? WindowX { get; set; }
+    public double? WindowY { get; set; }
     public bool WindowMaximized { get; set; }
+
+    public const double DefaultWindowWidth = 1200;
+    public const double DefaultWindowHeight = 800;
 
     // Defaults
     public string DefaultOutputDirectory { get; set; } = string.Empty;
@@ -41,6 +46,16 @@ public sealed class MoistSettings
 
     // Temp
     public string TempDirectory { get; set; } = Path.Combine(Path.GetTempPath(), "moist");
+
+    /// <summary>
+    /// Repair anything unusable that was loaded from disk (or left behind by an older
+    /// build) so a bad stored value can't wedge every encode.
+    /// </summary>
+    public MoistSettings Repaired()
+    {
+        Sanitize();
+        return this;
+    }
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -58,11 +73,71 @@ public sealed class MoistSettings
         return Path.Combine(configDir, "settings.json");
     }
 
-    public void Save()
+    /// <summary>
+    /// Persist settings to disk. Never throws — a failure here must not be able to
+    /// take down the app on shutdown. Returns false (with the reason in <paramref name="error"/>)
+    /// so callers that can surface a message to the user are able to.
+    /// </summary>
+    public bool Save(out string? error)
     {
-        var path = GetSettingsPath();
-        var json = JsonSerializer.Serialize(this, JsonOptions);
-        File.WriteAllText(path, json);
+        error = null;
+        try
+        {
+            Sanitize();
+            var path = GetSettingsPath();
+            var json = JsonSerializer.Serialize(this, JsonOptions);
+
+            // Write to a temp file first so an interrupted write can't corrupt the real one.
+            var tmp = path + ".tmp";
+            File.WriteAllText(tmp, json);
+            File.Move(tmp, path, overwrite: true);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+            return false;
+        }
+    }
+
+    /// <summary>Persist settings, ignoring any failure.</summary>
+    public bool Save() => Save(out _);
+
+    /// <summary>
+    /// Coerce values that cannot be represented in JSON (NaN / Infinity) back to sane defaults.
+    /// Window geometry comes from the UI toolkit, which can hand us non-finite values.
+    /// </summary>
+    private void Sanitize()
+    {
+        if (!double.IsFinite(WindowWidth) || WindowWidth <= 0) WindowWidth = DefaultWindowWidth;
+        if (!double.IsFinite(WindowHeight) || WindowHeight <= 0) WindowHeight = DefaultWindowHeight;
+        if (WindowX is not null && !double.IsFinite(WindowX.Value)) WindowX = null;
+        if (WindowY is not null && !double.IsFinite(WindowY.Value)) WindowY = null;
+        if (MaxConcurrentJobs < 1) MaxConcurrentJobs = 1;
+        if (MaxConcurrentJobs > 32) MaxConcurrentJobs = 32;
+        if (!IsUsablePath(TempDirectory)) TempDirectory = DefaultTempDirectory;
+    }
+
+    public static string DefaultTempDirectory => Path.Combine(Path.GetTempPath(), "moist");
+
+    /// <summary>
+    /// A temp directory that can't be created makes every encode fail, and the bad value
+    /// gets written straight back on the next save. Reject it before it can persist.
+    /// </summary>
+    private static bool IsUsablePath(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path)) return false;
+        if (path.IndexOfAny(Path.GetInvalidPathChars()) >= 0) return false;
+
+        try
+        {
+            _ = Path.GetFullPath(path);
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     public static MoistSettings Load()
@@ -74,7 +149,8 @@ public sealed class MoistSettings
         try
         {
             var json = File.ReadAllText(path);
-            return JsonSerializer.Deserialize<MoistSettings>(json, JsonOptions) ?? new MoistSettings();
+            var loaded = JsonSerializer.Deserialize<MoistSettings>(json, JsonOptions) ?? new MoistSettings();
+            return loaded.Repaired();
         }
         catch
         {

@@ -1,7 +1,7 @@
 using System.Collections.ObjectModel;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
-using Moist.App.Services;
+using Moist.Services;
 using Moist.Core.Tools;
 
 namespace Moist.App.ViewModels;
@@ -160,7 +160,12 @@ public partial class SettingsTabViewModel : ViewModelBase
         s.DeleteTempFiles = DeleteTempFiles;
         s.DefaultOutputDirectory = DefaultOutputDirectory?.Trim() ?? string.Empty;
         s.TempDirectory = TempDirectory?.Trim() ?? string.Empty;
-        _services.Save();
+
+        if (!s.Save(out var saveError))
+        {
+            SaveStatus = $"Could not save settings: {saveError}";
+            return;
+        }
 
         // Apply max concurrent jobs change live
         _services.JobQueue.MaxConcurrentJobs = MaxConcurrentJobs;

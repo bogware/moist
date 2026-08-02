@@ -2,7 +2,7 @@ using System.Collections.ObjectModel;
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
-using Moist.App.Services;
+using Moist.Services;
 using Moist.Core.Jobs;
 using Moist.Core.Muxers;
 using Moist.Core.Profiles;

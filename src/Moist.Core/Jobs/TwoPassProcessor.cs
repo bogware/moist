@@ -97,9 +97,22 @@ public sealed class TwoPassProcessor : IJobProcessor
 
     private static string BuildPassArgs(string originalArgs, string passLogFile, int pass, bool isCli)
     {
-        var passArgs = isCli
-            ? $"--pass {pass} --stats \"{passLogFile}\""
-            : $"-pass {pass} -passlogfile \"{passLogFile}\"";
+        string passArgs;
+        if (isCli)
+        {
+            // x264/x265 CLI accept NUL and /dev/null as an output path directly.
+            passArgs = $"--pass {pass} --stats \"{passLogFile}\"";
+        }
+        else
+        {
+            passArgs = $"-pass {pass} -passlogfile \"{passLogFile}\"";
+
+            // Pass 1 discards its output. FFmpeg cannot infer a muxer from "NUL" or
+            // "/dev/null" (no extension), so the null muxer has to be named explicitly
+            // or the run dies with "Unable to choose an output format".
+            if (pass == 1)
+                passArgs += " -f null";
+        }
 
         return string.IsNullOrWhiteSpace(originalArgs)
             ? passArgs

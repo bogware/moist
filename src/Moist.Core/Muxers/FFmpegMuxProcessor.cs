@@ -95,6 +95,13 @@ public sealed partial class FFmpegMuxProcessor : CommandLineProcessor
         // Copy all streams (muxing, not re-encoding)
         args.AddRange(["-c", "copy"]);
 
+        // Some containers (AVI, MPEG-TS) need H.264/H.265 in Annex-B form, but our
+        // intermediate file is Matroska, which stores it length-prefixed. Without this
+        // the mux dies with "bitstream malformed, no startcode found".
+        var bsf = ContainerCompatibility.VideoBitstreamFilter(mj.Container, mj.VideoCodec);
+        if (bsf is not null && mj.VideoInput is not null)
+            args.AddRange(["-bsf:v", bsf]);
+
         // Container format
         args.AddRange(["-f", mj.Container.GetFfmpegFormat()]);
 

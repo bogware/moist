@@ -3,7 +3,7 @@ using System.Diagnostics;
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
-using Moist.App.Services;
+using Moist.Services;
 using Moist.Core.Jobs;
 
 namespace Moist.App.ViewModels;

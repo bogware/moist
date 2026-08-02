@@ -206,8 +206,8 @@ public partial class MainWindow : Window
         Width = s.WindowWidth;
         Height = s.WindowHeight;
 
-        if (!double.IsNaN(s.WindowX) && !double.IsNaN(s.WindowY))
-            Position = new Avalonia.PixelPoint((int)s.WindowX, (int)s.WindowY);
+        if (s.WindowX is not null && s.WindowY is not null)
+            Position = new Avalonia.PixelPoint((int)s.WindowX.Value, (int)s.WindowY.Value);
 
         if (s.WindowMaximized)
             WindowState = WindowState.Maximized;
@@ -215,25 +215,35 @@ public partial class MainWindow : Window
 
     private void OnClosing(object? sender, WindowClosingEventArgs e)
     {
-        if (DataContext is not MainWindowViewModel vm) return;
-        var s = vm.Services.Settings;
-
-        if (WindowState == WindowState.Maximized)
+        // Nothing in here may throw: an exception on the closing path leaves the
+        // window un-closable and the process hung.
+        try
         {
-            s.WindowMaximized = true;
-        }
-        else
-        {
-            s.WindowMaximized = false;
-            s.WindowWidth = Width;
-            s.WindowHeight = Height;
-            s.WindowX = Position.X;
-            s.WindowY = Position.Y;
-        }
-        s.Save();
+            if (DataContext is not MainWindowViewModel vm) return;
+            var s = vm.Services.Settings;
 
-        // Persist any incomplete jobs for recovery on next startup
-        Core.Jobs.JobPersistence.Save(vm.Services.JobQueue.Jobs);
+            if (WindowState == WindowState.Maximized)
+            {
+                // Keep the previously saved restore geometry — maximized bounds aren't useful.
+                s.WindowMaximized = true;
+            }
+            else
+            {
+                s.WindowMaximized = false;
+                s.WindowWidth = Width;
+                s.WindowHeight = Height;
+                s.WindowX = Position.X;
+                s.WindowY = Position.Y;
+            }
+            s.Save();
+
+            // Persist any incomplete jobs for recovery on next startup
+            Core.Jobs.JobPersistence.Save(vm.Services.JobQueue.Jobs);
+        }
+        catch
+        {
+            // Best effort — never block shutdown.
+        }
     }
 
     private async void OnKeyDown(object? sender, KeyEventArgs e)

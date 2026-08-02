@@ -8,6 +8,14 @@ public sealed class MuxJob : Job
     public string MuxerId { get; set; } = string.Empty;
     public ContainerFormat Container { get; set; } = ContainerFormat.Mkv;
     public string? VideoInput { get; set; }
+
+    /// <summary>
+    /// Canonical FFmpeg stream codec of <see cref="VideoInput"/> (h264, hevc, av1, …).
+    /// Lets the muxer apply a bitstream filter when the target container needs one.
+    /// Null when unknown — no filter is applied.
+    /// </summary>
+    public string? VideoCodec { get; set; }
+
     public List<AudioTrackInput> AudioInputs { get; set; } = [];
     public List<SubtitleTrackInput> SubtitleInputs { get; set; } = [];
     public string? ChapterFile { get; set; }

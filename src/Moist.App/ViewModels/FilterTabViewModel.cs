@@ -1,7 +1,7 @@
 using System.Collections.ObjectModel;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
-using Moist.App.Services;
+using Moist.Services;
 using Moist.Filters;
 
 namespace Moist.App.ViewModels;

@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AssemblyName>moist</AssemblyName>
+    <RootNamespace>Moist.Cli</RootNamespace>
+    <Version>0.1.0</Version>
+    <Product>moist</Product>
+    <AssemblyTitle>moist - Video Encoder CLI</AssemblyTitle>
+    <Description>Command-line interface for the moist video encoder</Description>
+    <InvariantGlobalization>true</InvariantGlobalization>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Moist.Core\Moist.Core.csproj" />
+    <ProjectReference Include="..\Moist.Filters\Moist.Filters.csproj" />
+    <ProjectReference Include="..\Moist.Services\Moist.Services.csproj" />
+  </ItemGroup>
+
+</Project>
