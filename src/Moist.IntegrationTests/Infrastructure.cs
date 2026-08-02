@@ -121,6 +121,13 @@ public sealed class MediaFixture : IDisposable
     /// <summary>Three languaged audio tracks, subtitles, chapters and an attachment.</summary>
     public string RichVideo { get; }
 
+    /// <summary>
+    /// Organic-looking content for quality work. testsrc2 is synthetic high-frequency
+    /// noise that VMAF scores into a narrow band whatever the CRF, which makes it
+    /// useless for proving quality responds to settings. This has no audio.
+    /// </summary>
+    public string NaturalVideo { get; }
+
     public MediaFixture()
     {
         Root = Path.Combine(Path.GetTempPath(), "moist-itest-" + Guid.NewGuid().ToString("N")[..8]);
@@ -133,6 +140,7 @@ public sealed class MediaFixture : IDisposable
         SubtitleFile = Path.Combine(Root, "sample.srt");
         TenBitVideo = Path.Combine(Root, "tenbit.mkv");
         RichVideo = Path.Combine(Root, "rich.mkv");
+        NaturalVideo = Path.Combine(Root, "natural.mp4");
 
         if (!Ffmpeg.Available) return;
 
@@ -146,6 +154,11 @@ public sealed class MediaFixture : IDisposable
 
         BuildTenBitSource();
         BuildRichSource();
+
+        // Mandelbrot gives smooth gradients and organic detail, so quality responds to
+        // CRF the way real footage does.
+        Run("ffmpeg", $"-y -v error -f lavfi -i mandelbrot=size=480x270:rate=25 -t 8 " +
+                      $"-c:v libx264 -preset veryfast -crf 16 -pix_fmt yuv420p \"{NaturalVideo}\"");
     }
 
     /// <summary>10-bit HDR10: BT.2020 primaries, PQ transfer, mastering display and CLL.</summary>

@@ -16,4 +16,11 @@
     <ProjectReference Include="..\Moist.Filters\Moist.Filters.csproj" />
   </ItemGroup>
 
+  <!-- Search arithmetic and sample planning are internal, but they are the parts most
+       worth asserting on without running an encode. -->
+  <ItemGroup>
+    <InternalsVisibleTo Include="Moist.Core.Tests" />
+    <InternalsVisibleTo Include="Moist.IntegrationTests" />
+  </ItemGroup>
+
 </Project>

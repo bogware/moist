@@ -47,6 +47,7 @@ Everything above this tier is built on sand until it's done.
 | **Only one audio track ever encoded** | ✅ | Multi-language and commentary tracks were silently destroyed. |
 | **Chapters silently dropped** | ✅ | The mux reads from temp files, so source chapters never survived. |
 | **Attachments silently dropped** | ✅ | Subtitle fonts lost, so styled ASS rendered wrong. |
+| **Silent sources failed to encode** | ✅ | Every encode built an audio job, so a video-only file — screen recordings, animation renders, GoPro clips — died on `-map 0:a:0`. |
 
 ### Why these survived so long
 
@@ -111,53 +112,118 @@ trade in a sentence, and it is why hardware is not simply "better".
 - **Rate control is per-vendor.** None of them accept `-crf`. NVENC uses
   `-rc vbr -cq`, Quick Sync `-global_quality`, AMF `-rc cqp -qp_i/-qp_p`,
   VideoToolbox an inverted 0-100 `-q:v`, VA-API `-rc_mode CQP -qp`.
-- **Recommended use:** previews, bulk work, and later the target-quality *search*
-  passes — with software encoders for final masters.
+- **Recommended use:** previews and bulk work, with software encoders for final
+  masters.
+
+### TODO: verify the other four vendors
+
+Only **NVENC** has been run against real silicon. Quick Sync, AMF, VideoToolbox and
+VA-API are implemented from their documented interfaces and are correctly *detected*
+as absent — but "correctly detected as missing" is not "known to produce a good file".
+They are labelled `[experimental]` in both front-ends until someone runs them.
+
+To verify a vendor, on hardware that has it:
+
+```
+moist list hardware                      # confirm it probes as usable
+moist encode clip.mkv --video-encoder hw-<vendor>-hevc --crf 26 --measure
+```
+
+The encode must succeed, the output must probe as the expected codec, and the VMAF
+score should land in the same region as a software encode at the same CRF. Once
+confirmed, drop that vendor from `HardwareEncoderDefinition.Experimental`.
 
 ---
 
-## Tier 2 — Quality metrics engine ⬜
+## Tier 2 — Quality metrics engine ✅
 
-Measurement as a first-class feature. Nothing in the GUI space does this well, and
-it's the substrate everything in Tier 3+ depends on.
+Measurement as a first-class feature, and the substrate Tier 3 is built on.
 
 | Item | Status | Notes |
 |---|---|---|
-| VMAF as a job type | ⬜ | `libvmaf` is already in standard FFmpeg builds — no new dependency |
-| XPSNR | ⬜ | Temporally aware, low complexity, good for high resolution |
-| SSIM / PSNR | ⬜ | Cheap, familiar, useful as a sanity check |
-| Compare two files from GUI/CLI | ⬜ | `moist compare a.mkv b.mkv --metric vmaf` |
-| Score attached to completed encodes | ⬜ | "How good was that encode?" answered automatically |
+| VMAF | ✅ | With pooled min / max / mean / harmonic mean from libvmaf's JSON log |
+| XPSNR | ✅ | Per-plane, headline figure weights luma 4:1:1 |
+| SSIM / PSNR | ✅ | Cheap, familiar sanity checks |
+| `moist compare a.mkv b.mkv` | ✅ | Any metric, `--json` for scripting |
+| `--measure` on encode | ✅ | Scores the finished file against its source |
+| Resolution handling | ✅ | A downscaled encode is scaled back up before comparing |
+| 4K model selection | ✅ | VMAF's default model is trained for 1080p viewing |
 | Per-frame score plot | 💭 | Find the worst scenes, not just the average |
 
-**Verified available in a stock FFmpeg build:** `libvmaf`, `xpsnr`, `ssim`, `psnr`,
-`scdet`. A live VMAF run against a moist encode scored 66.5 — the plumbing works
-today, it just isn't wired up.
+No new dependencies: `libvmaf`, `xpsnr`, `ssim` and `psnr` all ship in stock FFmpeg
+builds.
+
+### The bug that nearly invalidated everything
+
+Every one of these filters is built on FFmpeg's **framesync**, which by default keeps
+going after the shorter input ends, holding its last frame. Comparing a 5-second
+sample against a 40-second source therefore scored a *frozen frame against moving
+video* for the remaining 35 seconds. One near-lossless clip measured **31** instead
+of 98.
+
+`shortest=1:repeatlast=0` is mandatory on every metric filter. There is a regression
+test pinning it.
+
+A second trap worth recording: **`testsrc2` is useless for quality work.** It is
+synthetic high-frequency noise, and VMAF scores it into a narrow band (~71-75)
+regardless of CRF, which makes it look as though quality doesn't respond to settings
+at all. The integration tests use mandelbrot instead, which behaves like real footage:
+
+| CRF | 14 | 24 | 32 | 40 |
+|---|---|---|---|---|
+| VMAF | 97.5 | 88.8 | 69.6 | 41.6 |
 
 ---
 
-## Tier 3 — Target-quality encoding ⬜
+## Tier 3 — Target-quality encoding ✅
 
 **The flagship feature.** Say what quality you want, not what CRF you guess.
 
 | Item | Status | Notes |
 |---|---|---|
-| Sample-based CRF search | ⬜ | Encode short scene samples, not the whole file |
-| Interpolated binary search | ⬜ | Converge on the CRF that hits the target |
-| `--target-vmaf 95` in CLI | ⬜ | And the equivalent in the GUI |
-| Size ceiling constraint | ⬜ | "VMAF 95, but no more than 60% of the original" |
-| Result caching | ⬜ | Don't re-search a file already measured |
-| Hardware-accelerated search | 💭 | Use the GPU for search passes, CPU for the final encode |
+| Sample-based CRF search | ✅ | Encodes a few short spans, not the whole file |
+| Interpolated bisection | ✅ | Fits a line through the bracketing probes and jumps to the crossing |
+| `--target-vmaf 95` on encode | ✅ | Searches, then encodes with the result |
+| `moist crf-search` | ✅ | Search alone, for scripting |
+| GUI "Find CRF" button | ✅ | Applies the result to the quality slider |
+| Result caching | ✅ | Keyed on file identity, encoder, preset and target |
+| Size estimate | ✅ | Reported as a share of the source |
+| Hardware-accelerated search | ❌ | Deliberately rejected — see below |
 
-Prior art: [ab-av1](https://github.com/alexheretic/ab-av1). The approach is proven;
-what's missing from the world is a good GUI for it.
+### How well does sampling actually predict?
+
+On a 720p clip, searching with three 5-second samples:
+
+| | Predicted from samples | Actual full encode |
+|---|---|---|
+| VMAF at chosen CRF 20 | 93.39 | **93.46** |
+| Size vs source | 64% | 61% |
+
+A second run targeting VMAF 95 picked CRF 18, predicted 95.03, and the full encode
+measured **95.06**. Sampling works.
+
+### Why search doesn't use a faster proxy encoder
+
+It's tempting to probe with NVENC and encode with x265 — the search would be ~17×
+cheaper. It was rejected: the CRF that reaches VMAF 95 on one encoder does not reach
+it on another, so the result would need a per-encoder calibration offset that is
+itself content-dependent. That trades a correct answer for a fast wrong one.
+
+Sampling already supplies the speed. Search always uses the encoder and preset the
+real encode will use, which is correct by construction.
 
 ---
 
-## Tier 4 — Chunked parallel encoding ⬜
+## Tier 4 — Chunked parallel encoding ⬜  ← next
+
+Groundwork already in place: `VideoJob.TrimStart`/`TrimDuration` (added for search
+sampling) encode an arbitrary span, and the quality engine can verify that chunk
+boundaries didn't corrupt anything — which is exactly the check this needs.
+
 
 Scene-split → encode chunks in parallel → concatenate. Turns an 8-hour x265/AV1
 encode into roughly an hour and actually saturates a many-core machine.
+
 
 | Item | Status | Notes |
 |---|---|---|

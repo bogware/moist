@@ -60,6 +60,8 @@ public static class Program
                 "encode" => await EncodeCommand.RunAsync(cl, cancellation.Token),
                 "batch" => await BatchCommand.RunAsync(cl, cancellation.Token),
                 "probe" => await ProbeCommand.RunAsync(cl, cancellation.Token),
+                "compare" => await CompareCommand.RunAsync(cl, cancellation.Token),
+                "crf-search" or "search" => await CrfSearchCommand.RunAsync(cl, cancellation.Token),
                 "list" => ListCommand.Run(cl),
                 "tools" => await ToolsCommand.RunAsync(cl, cancellation.Token),
                 _ => UnknownCommand(command),

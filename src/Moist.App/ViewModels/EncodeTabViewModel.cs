@@ -10,6 +10,7 @@ using Moist.Core.Jobs;
 using Moist.Core.Media;
 using Moist.Core.Muxers;
 using Moist.Core.Profiles;
+using Moist.Core.Quality;
 
 namespace Moist.App.ViewModels;
 
@@ -77,6 +78,90 @@ public partial class EncodeTabViewModel : ViewModelBase, IDisposable
     // Video bit depth
     [ObservableProperty] private VideoBitDepth _bitDepth = VideoBitDepth.Auto;
     public static VideoBitDepth[] BitDepthOptions { get; } = Enum.GetValues<VideoBitDepth>();
+
+    // Target quality
+    [ObservableProperty] private QualityMetric _targetMetric = QualityMetric.Vmaf;
+    [ObservableProperty] private double _targetScore = 95;
+    [ObservableProperty] private bool _isSearchingQuality;
+    [ObservableProperty] private string _qualitySearchStatus = string.Empty;
+    public static QualityMetric[] QualityMetricOptions { get; } = Enum.GetValues<QualityMetric>();
+
+    private CancellationTokenSource? _searchCts;
+
+    /// <summary>
+    /// Find the CRF that reaches the target and apply it. Samples a few short spans
+    /// rather than encoding the whole file, so this takes a minute or two rather than
+    /// as long as the encode itself.
+    /// </summary>
+    [RelayCommand]
+    private async Task FindTargetCrf()
+    {
+        if (IsSearchingQuality)
+        {
+            _searchCts?.Cancel();
+            return;
+        }
+
+        if (MediaInfo is null || string.IsNullOrWhiteSpace(InputFile))
+        {
+            HasError = true;
+            StatusMessage = "Analyze a file first — the search needs to know its duration.";
+            return;
+        }
+
+        if (AudioOnly)
+        {
+            HasError = true;
+            StatusMessage = "Target quality applies to video; it does nothing in audio-only mode.";
+            return;
+        }
+
+        _searchCts?.Dispose();
+        _searchCts = new CancellationTokenSource();
+
+        IsSearchingQuality = true;
+        HasError = false;
+        QualitySearchStatus = "Starting search…";
+
+        try
+        {
+            var search = new TargetQualitySearch(_services, _services.LoggerFactory);
+            search.Progress += (done, budget, message) =>
+                Avalonia.Threading.Dispatcher.UIThread.Post(() =>
+                    QualitySearchStatus = $"[{done}/{budget}] {message}");
+
+            var request = BuildRequest(InputFile, OutputFile);
+            var options = new TargetQualityOptions { Metric = TargetMetric, Target = TargetScore };
+
+            var result = await search.SearchAsync(request, options, MediaInfo, _searchCts.Token);
+
+            EncodingMode = VideoEncodingMode.ConstantRateFactor;
+            Quality = result.Crf;
+
+            QualitySearchStatus = result.Summary
+                + (result.EstimatedSizePercent is { } percent ? $"  ~{percent:F0}% of source" : "")
+                + (result.FromCache ? "  (cached)" : "");
+
+            if (!result.TargetMet)
+            {
+                HasError = true;
+                StatusMessage = "Target not reached — using the best CRF found.";
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            QualitySearchStatus = "Search cancelled.";
+        }
+        catch (Exception ex)
+        {
+            HasError = true;
+            QualitySearchStatus = $"Search failed: {ex.Message}";
+        }
+        finally
+        {
+            IsSearchingQuality = false;
+        }
+    }
 
     // Preview
     [ObservableProperty] private Bitmap? _previewImage;
@@ -575,7 +660,7 @@ public partial class EncodeTabViewModel : ViewModelBase, IDisposable
 
         // Guard: the chosen codecs must actually fit in the chosen container, otherwise
         // the encodes run to completion and only the final mux fails.
-        var incompatible = EncodeJobBuilder.Validate(BuildRequest(InputFile, OutputFile));
+        var incompatible = EncodeJobBuilder.Validate(BuildRequest(InputFile, OutputFile), MediaInfo);
         if (incompatible is not null)
         {
             HasError = true;
@@ -721,6 +806,9 @@ public partial class EncodeTabViewModel : ViewModelBase, IDisposable
         _analysisCts?.Cancel();
         _analysisCts?.Dispose();
         _analysisCts = null;
+        _searchCts?.Cancel();
+        _searchCts?.Dispose();
+        _searchCts = null;
         _previewDebounce?.Cancel();
         _previewDebounce?.Dispose();
         _previewDebounce = null;

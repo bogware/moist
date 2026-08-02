@@ -24,4 +24,13 @@ public sealed class VideoJob : Job
 
     /// <summary>Total frames in source video, used for progress calculation.</summary>
     public long TotalFrames { get; set; }
+
+    /// <summary>
+    /// Encode only from this point in the source. Emitted as <c>-ss</c> before the input,
+    /// which is both fast and frame-aligned with a measurement pass that seeks the same way.
+    /// </summary>
+    public TimeSpan? TrimStart { get; set; }
+
+    /// <summary>Encode only this much of the source, from <see cref="TrimStart"/>.</summary>
+    public TimeSpan? TrimDuration { get; set; }
 }

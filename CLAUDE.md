@@ -100,6 +100,16 @@ so the muxer can add the original as an extra input and copy:
   anything else fails the mux outright.
 - **global tags** (`-map_metadata`).
 
+### Silent sources
+
+A video-only file gets **no audio jobs at all**. Building one anyway produced
+`-map 0:a:0` against a file with no audio streams, which failed the whole encode —
+screen recordings, animation renders and action-cam clips all hit this.
+
+`EncodePlan.AudioJobs` may therefore be empty and `EncodePlan.Audio` may be null.
+`EncodeJobBuilder.Validate` takes an optional `MediaFileInfo` so it can reject
+audio-only on a silent source with a real explanation rather than failing later.
+
 ### Multiple audio tracks
 
 `EncodeRequest.AudioTracks` is a list. Each entry becomes its own `AudioJob` writing to
@@ -135,6 +145,48 @@ Factories, not singletons: processors hold mutable state (`Stopwatch`, frame cou
 ### Tool paths are late-bound through closures
 
 Encoder factories capture `Settings` (the object), not the path string — e.g. `() => new FFmpegVideoProcessor(Settings.FFmpegPath, codec)`. The path is read when the factory runs, i.e. per job, so changing a tool path in Settings takes effect on the next job without restart. `AppServices.MediaAnalyzer` and `PreviewService` achieve the same via lazy properties that rebuild when the path changes. Don't hoist these into constructor-time fields.
+
+### Quality metrics: framesync will lie to you
+
+Every metric filter (`libvmaf`, `xpsnr`, `ssim`, `psnr`) is built on FFmpeg's
+**framesync**, which by default keeps running after the shorter input ends and holds
+its last frame. Comparing a 5-second sample against a 40-second source therefore
+scores a frozen frame against moving video for the remaining 35 seconds — one
+near-lossless clip measured **31** instead of 98.
+
+`QualityMeasurer.FrameSync` (`shortest=1:repeatlast=0`) is appended to every metric
+filter and must stay there. There's a test asserting it for all four metrics.
+
+Two more things `QualityMeasurer` handles that are easy to get wrong:
+- **`settb=AVTB` on both inputs.** Without it FFmpeg warns about mismatched timebases
+  whenever the two files came from different muxers, and the results are suspect.
+- **libvmaf's `log_path` runs through filter-argument escaping**, which is miserable
+  for Windows paths (`C:\…` needs both the backslashes and the colon escaped). The
+  measurer sidesteps it by running FFmpeg with its working directory set to a scratch
+  folder and using a bare filename.
+
+**Never use `testsrc2` to test quality behaviour.** It's synthetic high-frequency
+noise; VMAF scores it in a narrow band (~71-75) whatever the CRF, so quality looks
+unresponsive to settings. `MediaFixture.NaturalVideo` (mandelbrot) behaves like real
+footage — CRF 14/24/32/40 gives VMAF 97.5/88.8/69.6/41.6.
+
+### Target-quality search
+
+`TargetQualitySearch` encodes a few short spans rather than the whole file, then
+bisects over CRF — interpolating between the two bracketing probes instead of blindly
+halving, since quality against CRF is close to linear over a short span.
+
+Two decisions to preserve:
+
+1. **Search uses the encoder and preset the real encode will use.** Probing with a
+   fast proxy (NVENC standing in for x265) was considered and rejected: the CRF that
+   hits VMAF 95 on one encoder doesn't hit it on another, so it would need a
+   content-dependent calibration offset. Sampling already provides the speed.
+2. **Samples skip the outer 5%** of the source. Titles, logos and black frames score
+   nothing like the actual content and would drag the estimate around.
+
+Sampling accuracy is verified end-to-end: an integration test searches, encodes the
+full file at the chosen CRF, and asserts the measured score is near the prediction.
 
 ### Hardware encoders are a separate world
 
@@ -209,6 +261,7 @@ This isn't hypothetical defensiveness: `WindowX`/`WindowY` used to default to `d
 |------|-------------|
 | Add a video encoder | Settings class in `Core/Encoders/Video/` → `AppServices.RegisterVideoEncoder()` (ID must be `ffmpeg-{codec}`) → switch in `EncodeJobBuilder.CreateVideoSettings()` → codec name in `FFmpegVideoProcessor.GetFfmpegCodecName()` → `ContainerCompatibility.StreamCodecForEncoder()` and the container tables |
 | Add a hardware encoder | One entry in `HardwareCapabilities.Known` (id must be `hw-<vendor>-<codec>`). Registration, detection, container validation and UI filtering all follow from it. A new *vendor* also needs rate-control and preset arms in `FFmpegHardwareVideoProcessor`. |
+| Add a quality metric | `QualityMetric` enum + `QualityMetrics` metadata → filter name and parser in `QualityMeasurer` (remember `FrameSync`) → it becomes available to `compare`, `--measure` and target search automatically |
 | Add an audio encoder | Settings class in `Core/Encoders/Audio/` → `AppServices.RegisterAudioEncoder()` (ID must be `ffmpeg-audio-{codec}`) → `FFmpegAudioProcessor.GetCodecSpecificArgs()` + `GetFfmpegCodecName()` → `EncodeJobBuilder.CreateAudioSettings()` + `AudioFileExtension()` → `ContainerCompatibility` |
 | Add an encode option | `EncodeRequest` first, then `EncodeJobBuilder`, then surface it in *both* `EncodeTabViewModel.BuildRequest()` and `EncodeOptions.Build()` + `Help.cs` |
 | Add a CLI command | `Commands.cs` + dispatch in `Program.Main` + a section in `Help.cs` |

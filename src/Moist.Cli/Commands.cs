@@ -3,6 +3,7 @@ using Moist.Core.Jobs;
 using Moist.Core.Encoders.Video;
 using Moist.Core.Media;
 using Moist.Core.Muxers;
+using Moist.Core.Quality;
 using Microsoft.Extensions.Logging;
 using Moist.Services;
 
@@ -211,6 +212,14 @@ public sealed class EncodeResult
     public long SizeBytes { get; init; }
     public string Elapsed { get; init; } = "0s";
     public List<string> Commands { get; init; } = [];
+
+    /// <summary>CRF chosen by target-quality search, when one ran.</summary>
+    public int? SearchedCrf { get; init; }
+
+    /// <summary>Score of the finished encode, when --measure was given.</summary>
+    public double? QualityScore { get; init; }
+
+    public string? QualityMetric { get; init; }
 }
 
 public static class EncodeRunner
@@ -239,7 +248,7 @@ public static class EncodeRunner
             cl, services, input, output, filterScript, filterEngineId,
             sourceAudioTrackCount: info.AudioStreams.Count);
 
-        if (EncodeJobBuilder.Validate(request) is { } invalid)
+        if (EncodeJobBuilder.Validate(request, info) is { } invalid)
             return new EncodeResult { Input = input, Output = output, Success = false, Error = invalid };
 
         // A GPU encoder that isn't present fails deep inside FFmpeg with an unhelpful
@@ -259,6 +268,37 @@ public static class EncodeRunner
                     Error = $"{request.VideoEncoderId} is unavailable: {why}. Run 'moist list hardware' to see what works here.",
                 };
             }
+        }
+
+        // Target-quality: find the CRF that meets the goal, then encode with it.
+        TargetQualityResult? search = null;
+        var requestedTarget = QualityOptions.Target(cl);
+        if (requestedTarget is not null && !request.AudioOnly)
+        {
+            var (targetMetric, target) = requestedTarget.Value;
+            var options = QualityOptions.Build(cl, targetMetric, target);
+
+            if (!quiet)
+                Console.Error.WriteLine($"Searching for CRF that reaches {targetMetric} {targetMetric.Format(target)}…");
+
+            try
+            {
+                search = await CrfSearchCommand.RunSearchAsync(services, request, options, info, quiet, ct);
+            }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception ex)
+            {
+                return new EncodeResult
+                {
+                    Input = input, Output = output, Success = false,
+                    Error = $"target-quality search failed: {ex.Message}",
+                };
+            }
+
+            if (!quiet)
+                Console.Error.WriteLine($"  -> {search.Summary}\n");
+
+            request = request with { Mode = VideoEncodingMode.ConstantRateFactor, Quality = search.Crf };
         }
 
         var plan = EncodeJobBuilder.Build(request, info);
@@ -284,16 +324,42 @@ public static class EncodeRunner
 
         var failed = jobs.FirstOrDefault(j => j.Status == JobStatus.Failed);
         var elapsed = DateTime.UtcNow - started;
+        var succeeded = ok && File.Exists(output);
+
+        // --measure scores the finished encode against its source.
+        double? measuredScore = null;
+        if (succeeded && cl.Flag("measure"))
+        {
+            var measureMetric = QualityOptions.Metric(cl);
+            if (!quiet) Console.Error.WriteLine($"Measuring {measureMetric} against the source…");
+            try
+            {
+                var measurer = new QualityMeasurer(
+                    services.Settings.FFmpegPath, services.Settings.FFprobePath, services.LoggerFactory);
+                var measurement = await measurer.MeasureAsync(input, output, measureMetric, new MeasureOptions(), ct);
+                measuredScore = measurement.Score;
+                if (!quiet) Console.Error.WriteLine($"  {measurement.Summary}");
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"warning: could not measure quality: {ex.Message}");
+            }
+        }
 
         return new EncodeResult
         {
             Input = input,
             Output = output,
-            Success = ok && File.Exists(output),
+            Success = succeeded,
             Error = ok ? (File.Exists(output) ? null : "output file was not produced") : Summarize(failed),
             SizeBytes = File.Exists(output) ? new FileInfo(output).Length : 0,
             Elapsed = QueueRunner.Format(elapsed),
             Commands = jobs.Select(j => j.OutputLog.FirstOrDefault(l => l.StartsWith('[')) ?? "").Where(s => s.Length > 0).ToList(),
+            SearchedCrf = search?.Crf,
+            QualityScore = measuredScore,
+            QualityMetric = measuredScore is not null || search is not null
+                ? QualityOptions.Metric(cl).ToString().ToLowerInvariant()
+                : null,
         };
     }
 
@@ -397,13 +463,17 @@ public static class ListCommand
                 foreach (var s in statuses.OrderBy(s => s.Encoder.Vendor).ThenBy(s => s.Encoder.Id))
                 {
                     var mark = s.Usable ? "ok " : "-- ";
-                    Console.WriteLine($"  {mark} {s.Encoder.Id,-18} {s.Encoder.DisplayName}");
+                    Console.WriteLine($"  {mark} {s.Encoder.Id,-18} {s.Encoder.Label}");
                     if (!s.Usable && s.Reason is not null)
                         Console.WriteLine($"       {s.Reason}");
                 }
 
                 var count = statuses.Count(s => s.Usable);
                 Console.WriteLine($"\n{count} hardware encoder(s) usable on this machine.");
+
+                if (statuses.Any(s => s.Usable && s.Encoder.Experimental))
+                    Console.WriteLine("Encoders marked [experimental] have not been verified on real hardware yet.");
+
                 return Program.ExitOk;
             }
 

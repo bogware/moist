@@ -16,6 +16,17 @@ public sealed class HardwareEncoderDefinition
 
     public required string DisplayName { get; init; }
     public required string Description { get; init; }
+
+    /// <summary>
+    /// True when this vendor's encode path has never been exercised on real silicon.
+    /// The arguments follow the documented interface and detection correctly reports
+    /// the hardware as absent, but "correctly detected as missing" is not the same as
+    /// "known to produce a good file". Surfaced in the UI so nobody is misled.
+    /// </summary>
+    public bool Experimental => Vendor is not HardwareVendor.Nvenc;
+
+    /// <summary>Name as shown to users, flagged when unverified.</summary>
+    public string Label => Experimental ? $"{DisplayName} [experimental]" : DisplayName;
 }
 
 /// <summary>Whether an encoder is actually usable, and why not if it isn't.</summary>

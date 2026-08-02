@@ -158,10 +158,12 @@ public sealed class AppServices : IDisposable
             Encoders.Register(new EncoderInfo
             {
                 Id = definition.Id,
-                Name = definition.DisplayName,
+                Name = definition.Label,
                 Category = "Video",
                 SettingsType = typeof(HardwareVideoSettings),
-                Description = definition.Description,
+                Description = definition.Experimental
+                    ? definition.Description + " Not yet verified on real hardware."
+                    : definition.Description,
             }, () => new FFmpegHardwareVideoProcessor(
                 Settings.FFmpegPath, definition.Id, definition.FfmpegName, definition.Vendor));
         }

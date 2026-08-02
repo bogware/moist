@@ -21,7 +21,7 @@ public sealed class CommandLine
     private static readonly HashSet<string> KnownFlags = new(StringComparer.OrdinalIgnoreCase)
     {
         "audio-only", "no-subtitles", "no-chapters", "no-attachments", "no-metadata",
-        "dry-run", "json", "overwrite", "y",
+        "dry-run", "json", "overwrite", "y", "measure", "no-cache",
         "quiet", "q", "verbose", "v", "help", "h", "version", "no-progress", "keep-going",
     };
 

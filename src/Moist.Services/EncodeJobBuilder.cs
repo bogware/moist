@@ -9,8 +9,11 @@ namespace Moist.Services;
 /// <summary>
 /// Everything needed to turn one input file into an encode. Deliberately a plain data
 /// object so the GUI and the CLI describe work the same way.
+///
+/// A record so callers can derive a variant with <c>with</c> — target-quality search
+/// does exactly that once it knows which CRF to use.
 /// </summary>
-public sealed class EncodeRequest
+public sealed record EncodeRequest
 {
     public required string InputFile { get; init; }
     public required string OutputFile { get; init; }
@@ -81,11 +84,14 @@ public sealed class EncodeRequest
 public sealed class EncodePlan
 {
     public VideoJob? Video { get; init; }
+
+    /// <summary>Empty when the source has no audio at all.</summary>
     public required IReadOnlyList<AudioJob> AudioJobs { get; init; }
+
     public MuxJob? Mux { get; init; }
 
-    /// <summary>Convenience for the common single-track case.</summary>
-    public AudioJob Audio => AudioJobs[0];
+    /// <summary>Convenience for the common single-track case; null for silent sources.</summary>
+    public AudioJob? Audio => AudioJobs.Count > 0 ? AudioJobs[0] : null;
 
     public IEnumerable<Job> AllJobs
     {
@@ -98,7 +104,10 @@ public sealed class EncodePlan
     }
 
     /// <summary>The job whose completion means the whole encode is done.</summary>
-    public Job FinalJob => (Job?)Mux ?? AudioJobs[0];
+    public Job FinalJob => (Job?)Mux
+        ?? AudioJobs.FirstOrDefault()
+        ?? (Job?)Video
+        ?? throw new InvalidOperationException("encode plan contains no jobs");
 }
 
 /// <summary>
@@ -111,14 +120,26 @@ public static class EncodeJobBuilder
     /// Validate a request without building anything. Returns null when it's runnable,
     /// otherwise a human-readable reason.
     /// </summary>
-    public static string? Validate(EncodeRequest req)
+    public static string? Validate(EncodeRequest req, MediaFileInfo? info = null)
     {
-        if (req.AudioOnly) return null;
+        var silent = info is not null && info.AudioStreams.Count == 0;
+
+        if (req.AudioOnly)
+        {
+            return silent
+                ? "Audio-only was requested, but this file has no audio streams."
+                : null;
+        }
+
+        // A silent source produces no audio stream, so audio compatibility is moot.
+        var audioCodec = silent
+            ? null
+            : ContainerCompatibility.StreamCodecForEncoder(req.AudioEncoderId);
 
         return ContainerCompatibility.Validate(
             req.Container,
             ContainerCompatibility.StreamCodecForEncoder(req.VideoEncoderId),
-            ContainerCompatibility.StreamCodecForEncoder(req.AudioEncoderId));
+            audioCodec);
     }
 
     public static EncodePlan Build(EncodeRequest req, MediaFileInfo? info)
@@ -128,13 +149,25 @@ public static class EncodeJobBuilder
         if (!string.IsNullOrEmpty(outputDir))
             Directory.CreateDirectory(outputDir);
 
-        var tracks = req.AudioTracks.Count > 0 ? req.AudioTracks : [0];
+        // A silent source gets no audio jobs at all. Asking FFmpeg to map 0:a:0 on a
+        // video-only file fails the whole encode.
+        var hasAudio = info is null || info.AudioStreams.Count > 0;
+        var tracks = !hasAudio
+            ? []
+            : req.AudioTracks.Count > 0
+                ? req.AudioTracks.Where(t => info is null || t < info.AudioStreams.Count).ToList()
+                : [0];
+
+        if (hasAudio && tracks.Count == 0) tracks = [0];
 
         // ---- Audio-only: one job straight to the final file ----
         // A single file can't hold several encoded tracks without a mux step, so
         // audio-only takes the first selection.
         if (req.AudioOnly)
         {
+            if (tracks.Count == 0)
+                throw new InvalidOperationException("audio-only was requested but the source has no audio streams");
+
             return new EncodePlan
             {
                 AudioJobs =

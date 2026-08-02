@@ -40,11 +40,16 @@ public sealed partial class FFmpegVideoProcessor : CommandLineProcessor
         _lastFps = 0;
         _stopwatch.Reset();
         var s = vj.Settings;
-        var args = new List<string>
-        {
-            "-y", "-hide_banner", "-progress", "pipe:1",
-            "-i", Quote(vj.InputFile)
-        };
+        var args = new List<string> { "-y", "-hide_banner", "-progress", "pipe:1" };
+
+        // Seek before -i so FFmpeg skips ahead instead of decoding and discarding.
+        if (vj.TrimStart is { } trimStart)
+            args.AddRange(["-ss", trimStart.TotalSeconds.ToString("F3", CultureInfo.InvariantCulture)]);
+
+        args.AddRange(["-i", Quote(vj.InputFile)]);
+
+        if (vj.TrimDuration is { } trimDuration)
+            args.AddRange(["-t", trimDuration.TotalSeconds.ToString("F3", CultureInfo.InvariantCulture)]);
 
         // Apply filter script if present
         if (!string.IsNullOrWhiteSpace(vj.FilterScript))

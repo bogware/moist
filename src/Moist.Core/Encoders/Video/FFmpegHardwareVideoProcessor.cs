@@ -58,7 +58,13 @@ public sealed partial class FFmpegHardwareVideoProcessor : CommandLineProcessor
         if (_vendor == HardwareVendor.Vaapi)
             args.AddRange(["-vaapi_device", hw?.VaapiDevice ?? "/dev/dri/renderD128"]);
 
+        if (vj.TrimStart is { } trimStart)
+            args.AddRange(["-ss", trimStart.TotalSeconds.ToString("F3", CultureInfo.InvariantCulture)]);
+
         args.AddRange(["-i", Quote(vj.InputFile)]);
+
+        if (vj.TrimDuration is { } trimDuration)
+            args.AddRange(["-t", trimDuration.TotalSeconds.ToString("F3", CultureInfo.InvariantCulture)]);
 
         // Filters. VA-API encodes from GPU memory, so whatever the user asked for has to
         // be followed by a conversion and upload.

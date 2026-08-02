@@ -82,6 +82,69 @@ Drop your files. Walk away. Come back to finished encodes.
 - **Per-item status tracking** — Pending, Queued, Encoding, Completed, Failed
 - **Flexible output paths** — Source directory or custom output with configurable suffix
 
+### Target Quality — say what you want, not what you guess
+
+CRF is a dial with no units. "CRF 23" means nothing about how the result will look;
+it depends entirely on the content. So stop guessing:
+
+```bash
+moist encode input.mkv --target-vmaf 95
+```
+
+moist encodes a few short samples from across the file, measures each one, and
+searches for the CRF that lands on your target — then encodes with it.
+
+```
+Searching for CRF that reaches Vmaf 95.00…
+  [1/8] Trying CRF 26…
+  [2/8] Trying CRF 18…
+  [3/8] Trying CRF 22…
+  ok   CRF 18  95.03
+  low  CRF 19  94.26
+  low  CRF 22  91.31
+  low  CRF 26  85.25
+  -> CRF 18 reaches 95.03 (target 95.00)
+```
+
+**Does sampling actually predict the whole file?** Measured, not assumed:
+
+| | Predicted from 3×5s samples | Actual full encode |
+|---|---|---|
+| VMAF | 93.39 | **93.46** |
+| Size | 64% of source | 61% |
+
+The search is an interpolated bisection — it fits a line through the two bracketing
+probes and jumps to where that line crosses the target, usually landing within a
+point or two immediately. Results are cached per file, encoder, preset and target;
+editing the source invalidates the entry by itself.
+
+It always searches with the encoder and preset you'll actually encode with. Probing
+with a fast GPU encoder and encoding with x265 would be quicker, but the CRF that
+hits 95 on one encoder doesn't hit it on another — that's a fast wrong answer.
+
+Works with `--target-xpsnr`, `--target-ssim`, `--target-psnr` too, and in the GUI via
+the **Find CRF** button.
+
+### Quality Metrics
+
+Measure what you made, don't hope:
+
+```bash
+$ moist compare source.mkv encoded.mkv
+Vmaf   93.46
+       harmonic mean 93.43  (penalises bad scenes)
+       worst frame   88.21
+       best frame    99.12
+       1,200 frames in 1m59s
+```
+
+- **VMAF, XPSNR, SSIM, PSNR** — all built into stock FFmpeg, no extra tooling
+- **Pooled statistics** — a file can average 95 and still have a stretch that looks
+  poor, so the worst frame and harmonic mean are reported alongside the average
+- **Resolution-aware** — a downscaled encode is scaled back up before comparing, and
+  4K content uses VMAF's 4K model
+- `--measure` on any encode scores the result against its source when it finishes
+
 ### Hardware Encoding
 
 Your GPU is sitting right there. Use it.
@@ -183,10 +246,15 @@ moist encode input.mkv --audio-only --audio-encoder ffmpeg-audio-flac
 moist encode input.mkv --mode twopass --bitrate 8000 --container mp4
 moist encode input.mkv --filter resize:width=1920,height=1080 --filter unsharp:luma_amount=1.2
 
+# say what quality you want instead of guessing a CRF
+moist encode input.mkv --target-vmaf 95 --measure
+moist crf-search input.mkv --target-vmaf 95 --json
+
 # hardware, all audio tracks, forced 10-bit
 moist encode input.mkv --video-encoder hw-nvenc-hevc --audio-track all --bit-depth 10
 
 moist batch *.mkv --container mp4 --output-dir ./out --jobs 4 --keep-going
+moist compare source.mkv encoded.mkv --metric vmaf
 moist probe input.mkv --json
 moist list encoders | hardware | containers | profiles | filters
 moist tools
@@ -243,9 +311,9 @@ dotnet test Moist.Core.Tests       # fast unit tests only
 dotnet test Moist.IntegrationTests # real FFmpeg encodes
 ```
 
-**111 unit tests** covering job models, queue behavior, encoder registry, profiles, settings, filter engines, audio processor argument building, hardware encoder plumbing, and CLI parsing — none of which launch an external process.
+**138 unit tests** covering job models, queue behavior, encoder registry, profiles, settings, filter engines, audio processor argument building, hardware encoder plumbing, quality metric parsing, search arithmetic, and CLI parsing — none of which launch an external process.
 
-**64 integration tests** that run real encodes through the full pipeline and verify the output with ffprobe: every video encoder, every audio codec, every container, 10-bit and HDR sources, multi-track audio, chapters and attachments, filter chains, subtitles, cancellation, concurrency, awkward filenames, and temp-file cleanup. They skip automatically when FFmpeg isn't on your PATH (and hardware tests skip without a usable GPU), so check the skip count before trusting a green run.
+**79 integration tests** that run real encodes through the full pipeline and verify the output with ffprobe: every video encoder, every audio codec, every container, 10-bit and HDR sources, silent sources, multi-track audio, chapters and attachments, filter chains, subtitles, cancellation, concurrency, awkward filenames, temp-file cleanup, all four quality metrics, and target-quality search — including a test that searches, encodes the full file, and asserts the sampled prediction held. They skip automatically when FFmpeg isn't on your PATH (and hardware tests skip without a usable GPU), so check the skip count before trusting a green run.
 
 If FFmpeg isn't on your PATH, set the path in the **Settings** tab after launching. moist won't hold it against you.
 

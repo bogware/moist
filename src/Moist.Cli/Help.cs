@@ -9,6 +9,8 @@ public static class Help
             case "encode": Encode(); return;
             case "batch": Batch(); return;
             case "probe": Probe(); return;
+            case "compare": Compare(); return;
+            case "crf-search" or "search": CrfSearch(); return;
             case "list": List(); return;
             case "tools": Tools(); return;
         }
@@ -23,7 +25,9 @@ public static class Help
               encode <input>        Encode a single file
               batch <inputs...>     Encode many files (accepts globs)
               probe <input>         Show media information
-              list <what>           List encoders, containers, profiles or filters
+              compare <a> <b>       Measure quality of an encode against its source
+              crf-search <input>    Find the CRF that reaches a quality target
+              list <what>           List encoders, hardware, containers, profiles or filters
               tools                 Check external tool prerequisites
 
             GLOBAL
@@ -32,9 +36,11 @@ public static class Help
 
             EXAMPLES
               moist encode in.mkv -o out.mp4 --crf 20 --preset slow
+              moist encode in.mkv --target-vmaf 95            # pick quality, not CRF
               moist encode in.mkv --profile "Web - H.265 High Quality"
               moist encode in.mkv --audio-only --audio-encoder ffmpeg-audio-flac
               moist batch *.mkv --container mp4 --jobs 4
+              moist compare source.mkv encoded.mkv
               moist probe in.mkv --json
             """);
     }
@@ -83,6 +89,17 @@ public static class Help
               --no-chapters         Don't carry chapter markers over
               --no-attachments      Don't carry attached fonts over (MKV only)
               --no-metadata         Don't carry container-level tags over
+
+        TARGET QUALITY
+              --target-vmaf <n>     Find and use the CRF that reaches this VMAF score.
+                                    Also --target-xpsnr / --target-ssim / --target-psnr,
+                                    or --target-quality <n> with --metric.
+              --metric <name>       vmaf | xpsnr | ssim | psnr          (default: vmaf)
+              --samples <n>         Spans of the source to test         (default: 3)
+              --sample-duration <s> Seconds per sample                  (default: 5)
+              --max-probes <n>      Cap on CRFs tried                   (default: 8)
+              --no-cache            Ignore a previous search for this file
+              --measure             Score the finished encode against the source
 
         BEHAVIOUR
           -j, --jobs <n>            Concurrent jobs                     (default: from settings)
@@ -141,6 +158,59 @@ public static class Help
 
         Hardware encoders are probed by encoding a few frames, because an encoder being
         compiled into FFmpeg says nothing about the GPU actually being present.
+        """);
+
+    private static void Compare() => Console.WriteLine("""
+        moist compare — measure an encode against its source
+
+        USAGE
+          moist compare <reference> <encoded> [--metric <name>] [--json]
+
+        OPTIONS
+          --metric <name>   vmaf | xpsnr | ssim | psnr    (default: vmaf)
+          --threads <n>     Threads for the metric        (default: FFmpeg decides)
+          --json            Machine-readable output
+
+        VMAF also reports the harmonic mean, which penalises bad scenes far more than
+        the plain average — a file can average 95 and still have a stretch that looks
+        poor. Check the worst-frame figure too.
+
+        A downscaled encode is scaled back up to the reference resolution first,
+        otherwise the two can't be compared at all.
+        """);
+
+    private static void CrfSearch() => Console.WriteLine("""
+        moist crf-search — find the CRF that reaches a quality target
+
+        USAGE
+          moist crf-search <input> --target-vmaf 95 [options]
+
+        Encoding the whole file at every candidate CRF would take longer than just
+        encoding it, so this samples a few short spans instead and searches over those.
+        On a test clip, three five-second samples predicted the full encode's VMAF to
+        within 0.1.
+
+        The search is an interpolated bisection: it fits a line through the two nearest
+        measurements and jumps to where that line crosses the target, which usually
+        lands within a point or two immediately.
+
+        OPTIONS
+          --target-vmaf <n>     Or --target-xpsnr / --target-ssim / --target-psnr
+          --metric <name>       Used with --target-quality
+          --samples <n>         Spans to test               (default: 3)
+          --sample-duration <s> Seconds per sample          (default: 5)
+          --max-probes <n>      Cap on CRFs tried           (default: 8)
+          --no-cache            Ignore a previous search for this file
+
+        Accepts the encoder options 'moist encode' does — the search uses the encoder
+        and preset you will actually encode with, since the CRF that hits a score on
+        one encoder does not hit it on another.
+
+        Results are cached per file, encoder, preset and target. Editing the source
+        invalidates the entry automatically.
+
+        Exit code 1 if the target could not be reached; the best CRF found is still
+        reported.
         """);
 
     private static void Tools() => Console.WriteLine("""
