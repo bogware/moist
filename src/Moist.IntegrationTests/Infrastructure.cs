@@ -83,6 +83,20 @@ public static class Ffmpeg
         => double.TryParse(Probe("-v error -show_entries format=duration -of csv=p=0", file),
             System.Globalization.NumberStyles.Float,
             System.Globalization.CultureInfo.InvariantCulture, out var d) ? d : 0;
+
+    /// <summary>Declared frame rate as a rational string, e.g. "24000/1001".</summary>
+    public static string FrameRate(string file)
+        => Probe("-v error -select_streams v:0 -show_entries stream=r_frame_rate -of csv=p=0", file)
+            .Trim(',', ' ', '\r', '\n');
+
+    /// <summary>
+    /// Frames actually decoded, not the container's claim. Containers routinely report a
+    /// count that the stream does not contain.
+    /// </summary>
+    public static int FrameCount(string file)
+        => int.TryParse(
+            Probe("-v error -select_streams v:0 -count_frames -show_entries stream=nb_read_frames -of csv=p=0", file)
+                .Trim(',', ' ', '\r', '\n'), out var n) ? n : -1;
 }
 
 /// <summary>A [Fact] that skips itself when FFmpeg isn't installed, so CI stays green.</summary>
@@ -100,6 +114,61 @@ public sealed class FfmpegTheoryAttribute : TheoryAttribute
     public FfmpegTheoryAttribute()
     {
         if (Ffmpeg.SkipReason is { } reason) Skip = reason;
+    }
+}
+
+/// <summary>
+/// Locates the standalone x264/x265 binaries. Unlike FFmpeg these are not something most
+/// machines have, and they are not part of an FFmpeg install either — so point
+/// MOIST_X264 / MOIST_X265 at a binary, or put one on PATH, to run these tests.
+/// </summary>
+public static class CliEncoder
+{
+    private static readonly Lazy<string?> _x264 = new(() => Locate("MOIST_X264", "x264"));
+    private static readonly Lazy<string?> _x265 = new(() => Locate("MOIST_X265", "x265"));
+
+    public static string? X264 => _x264.Value;
+    public static string? X265 => _x265.Value;
+
+    private static string? Locate(string variable, string exe)
+    {
+        if (Environment.GetEnvironmentVariable(variable) is { Length: > 0 } configured)
+            return File.Exists(configured) ? configured : null;
+
+        var extensions = OperatingSystem.IsWindows() ? new[] { ".exe", ".cmd", "" } : [""];
+        foreach (var dir in (Environment.GetEnvironmentVariable("PATH") ?? "")
+                     .Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries))
+        {
+            foreach (var extension in extensions)
+            {
+                var candidate = Path.Combine(dir.Trim(), exe + extension);
+                if (File.Exists(candidate)) return candidate;
+            }
+        }
+
+        return null;
+    }
+}
+
+/// <summary>A [Fact] needing the standalone x264, skipped when it isn't available.</summary>
+public sealed class X264FactAttribute : FactAttribute
+{
+    public X264FactAttribute()
+    {
+        if (Ffmpeg.SkipReason is { } reason) Skip = reason;
+        else if (CliEncoder.X264 is null)
+            Skip = "x264 not found — set MOIST_X264 or put x264 on PATH to run this.";
+    }
+}
+
+/// <summary>A [Fact] needing the standalone x265, skipped when it isn't available.</summary>
+public sealed class X265FactAttribute : FactAttribute
+{
+    public X265FactAttribute()
+    {
+        if (Ffmpeg.SkipReason is { } reason) Skip = reason;
+        else if (CliEncoder.X265 is null)
+            Skip = "x265 not found — set MOIST_X265 or put x265 on PATH to run this.";
     }
 }
 
@@ -138,6 +207,12 @@ public sealed class MediaFixture : IDisposable
     /// </summary>
     public string VariedVideo { get; }
 
+    /// <summary>
+    /// 24000/1001 fps. Anything that reconstructs timing from a frame rate has to keep it
+    /// rational — rounding to 23.976 drifts a whole frame over a feature-length run.
+    /// </summary>
+    public string NtscVideo { get; }
+
     public MediaFixture()
     {
         Root = Path.Combine(Path.GetTempPath(), "moist-itest-" + Guid.NewGuid().ToString("N")[..8]);
@@ -153,6 +228,7 @@ public sealed class MediaFixture : IDisposable
         NaturalVideo = Path.Combine(Root, "natural.mp4");
         SceneVideo = Path.Combine(Root, "scenes.mp4");
         VariedVideo = Path.Combine(Root, "varied.mp4");
+        NtscVideo = Path.Combine(Root, "ntsc.mkv");
 
         if (!Ffmpeg.Available) return;
 
@@ -197,6 +273,10 @@ public sealed class MediaFixture : IDisposable
             $"-filter_complex \"[1:v]trim=duration=3,setpts=PTS-STARTPTS[m];[0:v][m][2:v][3:v]concat=n=4:v=1[v]\" " +
             $"-map \"[v]\" -map 4:a -c:v libx264 -preset veryfast -crf 14 -pix_fmt yuv420p -c:a aac -shortest " +
             $"\"{VariedVideo}\"");
+
+        Run("ffmpeg", $"-y -v error -f lavfi -i mandelbrot=size=320x180:rate=24000/1001 -t 3 " +
+                      $"-f lavfi -i sine=frequency=440:duration=3 " +
+                      $"-c:v libx264 -preset ultrafast -pix_fmt yuv420p -c:a aac -shortest \"{NtscVideo}\"");
     }
 
     /// <summary>10-bit HDR10: BT.2020 primaries, PQ transfer, mastering display and CLL.</summary>

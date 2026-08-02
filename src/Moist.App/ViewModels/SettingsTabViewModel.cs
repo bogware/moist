@@ -9,6 +9,7 @@ namespace Moist.App.ViewModels;
 public partial class SettingsTabViewModel : ViewModelBase
 {
     private readonly AppServices _services;
+    private bool _hasScannedOnce;
 
     // Tool paths
     [ObservableProperty] private string _ffmpegPath;
@@ -67,7 +68,9 @@ public partial class SettingsTabViewModel : ViewModelBase
 
         try
         {
-            var results = await _services.DiscoverToolsAsync();
+            // The user pressing Scan means they want a fresh look, not the cached one.
+            var results = await _services.DiscoverToolsAsync(force: _hasScannedOnce);
+            _hasScannedOnce = true;
             ToolStatuses.Clear();
 
             foreach (var status in results)

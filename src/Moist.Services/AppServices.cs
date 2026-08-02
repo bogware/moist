@@ -198,7 +198,7 @@ public sealed class AppServices : IDisposable
             Category = "Video",
             SettingsType = typeof(X265Settings),
             Description = "Direct x265 CLI for maximum control. Piped from FFmpeg.",
-        }, () => new X265CliProcessor(Settings.X265Path, Settings.FFmpegPath));
+        }, () => new X265CliProcessor(Settings.X265Path, Settings.FFmpegPath, Settings.FFprobePath));
 
         // Audio encoders via FFmpeg
         RegisterAudioEncoder("ffmpeg-audio-opus", "Opus", "opus",
@@ -302,11 +302,33 @@ public sealed class AppServices : IDisposable
         => Encoders.GetVideoEncoders()
             .Where(e => !e.Id.StartsWith("hw-", StringComparison.Ordinal) || Hardware.IsUsable(e.Id));
 
+    private Task<List<ToolStatus>>? _toolDiscovery;
+    private readonly object _toolDiscoveryLock = new();
+
     /// <summary>
     /// Run tool discovery and auto-update settings with discovered paths.
-    /// Call this at startup or when the user wants to re-scan.
+    ///
+    /// The result is shared: the main window and the settings tab both want it at
+    /// startup, and each scan spawns a process per known tool. Pass
+    /// <paramref name="force"/> when the user explicitly asks to re-scan.
     /// </summary>
-    public async Task<List<ToolStatus>> DiscoverToolsAsync(CancellationToken ct = default)
+    public Task<List<ToolStatus>> DiscoverToolsAsync(bool force = false, CancellationToken ct = default)
+    {
+        lock (_toolDiscoveryLock)
+        {
+            // A faulted scan shouldn't be cached forever.
+            if (force || _toolDiscovery is null || _toolDiscovery.IsFaulted)
+                _toolDiscovery = RunToolDiscoveryAsync(ct);
+
+            return _toolDiscovery;
+        }
+    }
+
+    /// <inheritdoc cref="DiscoverToolsAsync(bool, CancellationToken)"/>
+    public Task<List<ToolStatus>> DiscoverToolsAsync(CancellationToken ct)
+        => DiscoverToolsAsync(force: false, ct);
+
+    private async Task<List<ToolStatus>> RunToolDiscoveryAsync(CancellationToken ct)
     {
         var results = await ToolDiscovery.CheckAllToolsAsync(GetConfiguredToolPath, ct);
 

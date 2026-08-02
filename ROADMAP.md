@@ -387,10 +387,54 @@ chunk the previous one finished.
 Restored encodes are **queued, not started**. Coming back to a machine already grinding
 through work nobody asked for would be worse than losing the queue.
 
+## Standalone x264 / x265 ✅
+
+Both had never been run. Neither worked, and the reasons were worth writing down.
+
+**Every encode failed, with an empty error message.** These encoders read raw frames on
+stdin, so moist pipes FFmpeg into them through a shell — and `cmd.exe` strips the first
+and last quote of whatever follows `/c`. A pipeline starts with a quoted tool path, so
+`/c "ffmpeg" -i in | "x264" -o out` reached the parser as `ffmpeg" -i in | "x264`. What
+failed was the mangled first token, not the encoder, which is why nothing useful was
+reported. Both processors carried their own copy of the bug; the shell handling now
+lives in one place, `ShellPipeline`.
+
+**The command in the log was never the command that ran.** It was written before the
+processors replaced it, so the one artefact you reach for when a job fails was fiction.
+Now logged after.
+
+**x264's arguments were built twice, by two methods that had drifted.** The version that
+ran dropped reference frames, B-frames, CABAC, threads and Blu-ray compatibility.
+
+**10-bit was silently truncated.** x264 and x265 both default their output to 8-bit
+regardless of what the pipe carries. Measured: a 10-bit source through x264 came out
+`yuv420p` — the master's extra precision gone, exit code 0.
+
+**Trims were ignored entirely.** Chunked encoding, target-quality search and per-scene
+optimisation all work by encoding *pieces* of the source. These encoders encoded the
+whole file every time — so every chunk and every quality probe was wrong.
+
+**x265 has no muxer at all** — it writes a raw HEVC elementary stream, which carries no
+timing whatsoever. Anything reading it afterwards guesses the frame rate, and FFmpeg
+guesses 25: the video changes duration and slides out of sync with its own audio. It is
+now wrapped where the source rate is still known. Two traps found while doing it: on
+FFmpeg 8 the raw demuxer emits packets with *no* timestamps and Matroska rejects them
+outright, so timestamps are synthesised with the `setts` bitstream filter; and muxing to
+MP4 instead "succeeds" while quietly dropping frames (178 of 180 in the test).
+
+Verified against 8-bit, 10-bit and 24000/1001 sources, plus a filename containing `&`,
+spaces and non-ASCII characters — the pipeline exposes paths to shell parsing twice.
+
 ## Known gaps not yet tiered
 - **HDR10+ / Dolby Vision passthrough.** Detected and warned about, but not preserved.
   Needs `dovi_tool` / `hdr10plus_tool` and real Dolby Vision content to build against.
-- **Tool discovery runs twice at startup.**
-- **Settings prerequisites list has overlapping text** (`OKFFmpeg`).
-- **x264/x265 CLI, VapourSynth and AviSynth paths are untested** — those tools
-  aren't installed on the development machine.
+- **VapourSynth and AviSynth chains cannot be encoded.** The engines generate correct
+  scripts, but nothing runs them: `FilterEngineId` is carried on the job and read by no
+  one, so a chain would reach FFmpeg as a `-vf` string and be rejected. The GUI blocks it
+  and the CLI can only select the FFmpeg engine, so nothing produces a wrong file — the
+  feature is simply absent. Wiring it up means piping `vspipe`/`avs2pipe` into the
+  standalone encoders (now that those work, this is tractable) *and* settling the source
+  filter: the generated script calls `lsmas.LWLibavSource`, which is a third-party plugin
+  that ships with neither VapourSynth nor moist. Left unbuilt deliberately — VapourSynth
+  isn't installed here, and an unverified encode path is exactly what this section is
+  full of.

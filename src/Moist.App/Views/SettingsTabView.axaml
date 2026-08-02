@@ -30,12 +30,18 @@
                             <DataTemplate x:DataType="vm:ToolStatusViewModel">
                                 <Border Padding="8,6" Margin="0,2" CornerRadius="4"
                                         Background="{DynamicResource SystemControlBackgroundChromeMediumLowBrush}">
-                                    <Grid ColumnDefinitions="20,140,*,Auto">
-                                        <TextBlock Text="{Binding StatusIcon}" FontSize="14" VerticalAlignment="Center"/>
+                                    <!-- The icon column has to fit "OK", and tool names run to
+                                         "MKVToolNix (mkvmerge)"; both used to spill into the
+                                         next column and overlap the text there. -->
+                                    <Grid ColumnDefinitions="34,190,*,Auto" ColumnSpacing="8">
+                                        <TextBlock Text="{Binding StatusIcon}" FontSize="13" FontWeight="SemiBold"
+                                                   VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
                                         <TextBlock Grid.Column="1" Text="{Binding Name}" FontWeight="SemiBold"
-                                                   VerticalAlignment="Center"/>
+                                                   VerticalAlignment="Center" TextTrimming="CharacterEllipsis"
+                                                   ToolTip.Tip="{Binding Name}"/>
                                         <TextBlock Grid.Column="2" Text="{Binding StatusText}" Opacity="0.7"
-                                                   VerticalAlignment="Center" FontSize="12" TextTrimming="CharacterEllipsis"/>
+                                                   VerticalAlignment="Center" FontSize="12" TextTrimming="CharacterEllipsis"
+                                                   ToolTip.Tip="{Binding StatusText}"/>
                                         <Button Grid.Column="3" Content="{Binding ActionLabel}"
                                                 Command="{Binding InstallCommand}"
                                                 IsVisible="{Binding CanInstall}"

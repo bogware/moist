@@ -686,14 +686,19 @@ public partial class EncodeTabViewModel : ViewModelBase, IDisposable
             return;
         }
 
-        // Guard: non-FFmpeg filter engines can't be used with FFmpeg-based encoders
+        // Guard: VapourSynth and AviSynth produce scripts that have to be run by vspipe or
+        // avs2pipe and piped into the encoder. That piping isn't built yet, so their chains
+        // would reach FFmpeg as a -vf string and be rejected as gibberish. The old wording
+        // here told users to switch to the standalone CLI encoders, which does not help —
+        // nothing reads FilterEngineId on the encode path at all.
         if (!AudioOnly && _filterTab?.SelectedEngine is not null
             && _filterTab.Chain.Filters.Count > 0
             && _filterTab.SelectedEngine.Id != "ffmpeg")
         {
             HasError = true;
-            StatusMessage = $"The {_filterTab.SelectedEngine.Name} filter engine requires standalone CLI encoders (x264/x265 CLI with vspipe piping). " +
-                            "Please switch to FFmpeg Filters or clear the filter chain.";
+            StatusMessage = $"{_filterTab.SelectedEngine.Name} filter chains cannot be encoded yet — " +
+                            "only the FFmpeg filter engine is wired into the encode pipeline. " +
+                            "Switch to FFmpeg Filters, or clear the filter chain to encode unfiltered.";
             return;
         }
 

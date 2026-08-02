@@ -274,9 +274,23 @@ absent, but their encode paths are unproven.
 
 Pass 1 additionally passes **`-f null`** for FFmpeg-based encoders. FFmpeg cannot infer a muxer from `NUL` or `/dev/null` (no extension) and fails with "Unable to choose an output format" without it. The standalone x264/x265 CLIs accept those paths natively and must *not* get the flag.
 
+### The standalone encoders run a shell pipeline
+
+`cli-x264` and `cli-x265` read raw frames on stdin, so they run as `ffmpeg … -f yuv4mpegpipe - | x264 …` through a shell. All of that lives in `ShellPipeline` (`Moist.Core/Jobs/`) — put shell handling there, not in a processor, because it was duplicated in both and both were wrong.
+
+Things that path gets wrong if you touch it carelessly:
+
+- **`cmd.exe` strips the first and last quote after `/c`.** A pipeline begins with a quoted tool path, so it needs an *extra* enclosing pair — `/s /c "…"` — or the command arrives mangled and fails with no usable error. Use `ShellPipeline.Apply`, which also uses `ArgumentList` on Unix so the command is never re-parsed.
+- **Trims are not optional.** Chunked encoding, target-quality search and per-scene optimisation encode *pieces* of the source via `TrimStart`/`TrimFrames`/`TrimDuration`. An encoder ignoring them encodes the whole file for every chunk and every probe, silently.
+- **Both encoders default to 8-bit output** regardless of what the pipe carries, so `--output-depth` has to be sent explicitly for 10/12-bit. It's only sent when it differs from 8, since single-depth builds reject the option outright.
+- **x265 has no muxer** — it writes a raw HEVC elementary stream with no timing at all, so `OnAfterSuccessAsync` wraps it while the source frame rate is still known. On FFmpeg 8 the raw demuxer emits packets with no timestamps and Matroska refuses them, so they're synthesised with `-bsf:v setts=ts=N*den/num/TB`. Don't "simplify" this to an MP4 remux: that exits 0 while dropping frames.
+- **`BuildArguments` is what actually runs**, composed into the pipeline by `OnBeforeStart`. Don't build a second copy of the arguments there — that's how the x264-specific settings got silently dropped for a year.
+
+`CommandLineProcessor` logs the command *after* `OnBeforeStart`, so what's in the log is what ran.
+
 ### Filter engines and the FFmpeg-only constraint
 
-`IFilterEngine` implementations turn an engine-agnostic `FilterChain` into a script: FFmpeg → a `-vf` chain string, VapourSynth → `.vpy`, AviSynth+ → `.avs`. Only the FFmpeg engine's output is consumable by `FFmpegVideoProcessor` (it passes the string to `-vf`). VapourSynth/AviSynth scripts need vspipe/avs2pipe piping into a standalone CLI encoder, which is not implemented — so `EncodeTabViewModel.AddToQueue()` **rejects the enqueue** when a non-FFmpeg engine has a non-empty chain. Also note `FFmpegFilterEngine` silently drops filters it doesn't recognize (it records them in `SkippedFilterIds`, which nothing currently reads).
+`IFilterEngine` implementations turn an engine-agnostic `FilterChain` into a script: FFmpeg → a `-vf` chain string, VapourSynth → `.vpy`, AviSynth+ → `.avs`. Only the FFmpeg engine's output is consumable by `FFmpegVideoProcessor` (it passes the string to `-vf`). VapourSynth/AviSynth scripts need vspipe/avs2pipe piping into a standalone CLI encoder, which is not implemented — nothing on the encode path reads `FilterEngineId` at all — so `EncodeTabViewModel.AddToQueue()` **rejects the enqueue** when a non-FFmpeg engine has a non-empty chain, and the CLI's `--filter` can only select the FFmpeg engine. If you build the piping, note that the generated `.vpy` calls `lsmas.LWLibavSource`, a third-party plugin that ships with neither VapourSynth nor moist. Also note `FFmpegFilterEngine` silently drops filters it doesn't recognize (it records them in `SkippedFilterIds`, which nothing currently reads).
 
 ### Profiles: built-ins are materialized to disk
 

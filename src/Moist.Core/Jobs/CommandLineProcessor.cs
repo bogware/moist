@@ -44,12 +44,6 @@ public abstract class CommandLineProcessor : IJobProcessor
 
         var args = BuildArguments(job);
 
-        Logger.LogInformation("Starting {Processor} for job {JobId}: {Exe} {Args}",
-            DisplayName, job.Id, exe, args);
-
-        // Log the command line to the job's output log for UI visibility
-        job.AppendLog($"[{DisplayName}] {exe} {args}");
-
         var psi = new ProcessStartInfo
         {
             FileName = exe,
@@ -63,6 +57,17 @@ public abstract class CommandLineProcessor : IJobProcessor
         };
 
         OnBeforeStart(psi, job);
+
+        // Logged after OnBeforeStart, because processors that pipe two tools together
+        // replace the command entirely there. Logging the pre-override version meant the
+        // recorded command line was one that never ran, which is exactly the thing you
+        // reach for when a job fails.
+        var command = DescribeCommand(psi);
+        Logger.LogInformation("Starting {Processor} for job {JobId}: {Command}",
+            DisplayName, job.Id, command);
+
+        // Log the command line to the job's output log for UI visibility
+        job.AppendLog($"[{DisplayName}] {command}");
 
         using var process = new Process { StartInfo = psi };
         var outputLines = new ConcurrentQueue<string>();
@@ -136,6 +141,15 @@ public abstract class CommandLineProcessor : IJobProcessor
 
     /// <summary>Wraps a string in double quotes for CLI argument use.</summary>
     protected static string Quote(string s) => $"\"{s}\"";
+
+    /// <summary>The command as it will actually be run, for logs.</summary>
+    private static string DescribeCommand(ProcessStartInfo psi)
+    {
+        var args = psi.ArgumentList.Count > 0
+            ? string.Join(" ", psi.ArgumentList)
+            : psi.Arguments;
+        return $"{psi.FileName} {args}";
+    }
 
     /// <summary>Check if an executable is accessible (absolute path exists or found on PATH).</summary>
     private static bool IsExecutableAccessible(string exe)
