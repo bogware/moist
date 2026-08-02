@@ -1,5 +1,6 @@
 using Moist.Core.Encoders.Audio;
 using Moist.Core.Encoders.Video;
+using Moist.Core.Chunking;
 using Moist.Core.Muxers;
 using Moist.Core.Profiles;
 using Moist.Filters;
@@ -132,6 +133,35 @@ public static class EncodeOptions
         }
 
         return indices.Count > 0 ? indices : [0];
+    }
+
+    /// <summary>Chunking options, or null when the user didn't ask for it.</summary>
+    public static ChunkingOptions? Chunking(CommandLine cl)
+    {
+        if (!cl.Flag("chunked") && cl.String("chunk-mode") is null) return null;
+
+        var mode = cl.String("chunk-mode")?.ToLowerInvariant() switch
+        {
+            null or "scene" => ChunkMode.Scene,
+            "fixed" => ChunkMode.Fixed,
+            var other => throw new UsageException($"--chunk-mode expects scene or fixed (got '{other}')"),
+        };
+
+        var min = TimeSpan.FromSeconds(cl.Double("min-chunk") ?? 5);
+        var max = TimeSpan.FromSeconds(cl.Double("max-chunk") ?? 60);
+
+        if (min <= TimeSpan.Zero) throw new UsageException("--min-chunk must be greater than zero");
+        if (max < min) throw new UsageException("--max-chunk cannot be smaller than --min-chunk");
+
+        return new ChunkingOptions
+        {
+            Mode = mode,
+            MinChunkDuration = min,
+            MaxChunkDuration = max,
+            SceneThreshold = cl.Double("scene-threshold") ?? 10.0,
+            Resume = !cl.Flag("no-resume"),
+            Verify = !cl.Flag("no-verify"),
+        };
     }
 
     /// <summary>Accepts "auto", "8", "10", "12" — the numbers people actually think in.</summary>

@@ -63,7 +63,10 @@ public sealed partial class FFmpegHardwareVideoProcessor : CommandLineProcessor
 
         args.AddRange(["-i", Quote(vj.InputFile)]);
 
-        if (vj.TrimDuration is { } trimDuration)
+        // A frame count is exact where a duration in seconds is not, so it wins.
+        if (vj.TrimFrames is { } frames)
+            args.AddRange(["-frames:v", frames.ToString(CultureInfo.InvariantCulture)]);
+        else if (vj.TrimDuration is { } trimDuration)
             args.AddRange(["-t", trimDuration.TotalSeconds.ToString("F3", CultureInfo.InvariantCulture)]);
 
         // Filters. VA-API encodes from GPU memory, so whatever the user asked for has to

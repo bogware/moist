@@ -214,33 +214,66 @@ real encode will use, which is correct by construction.
 
 ---
 
-## Tier 4 — Chunked parallel encoding ⬜  ← next
+## Tier 4 — Chunked parallel encoding ✅
 
-Groundwork already in place: `VideoJob.TrimStart`/`TrimDuration` (added for search
-sampling) encode an arbitrary span, and the quality engine can verify that chunk
-boundaries didn't corrupt anything — which is exactly the check this needs.
-
-
-Scene-split → encode chunks in parallel → concatenate. Turns an 8-hour x265/AV1
-encode into roughly an hour and actually saturates a many-core machine.
-
+Scene-split → encode chunks in parallel → concatenate → **verify**.
 
 | Item | Status | Notes |
 |---|---|---|
-| Scene detection | ⬜ | FFmpeg's `scdet` is already available |
-| Chunk splitting | ⬜ | Keyframe-aligned; this is where the correctness risk lives |
-| Parallel chunk encoding | ⬜ | The job queue already handles concurrency and dependencies |
-| Concatenation | ⬜ | Must be bit-exact; no re-encode |
-| Resume after interruption | ⬜ | Long encodes must survive a crash |
+| Scene detection | ✅ | FFmpeg's `scdet`; falls back to fixed chunks if it fails |
+| Chunk planning | ✅ | Min/max duration bounds, tiny tails folded away |
+| Parallel chunk encoding | ✅ | Runs through the existing job queue and its concurrency limit |
+| Concatenation | ✅ | Stream copy, no re-encode |
+| Frame-exact verification | ✅ | The joined result is counted, not trusted |
+| Resume after interruption | ✅ | Finished chunks are reused; partial ones are discarded |
+| GUI + CLI exposure | ✅ | `--chunked`, or the Chunking row in the encode tab |
 
-**Known risk.** This is the hardest item on the roadmap. av1an is still fighting
-[chunk-boundary artifacts, seek failures and frame mismatches](https://github.com/rust-av/Av1an/issues/745)
-after years. Approach it with a verification pass (frame count + per-chunk metric)
-rather than trusting the output.
+### Frames, not seconds
+
+Chunks are addressed in **frames**. At 23.976 fps a duration in seconds cannot
+address a frame boundary, and the rounding error accumulates across chunks until
+the joined file has gained or lost frames. Each chunk is encoded with
+`-frames:v <count>`, which cannot drift, and `VideoJob.TrimFrames` exists for
+exactly this.
+
+### Verification is not optional
+
+FFmpeg will happily exit zero having written a file that is a few frames short.
+The concat step counts the frames in the result and fails the job when they don't
+match the plan — a test deliberately truncates a chunk to prove it's caught.
+Resume applies the same standard: a chunk file is only reused if it decodes to
+exactly the frames expected, so a half-written file left by a kill is discarded
+rather than spliced in.
+
+Verified on a 40-second 1080p clip: **1200 frames in, 1200 out**, VMAF 60.15
+chunked against 60.33 single-pass, output 0.4% larger from the extra keyframe per
+boundary.
+
+### How much faster is it, really?
+
+Less than the marketing would suggest, and it's worth being straight about why.
+Chunking can only recover the CPU your encoder *wasn't already using*. Measured on
+a 16-core machine:
+
+| | Result |
+|---|---|
+| 4 × x265 `slow` in parallel vs serially | **1.23x** — so x265 already saturates ~80% of the box |
+| Chunked x265 `slow` vs single-pass | **1.19x** — matching that headroom almost exactly |
+| Chunked SVT-AV1 preset 6 vs single-pass | **0.86x** — *slower*; SVT-AV1 threads well, so splitting only adds overhead |
+
+So the implementation is extracting essentially all the available headroom; the
+ceiling is the encoder's own threading. Chunking earns its place when:
+
+- the encoder threads poorly (libaom, some x264 configurations),
+- the core count is high relative to what one encoder instance can use,
+- or you want an interrupted encode to resume — which is worth it regardless of
+  speed, and is why this stays useful even at 1.2x.
+
+It is **off by default** for that reason.
 
 ---
 
-## Tier 5 — Per-scene optimization ⬜
+## Tier 5 — Per-scene optimization ⬜  ← next
 
 Tier 3 + Tier 4 combined: every scene gets its own CRF so perceptual quality is
 uniform across the file instead of uniform in *bitrate*.
@@ -248,6 +281,15 @@ uniform across the file instead of uniform in *bitrate*.
 This is [Netflix's Dynamic Optimizer](https://netflixtechblog.com/dynamic-optimizer-a-perceptual-video-encoding-optimization-framework-e19f1e3a277f)
 approach — 10–15% bitrate savings over per-title at the same quality. No consumer
 tool offers it behind a GUI.
+
+Both halves now exist: Tier 4 already splits the file at scene boundaries and
+encodes the pieces independently, and Tier 3 already finds the CRF that reaches a
+target on a sample. Per-scene optimisation is running the second over each of the
+first rather than over the file as a whole.
+
+Note this makes chunking pay for itself even at 1.2x wall-clock: a per-scene
+encode has to be chunked anyway, so the parallelism comes free with the quality
+win.
 
 ---
 

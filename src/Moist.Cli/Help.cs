@@ -39,6 +39,7 @@ public static class Help
               moist encode in.mkv --target-vmaf 95            # pick quality, not CRF
               moist encode in.mkv --profile "Web - H.265 High Quality"
               moist encode in.mkv --audio-only --audio-encoder ffmpeg-audio-flac
+              moist encode in.mkv --chunked --jobs 8          # parallel, resumable
               moist batch *.mkv --container mp4 --jobs 4
               moist compare source.mkv encoded.mkv
               moist probe in.mkv --json
@@ -100,6 +101,22 @@ public static class Help
               --max-probes <n>      Cap on CRFs tried                   (default: 8)
               --no-cache            Ignore a previous search for this file
               --measure             Score the finished encode against the source
+
+        CHUNKED ENCODING
+              --chunked             Split the video into chunks, encode them in parallel
+                                    and join them back together
+              --chunk-mode <mode>   scene | fixed                       (default: scene)
+              --max-chunk <s>       Longest chunk in seconds            (default: 60)
+              --min-chunk <s>       Shortest chunk in seconds           (default: 5)
+              --scene-threshold <n> Scene detection sensitivity, lower finds more cuts
+              --no-resume           Re-encode chunks left by an interrupted run
+              --no-verify           Skip the frame-count check on the joined result
+
+          How much this helps depends entirely on whether your encoder can already use
+          all your cores. A well-threaded x265 on a 16-core machine leaves little room,
+          so expect around 1.2x. It pays off with encoders that thread poorly, with very
+          high core counts, and — regardless of speed — because an interrupted encode
+          picks up where it left off instead of starting over.
 
         BEHAVIOUR
           -j, --jobs <n>            Concurrent jobs                     (default: from settings)

@@ -128,6 +128,9 @@ public sealed class MediaFixture : IDisposable
     /// </summary>
     public string NaturalVideo { get; }
 
+    /// <summary>Three visually distinct segments spliced together, so scene detection has real cuts to find.</summary>
+    public string SceneVideo { get; }
+
     public MediaFixture()
     {
         Root = Path.Combine(Path.GetTempPath(), "moist-itest-" + Guid.NewGuid().ToString("N")[..8]);
@@ -141,6 +144,7 @@ public sealed class MediaFixture : IDisposable
         TenBitVideo = Path.Combine(Root, "tenbit.mkv");
         RichVideo = Path.Combine(Root, "rich.mkv");
         NaturalVideo = Path.Combine(Root, "natural.mp4");
+        SceneVideo = Path.Combine(Root, "scenes.mp4");
 
         if (!Ffmpeg.Available) return;
 
@@ -159,6 +163,18 @@ public sealed class MediaFixture : IDisposable
         // CRF the way real footage does.
         Run("ffmpeg", $"-y -v error -f lavfi -i mandelbrot=size=480x270:rate=25 -t 8 " +
                       $"-c:v libx264 -preset veryfast -crf 16 -pix_fmt yuv420p \"{NaturalVideo}\"");
+
+        // Three clearly different segments so scene detection has genuine cuts to find,
+        // plus audio so the chunked path exercises muxing as well.
+        Run("ffmpeg",
+            $"-y -v error " +
+            $"-f lavfi -i testsrc2=size=320x180:rate=25:duration=3 " +
+            $"-f lavfi -i mandelbrot=size=320x180:rate=25 " +
+            $"-f lavfi -i smptebars=size=320x180:rate=25:duration=3 " +
+            $"-f lavfi -i sine=frequency=440:duration=9 " +
+            $"-filter_complex \"[1:v]trim=duration=3,setpts=PTS-STARTPTS[m];[0:v][m][2:v]concat=n=3:v=1[v]\" " +
+            $"-map \"[v]\" -map 3:a -c:v libx264 -preset ultrafast -pix_fmt yuv420p -c:a aac -shortest " +
+            $"\"{SceneVideo}\"");
     }
 
     /// <summary>10-bit HDR10: BT.2020 primaries, PQ transfer, mastering display and CLL.</summary>

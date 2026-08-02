@@ -1,4 +1,5 @@
 using Moist.Core.Encoders.Audio;
+using Moist.Core.Chunking;
 using Moist.Core.Encoders.Video;
 using Moist.Core.Jobs;
 using Moist.Core.Media;
@@ -83,7 +84,16 @@ public sealed record EncodeRequest
 /// <summary>The jobs produced for one encode, in dependency order.</summary>
 public sealed class EncodePlan
 {
+    /// <summary>The single video encode. Null when the video was split into chunks.</summary>
     public VideoJob? Video { get; init; }
+
+    /// <summary>Chunk encodes, empty unless chunking is in use. These run in parallel.</summary>
+    public IReadOnlyList<VideoJob> ChunkJobs { get; init; } = [];
+
+    /// <summary>Joins the chunks back together. Null unless chunking is in use.</summary>
+    public ConcatJob? Concat { get; init; }
+
+    public bool IsChunked => Concat is not null;
 
     /// <summary>Empty when the source has no audio at all.</summary>
     public required IReadOnlyList<AudioJob> AudioJobs { get; init; }
@@ -98,6 +108,8 @@ public sealed class EncodePlan
         get
         {
             if (Video is not null) yield return Video;
+            foreach (var chunk in ChunkJobs) yield return chunk;
+            if (Concat is not null) yield return Concat;
             foreach (var audio in AudioJobs) yield return audio;
             if (Mux is not null) yield return Mux;
         }
@@ -142,7 +154,17 @@ public static class EncodeJobBuilder
             audioCodec);
     }
 
-    public static EncodePlan Build(EncodeRequest req, MediaFileInfo? info)
+    /// <param name="chunks">
+    /// A prepared chunk plan, or null to encode the video in one pass. Produced by
+    /// <see cref="ChunkedEncode.PrepareAsync"/>, which also decides whether chunking is
+    /// worth it for this source at all.
+    /// </param>
+    public static EncodePlan Build(
+        EncodeRequest req,
+        MediaFileInfo? info,
+        ChunkedEncodePreparation? chunks = null,
+        bool verifyChunks = true,
+        string? ffprobePath = null)
     {
         Directory.CreateDirectory(req.TempDirectory);
         var outputDir = Path.GetDirectoryName(req.OutputFile);
@@ -199,17 +221,76 @@ public static class EncodeJobBuilder
         var baseName = Path.GetFileNameWithoutExtension(req.OutputFile);
         var tempVideoFile = Path.Combine(req.TempDirectory, $"moist_v_{Guid.NewGuid():N}_{baseName}.mkv");
 
-        var videoJob = new VideoJob
+        // Either one video job, or many chunk jobs plus a concat that reassembles them.
+        VideoJob? videoJob = null;
+        var chunkJobs = new List<VideoJob>();
+        ConcatJob? concatJob = null;
+
+        if (chunks is not null)
         {
-            Name = $"Video: {Path.GetFileName(req.InputFile)}",
-            InputFile = req.InputFile,
-            OutputFile = tempVideoFile,
-            EncoderId = req.VideoEncoderId,
-            Settings = videoSettings,
-            FilterScript = req.FilterScript,
-            FilterEngineId = req.FilterEngineId,
-            TotalFrames = info?.Video?.TotalFrames ?? 0,
-        };
+            var sourceName = Path.GetFileName(req.InputFile);
+
+            for (var i = 0; i < chunks.Plan.Chunks.Count; i++)
+            {
+                // Chunks finished by an earlier run are reused as-is; the concat still
+                // reads them, they just don't need encoding again.
+                if (chunks.AlreadyDone.Contains(i)) continue;
+
+                var chunk = chunks.Plan.Chunks[i];
+                var settings = CreateVideoSettings(req);
+                settings.Mode = req.Mode;
+                settings.Quality = req.Quality;
+                settings.Bitrate = req.Bitrate;
+                settings.Preset = req.Preset;
+                settings.Tune = req.Tune;
+                settings.CustomArgs = req.VideoCustomArgs;
+                settings.BitDepth = req.BitDepth;
+
+                chunkJobs.Add(new VideoJob
+                {
+                    Name = $"Chunk {i + 1}/{chunks.Plan.Chunks.Count}: {sourceName}",
+                    InputFile = req.InputFile,
+                    OutputFile = chunks.ChunkFiles[i],
+                    EncoderId = req.VideoEncoderId,
+                    Settings = settings,
+                    FilterScript = req.FilterScript,
+                    FilterEngineId = req.FilterEngineId,
+                    TotalFrames = chunk.FrameCount,
+                    TrimStart = chunk.StartTime,
+                    TrimFrames = chunk.FrameCount,
+                });
+            }
+
+            concatJob = new ConcatJob
+            {
+                Name = $"Join {chunks.Plan.Chunks.Count} chunks: {sourceName}",
+                InputFile = req.InputFile,
+                OutputFile = tempVideoFile,
+                Inputs = [.. chunks.ChunkFiles],
+                ExpectedFrames = chunks.Plan.TotalFrames,
+                Verify = verifyChunks,
+                FFprobePath = ffprobePath ?? "ffprobe",
+                TotalDurationSeconds = info?.Duration.TotalSeconds ?? 0,
+                DependsOn = [.. chunkJobs.Select(j => j.Id)],
+            };
+
+            // The chunk files are scratch, but only once they've been joined.
+            concatJob.FilesToCleanup.AddRange(chunks.ChunkFiles);
+        }
+        else
+        {
+            videoJob = new VideoJob
+            {
+                Name = $"Video: {Path.GetFileName(req.InputFile)}",
+                InputFile = req.InputFile,
+                OutputFile = tempVideoFile,
+                EncoderId = req.VideoEncoderId,
+                Settings = videoSettings,
+                FilterScript = req.FilterScript,
+                FilterEngineId = req.FilterEngineId,
+                TotalFrames = info?.Video?.TotalFrames ?? 0,
+            };
+        }
 
         // One encode job per selected source track, each to its own temp file.
         var audioJobs = new List<AudioJob>();
@@ -280,7 +361,7 @@ public static class EncodeJobBuilder
             VideoCodec = ContainerCompatibility.StreamCodecForEncoder(req.VideoEncoderId),
             AudioInputs = audioInputs,
             SubtitleInputs = subtitleInputs,
-            DependsOn = [videoJob.Id, .. audioJobs.Select(j => j.Id)],
+            DependsOn = [videoJob?.Id ?? concatJob!.Id, .. audioJobs.Select(j => j.Id)],
             TotalDurationSeconds = info?.Duration.TotalSeconds ?? 0,
             SourceFile = req.InputFile,
             CopyChapters = req.CopyChapters,
@@ -291,7 +372,14 @@ public static class EncodeJobBuilder
         muxJob.FilesToCleanup.Add(tempVideoFile);
         muxJob.FilesToCleanup.AddRange(audioInputs.Select(a => a.FilePath));
 
-        return new EncodePlan { Video = videoJob, AudioJobs = audioJobs, Mux = muxJob };
+        return new EncodePlan
+        {
+            Video = videoJob,
+            ChunkJobs = chunkJobs,
+            Concat = concatJob,
+            AudioJobs = audioJobs,
+            Mux = muxJob,
+        };
     }
 
     /// <summary>

@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Moist.Core.Chunking;
 using Moist.Core.Jobs;
 using Moist.Core.Encoders.Video;
 using Moist.Core.Media;
@@ -301,7 +302,62 @@ public static class EncodeRunner
             request = request with { Mode = VideoEncodingMode.ConstantRateFactor, Quality = search.Crf };
         }
 
-        var plan = EncodeJobBuilder.Build(request, info);
+        // Chunked encoding: split the video, encode the pieces in parallel, join them back.
+        ChunkedEncodePreparation? chunks = null;
+        var chunkOptions = EncodeOptions.Chunking(cl);
+        if (chunkOptions is not null && !request.AudioOnly)
+        {
+            var coordinator = new ChunkedEncode(services, services.LoggerFactory);
+
+            if (!quiet && chunkOptions.Mode == ChunkMode.Scene)
+            {
+                var lastReported = -1;
+                coordinator.DetectionProgress += p =>
+                {
+                    var percent = (int)(p * 100);
+                    if (percent / 10 == lastReported / 10) return;
+                    lastReported = percent;
+                    Console.Error.Write($"\r  detecting scenes… {percent,3}%");
+                };
+            }
+
+            try
+            {
+                chunks = await coordinator.PrepareAsync(request, info, chunkOptions, ct);
+            }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception ex)
+            {
+                return new EncodeResult
+                {
+                    Input = input, Output = output, Success = false,
+                    Error = $"could not plan chunks: {ex.Message}",
+                };
+            }
+
+            if (!quiet)
+            {
+                Console.Error.Write("\r".PadRight(40) + "\r");
+                if (chunks is null)
+                {
+                    Console.Error.WriteLine("  source is too short to be worth chunking; encoding normally");
+                }
+                else
+                {
+                    var reused = chunks.AlreadyDone.Count > 0
+                        ? $", reusing {chunks.AlreadyDone.Count} from a previous run"
+                        : "";
+                    Console.Error.WriteLine(
+                        $"  {chunks.Plan.Chunks.Count} chunks over {chunks.Plan.TotalFrames} frames{reused}");
+                }
+            }
+        }
+
+        var plan = EncodeJobBuilder.Build(
+            request, info, chunks,
+            verifyChunks: chunkOptions?.Verify ?? true,
+            ffprobePath: services.Settings.FFprobePath);
+
         var jobs = plan.AllJobs.ToList();
 
         if (dryRun)
@@ -312,7 +368,9 @@ public static class EncodeRunner
             Console.WriteLine($"  audio   : {request.AudioEncoderId} {request.AudioBitrateMode} {request.AudioBitrate}k");
             Console.WriteLine($"  container: {request.Container}{(request.AudioOnly ? " (audio only)" : "")}");
             if (filterScript is not null) Console.WriteLine($"  filters : {filterScript}");
-            Console.WriteLine($"  jobs    : {string.Join(" -> ", jobs.Select(j => j.JobType))}");
+            if (chunks is not null)
+                Console.WriteLine($"  chunks  : {chunks.Plan.Chunks.Count} ({chunks.Plan.Mode}), {chunks.RemainingCount} to encode");
+            Console.WriteLine($"  jobs    : {string.Join(", ", jobs.GroupBy(j => j.JobType).Select(g => $"{g.Count()}x {g.Key}"))}");
             Console.WriteLine();
             return new EncodeResult { Input = input, Output = output, Success = true, Elapsed = "0s" };
         }

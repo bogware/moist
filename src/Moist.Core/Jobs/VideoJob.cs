@@ -33,4 +33,13 @@ public sealed class VideoJob : Job
 
     /// <summary>Encode only this much of the source, from <see cref="TrimStart"/>.</summary>
     public TimeSpan? TrimDuration { get; set; }
+
+    /// <summary>
+    /// Encode exactly this many frames, emitted as <c>-frames:v</c>.
+    /// Chunked encoding relies on this: a duration in seconds cannot address a frame
+    /// boundary exactly at 23.976 fps, and the rounding error accumulates across chunks
+    /// until the joined result has gained or lost frames. A frame count cannot drift.
+    /// Takes precedence over <see cref="TrimDuration"/>.
+    /// </summary>
+    public long? TrimFrames { get; set; }
 }

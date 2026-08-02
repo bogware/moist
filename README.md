@@ -125,6 +125,36 @@ hits 95 on one encoder doesn't hit it on another — that's a fast wrong answer.
 Works with `--target-xpsnr`, `--target-ssim`, `--target-psnr` too, and in the GUI via
 the **Find CRF** button.
 
+### Chunked Parallel Encoding
+
+Split the file, encode the pieces at the same time, join them back:
+
+```bash
+moist encode input.mkv --chunked --jobs 8
+```
+
+Boundaries land on detected scene cuts, so they cost nothing — a keyframe was going
+there anyway. **Interrupted encodes resume**: finished chunks are reused, and partial
+ones left behind by a kill are detected and discarded rather than spliced in.
+
+**Nothing is trusted.** FFmpeg will exit zero having written a file that's a few frames
+short, so moist counts the frames in the joined result and fails if they don't match
+the plan. Chunks are addressed in frame numbers rather than timestamps, because at
+23.976 fps a duration in seconds can't address a frame boundary and the error
+accumulates. Verified on a 40s 1080p clip: 1200 frames in, 1200 out, VMAF 60.15 chunked
+vs 60.33 single-pass.
+
+**How much faster?** Honestly: it depends entirely on whether your encoder already uses
+all your cores. Measured on 16 cores:
+
+| | Speedup |
+|---|---|
+| x265 `slow` | 1.19x (4 parallel encodes only manage 1.23x — x265 already saturates ~80% of the box) |
+| SVT-AV1 preset 6 | 0.86x — *slower*, it threads well already |
+
+Chunking earns its keep with encoders that thread poorly, with very high core counts,
+and for resumability regardless of speed. It's off by default.
+
 ### Quality Metrics
 
 Measure what you made, don't hope:
@@ -253,6 +283,9 @@ moist crf-search input.mkv --target-vmaf 95 --json
 # hardware, all audio tracks, forced 10-bit
 moist encode input.mkv --video-encoder hw-nvenc-hevc --audio-track all --bit-depth 10
 
+# split into parallel chunks; resumes if interrupted
+moist encode input.mkv --chunked --jobs 8
+
 moist batch *.mkv --container mp4 --output-dir ./out --jobs 4 --keep-going
 moist compare source.mkv encoded.mkv --metric vmaf
 moist probe input.mkv --json
@@ -311,9 +344,9 @@ dotnet test Moist.Core.Tests       # fast unit tests only
 dotnet test Moist.IntegrationTests # real FFmpeg encodes
 ```
 
-**138 unit tests** covering job models, queue behavior, encoder registry, profiles, settings, filter engines, audio processor argument building, hardware encoder plumbing, quality metric parsing, search arithmetic, and CLI parsing — none of which launch an external process.
+**157 unit tests** covering job models, queue behavior, encoder registry, profiles, settings, filter engines, audio processor argument building, hardware encoder plumbing, quality metric parsing, search arithmetic, chunk planning, and CLI parsing — none of which launch an external process.
 
-**79 integration tests** that run real encodes through the full pipeline and verify the output with ffprobe: every video encoder, every audio codec, every container, 10-bit and HDR sources, silent sources, multi-track audio, chapters and attachments, filter chains, subtitles, cancellation, concurrency, awkward filenames, temp-file cleanup, all four quality metrics, and target-quality search — including a test that searches, encodes the full file, and asserts the sampled prediction held. They skip automatically when FFmpeg isn't on your PATH (and hardware tests skip without a usable GPU), so check the skip count before trusting a green run.
+**88 integration tests** that run real encodes through the full pipeline and verify the output with ffprobe: every video encoder, every audio codec, every container, 10-bit and HDR sources, silent sources, multi-track audio, chapters and attachments, filter chains, subtitles, cancellation, concurrency, awkward filenames, temp-file cleanup, all four quality metrics, target-quality search, and chunked encoding — including a test that searches then encodes the full file and asserts the sampled prediction held, and one that deliberately truncates a chunk to prove the frame-count verification catches it. They skip automatically when FFmpeg isn't on your PATH (and hardware tests skip without a usable GPU), so check the skip count before trusting a green run.
 
 If FFmpeg isn't on your PATH, set the path in the **Settings** tab after launching. moist won't hold it against you.
 

@@ -22,6 +22,7 @@ public sealed class CommandLine
     {
         "audio-only", "no-subtitles", "no-chapters", "no-attachments", "no-metadata",
         "dry-run", "json", "overwrite", "y", "measure", "no-cache",
+        "chunked", "no-resume", "no-verify",
         "quiet", "q", "verbose", "v", "help", "h", "version", "no-progress", "keep-going",
     };
 

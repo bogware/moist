@@ -146,6 +146,35 @@ Factories, not singletons: processors hold mutable state (`Stopwatch`, frame cou
 
 Encoder factories capture `Settings` (the object), not the path string — e.g. `() => new FFmpegVideoProcessor(Settings.FFmpegPath, codec)`. The path is read when the factory runs, i.e. per job, so changing a tool path in Settings takes effect on the next job without restart. `AppServices.MediaAnalyzer` and `PreviewService` achieve the same via lazy properties that rebuild when the path changes. Don't hoist these into constructor-time fields.
 
+### Chunked encoding: frames, not seconds
+
+Chunks are addressed in **frame numbers**, and each is encoded with `-frames:v <count>`
+(`VideoJob.TrimFrames`). This is not fussiness: at 23.976 fps a duration in seconds
+cannot address a frame boundary, and the error accumulates across chunks until the
+joined file has gained or lost frames. A frame count cannot drift. `TrimDuration` still
+exists for target-quality sampling, where exactness doesn't matter, but chunking must
+use `TrimFrames`.
+
+`ChunkPlan.Validate()` enforces the one property that matters — the chunks tile the
+source exactly, no gaps and no overlaps — and `ChunkPlanner.Plan` refuses to return a
+plan that fails it. A gap loses footage, an overlap repeats it, and both are silent.
+
+**Verification is not optional.** FFmpeg exits zero having written a file that is a few
+frames short, so `FFmpegConcatProcessor` counts the frames in the joined result and
+fails the job on a mismatch. It counts by decoding (`-count_frames`) rather than reading
+container metadata, which lies often enough after a concat to defeat the point. Resume
+applies the same test: a leftover chunk is reused only if it decodes to exactly the
+expected frames, so a half-written file from a kill is discarded rather than spliced in.
+
+The chunk directory name is a hash of the source identity *and* every setting that
+shapes a chunk's contents, including the boundary positions — otherwise a resumed run
+could splice together chunks encoded with different settings.
+
+Don't expect large speedups. Chunking only recovers CPU the encoder wasn't already
+using; measured here, x265 `slow` leaves ~23% headroom on 16 cores and SVT-AV1 leaves
+none (chunked is *slower*). It stays valuable for poorly-threaded encoders, very high
+core counts, and resumability. It is off by default.
+
 ### Quality metrics: framesync will lie to you
 
 Every metric filter (`libvmaf`, `xpsnr`, `ssim`, `psnr`) is built on FFmpeg's
@@ -262,6 +291,7 @@ This isn't hypothetical defensiveness: `WindowX`/`WindowY` used to default to `d
 | Add a video encoder | Settings class in `Core/Encoders/Video/` → `AppServices.RegisterVideoEncoder()` (ID must be `ffmpeg-{codec}`) → switch in `EncodeJobBuilder.CreateVideoSettings()` → codec name in `FFmpegVideoProcessor.GetFfmpegCodecName()` → `ContainerCompatibility.StreamCodecForEncoder()` and the container tables |
 | Add a hardware encoder | One entry in `HardwareCapabilities.Known` (id must be `hw-<vendor>-<codec>`). Registration, detection, container validation and UI filtering all follow from it. A new *vendor* also needs rate-control and preset arms in `FFmpegHardwareVideoProcessor`. |
 | Add a quality metric | `QualityMetric` enum + `QualityMetrics` metadata → filter name and parser in `QualityMeasurer` (remember `FrameSync`) → it becomes available to `compare`, `--measure` and target search automatically |
+| Change chunk planning | `ChunkPlanner` only — and keep `ChunkPlan.Validate()` passing, since it's the guard against silently losing footage |
 | Add an audio encoder | Settings class in `Core/Encoders/Audio/` → `AppServices.RegisterAudioEncoder()` (ID must be `ffmpeg-audio-{codec}`) → `FFmpegAudioProcessor.GetCodecSpecificArgs()` + `GetFfmpegCodecName()` → `EncodeJobBuilder.CreateAudioSettings()` + `AudioFileExtension()` → `ContainerCompatibility` |
 | Add an encode option | `EncodeRequest` first, then `EncodeJobBuilder`, then surface it in *both* `EncodeTabViewModel.BuildRequest()` and `EncodeOptions.Build()` + `Help.cs` |
 | Add a CLI command | `Commands.cs` + dispatch in `Program.Main` + a section in `Help.cs` |

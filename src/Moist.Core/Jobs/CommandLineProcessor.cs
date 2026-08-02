@@ -120,10 +120,18 @@ public abstract class CommandLineProcessor : IJobProcessor
                 $"{DisplayName} exited with code {process.ExitCode}.\n{lastLines}");
         }
 
+        await OnAfterSuccessAsync(job, ct);
+
         Logger.LogInformation("{Processor} completed successfully for job {JobId}", DisplayName, job.Id);
     }
 
     protected virtual void OnBeforeStart(ProcessStartInfo psi, Job job) { }
+
+    /// <summary>
+    /// Runs after the tool exits successfully. Throwing here fails the job, which is the
+    /// point: a zero exit code doesn't always mean the output is what was asked for.
+    /// </summary>
+    protected virtual Task OnAfterSuccessAsync(Job job, CancellationToken ct) => Task.CompletedTask;
     protected virtual bool IsSuccessExitCode(int code) => code == 0;
 
     /// <summary>Wraps a string in double quotes for CLI argument use.</summary>

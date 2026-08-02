@@ -89,7 +89,7 @@
                     <StackPanel Spacing="8">
                         <TextBlock Text="Video Encoder" Classes="section-header"/>
 
-                        <Grid ColumnDefinitions="120,*,120,*" RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto" RowSpacing="8" ColumnSpacing="8">
+                        <Grid ColumnDefinitions="120,*,120,*" RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,Auto" RowSpacing="8" ColumnSpacing="8">
                             <TextBlock Text="Codec:" VerticalAlignment="Center"/>
                             <ComboBox Grid.Column="1"
                                       ItemsSource="{Binding VideoEncoders}"
@@ -173,6 +173,26 @@
                                 <TextBlock Text="{Binding QualitySearchStatus}" FontSize="11" Opacity="0.75"
                                            TextWrapping="Wrap"
                                            IsVisible="{Binding QualitySearchStatus, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
+                            </StackPanel>
+
+                            <!-- Chunked encoding -->
+                            <TextBlock Text="Chunking:" VerticalAlignment="Center" Grid.Row="6"/>
+                            <StackPanel Grid.Row="6" Grid.Column="1" Grid.ColumnSpan="3"
+                                        Orientation="Horizontal" Spacing="12">
+                                <CheckBox Content="Split into parallel chunks"
+                                          IsChecked="{Binding UseChunkedEncoding}"
+                                          ToolTip.Tip="Encodes sections of the file at the same time and joins them. Helps most when the encoder can't use all your cores, and lets an interrupted encode resume."/>
+                                <CheckBox Content="At scene cuts"
+                                          IsChecked="{Binding ChunkSceneDetection}"
+                                          IsEnabled="{Binding UseChunkedEncoding}"
+                                          ToolTip.Tip="Costs an analysis pass, but boundaries land where a keyframe was going anyway."/>
+                                <StackPanel Orientation="Horizontal" Spacing="4"
+                                            IsEnabled="{Binding UseChunkedEncoding}">
+                                    <TextBlock Text="max" VerticalAlignment="Center" FontSize="11"/>
+                                    <NumericUpDown Value="{Binding MaxChunkSeconds}" Minimum="2" Maximum="600"
+                                                   Increment="10" Width="100" FontSize="11"/>
+                                    <TextBlock Text="s" VerticalAlignment="Center" FontSize="11"/>
+                                </StackPanel>
                             </StackPanel>
                         </Grid>
                     </StackPanel>

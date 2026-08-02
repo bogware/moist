@@ -3,6 +3,7 @@ using Avalonia.Media.Imaging;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Moist.Services;
+using Moist.Core.Chunking;
 using Moist.Core.Encoders;
 using Moist.Core.Encoders.Audio;
 using Moist.Core.Encoders.Video;
@@ -78,6 +79,11 @@ public partial class EncodeTabViewModel : ViewModelBase, IDisposable
     // Video bit depth
     [ObservableProperty] private VideoBitDepth _bitDepth = VideoBitDepth.Auto;
     public static VideoBitDepth[] BitDepthOptions { get; } = Enum.GetValues<VideoBitDepth>();
+
+    // Chunked encoding
+    [ObservableProperty] private bool _useChunkedEncoding;
+    [ObservableProperty] private bool _chunkSceneDetection = true;
+    [ObservableProperty] private int _maxChunkSeconds = 60;
 
     // Target quality
     [ObservableProperty] private QualityMetric _targetMetric = QualityMetric.Vmaf;
@@ -585,7 +591,7 @@ public partial class EncodeTabViewModel : ViewModelBase, IDisposable
     // === Add to Queue ===
 
     [RelayCommand]
-    private void AddToQueue()
+    private async Task AddToQueue()
     {
         if (string.IsNullOrWhiteSpace(InputFile) || string.IsNullOrWhiteSpace(OutputFile))
         {
@@ -680,8 +686,42 @@ public partial class EncodeTabViewModel : ViewModelBase, IDisposable
         }
 
         HasError = false;
-        EnqueueFile(InputFile, OutputFile);
+
+        // Chunking needs a planning pass (scene detection) before any job exists.
+        ChunkedEncodePreparation? chunks = null;
+        if (UseChunkedEncoding && !AudioOnly && MediaInfo is not null)
+        {
+            try
+            {
+                StatusMessage = "Planning chunks…";
+                var coordinator = new ChunkedEncode(_services, _services.LoggerFactory);
+                coordinator.DetectionProgress += p => Avalonia.Threading.Dispatcher.UIThread.Post(
+                    () => StatusMessage = $"Detecting scenes… {p * 100:F0}%");
+
+                chunks = await coordinator.PrepareAsync(
+                    BuildRequest(InputFile, OutputFile), MediaInfo, BuildChunkingOptions());
+
+                StatusMessage = chunks is null
+                    ? "Too short to be worth chunking; queued as a single encode."
+                    : $"Queued as {chunks.Plan.Chunks.Count} chunks" +
+                      (chunks.AlreadyDone.Count > 0 ? $" ({chunks.AlreadyDone.Count} reused)" : "") + ".";
+            }
+            catch (Exception ex)
+            {
+                HasError = true;
+                StatusMessage = $"Could not plan chunks: {ex.Message}";
+                return;
+            }
+        }
+
+        EnqueueFile(InputFile, OutputFile, chunks: chunks);
     }
+
+    private ChunkingOptions BuildChunkingOptions() => new()
+    {
+        Mode = ChunkSceneDetection ? ChunkMode.Scene : ChunkMode.Fixed,
+        MaxChunkDuration = TimeSpan.FromSeconds(Math.Max(2, MaxChunkSeconds)),
+    };
 
     private static string GetUniqueOutputPath(string path)
     {
@@ -715,12 +755,16 @@ public partial class EncodeTabViewModel : ViewModelBase, IDisposable
     /// Enqueue a file for encoding. Returns the final job ID (mux or audio-only) for tracking.
     /// When called from batch, pass mediaInfo directly to avoid mutating shared EncodeTab state.
     /// </summary>
-    public string EnqueueFile(string inputFile, string outputFile, MediaFileInfo? mediaInfo = null, List<string>? allJobIds = null)
+    public string EnqueueFile(
+        string inputFile, string outputFile, MediaFileInfo? mediaInfo = null,
+        List<string>? allJobIds = null, ChunkedEncodePreparation? chunks = null)
     {
         // Use provided mediaInfo (batch mode) or fall back to shared MediaInfo (single encode)
         var info = mediaInfo ?? MediaInfo;
 
-        var plan = EncodeJobBuilder.Build(BuildRequest(inputFile, outputFile), info);
+        var plan = EncodeJobBuilder.Build(
+            BuildRequest(inputFile, outputFile), info, chunks,
+            ffprobePath: _services.Settings.FFprobePath);
 
         foreach (var job in plan.AllJobs)
         {

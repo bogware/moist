@@ -1,6 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Console;
+using Moist.Core.Chunking;
 using Moist.Core.Encoders;
 using Moist.Core.Encoders.Audio;
 using Moist.Core.Encoders.Video;
@@ -204,6 +205,16 @@ public sealed class AppServices : IDisposable
             typeof(VorbisSettings), "Ogg Vorbis audio for WebM containers");
         RegisterAudioEncoder("ffmpeg-audio-copy", "Passthrough (Copy)", "copy",
             typeof(AudioEncoderSettings), "Copy audio without re-encoding");
+
+        // Joins chunk encodes back together
+        Encoders.Register(new EncoderInfo
+        {
+            Id = "ffmpeg-concat",
+            Name = "FFmpeg Concat",
+            Category = "Muxer",
+            SettingsType = typeof(object),
+            Description = "Joins encoded chunks without re-encoding",
+        }, () => new FFmpegConcatProcessor(Settings.FFmpegPath));
 
         // Muxer
         Encoders.Register(new EncoderInfo
