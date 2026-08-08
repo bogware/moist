@@ -391,6 +391,27 @@ public sealed class AppServices : IDisposable
         _ => string.Empty,
     };
 
+    /// <summary>
+    /// Download and install a known tool to the moist tools directory, record its path in Settings,
+    /// and persist. Returns the installed binary path, or null if there's no download for this platform.
+    /// This is what makes tools installable from the CLI (<c>moist tools install</c>), not just the GUI.
+    /// </summary>
+    public async Task<string?> InstallToolAsync(string toolId,
+        IProgress<(string Status, double Percent)>? progress = null, CancellationToken ct = default)
+    {
+        var tool = ToolDiscovery.KnownTools.FirstOrDefault(t => string.Equals(t.Id, toolId, StringComparison.OrdinalIgnoreCase))
+                   ?? throw new ArgumentException(
+                       $"unknown tool '{toolId}'. Known: {string.Join(", ", Core.Tools.ToolDiscovery.KnownTools.Select(t => t.Id))}");
+
+        var path = await ToolDiscovery.DownloadAndInstallAsync(tool, progress, ct);
+        if (path is not null)
+        {
+            SetConfiguredToolPath(tool.Id, path);
+            Save();
+        }
+        return path;
+    }
+
     private void SetConfiguredToolPath(string toolId, string path)
     {
         switch (toolId)

@@ -433,12 +433,19 @@ reports what was actually found.
 - Exit codes: `0` success, `1` encode failed, `2` bad usage, `3` missing prerequisite
 - `Ctrl+C` cancels gracefully and kills the FFmpeg process tree
 
-### Tool Auto-Discovery
+### Tool Auto-Discovery & install
 
 - **Automatic detection** — Scans PATH, common install locations, and bundled tool directories at startup
-- **One-click install** — Download and install FFmpeg, FFprobe, and other tools directly from Settings
+- **One-click install** — Download and install standalone tools from the GUI (Settings → Prerequisites)
+  or the CLI: `moist tools install ffmpeg realesrgan rife`. Covers FFmpeg/FFprobe and the AI tools
+  (Real-ESRGAN, RIFE) — self-contained binaries moist fetches, extracts, and wires up
 - **Version detection** — Shows installed tool versions in the prerequisites panel
 - **Missing tool warnings** — Clear startup warnings when required tools (FFmpeg, FFprobe) aren't found
+
+> **VapourSynth + vs-mlrt** (the `vs_superres` ceiling) are a Python + plugin *ecosystem*, not a
+> drop-in binary, so moist **detects** them and runs the `vspipe → ffmpeg` pipe once present, but
+> doesn't auto-provision them — install VapourSynth with its own installer and drop vs-mlrt + your
+> ONNX model into its plugins folder.
 
 ---
 

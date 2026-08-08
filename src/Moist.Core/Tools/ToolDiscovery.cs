@@ -105,7 +105,10 @@ public sealed class ToolDiscovery
         new ToolDefinition
         {
             Id = "vspipe", Name = "VapourSynth (vspipe)", DefaultBinaryName = "vspipe", IsRequired = false,
-            Description = "VapourSynth pipe — required for VapourSynth filter scripts",
+            // VapourSynth is a Python package, not a drop-in binary — the "portable" is a pip
+            // bootstrap (vspipe.bat + pip.bat + wheel), so it's detection-only: install VapourSynth
+            // with its own installer, then moist finds vspipe and can pipe .vpy scripts to FFmpeg.
+            Description = "VapourSynth pipe — runs .vpy scripts (incl. vs-mlrt ML nodes) for the VapourSynth engine",
             VersionArgs = "--version",
         },
         new ToolDefinition
