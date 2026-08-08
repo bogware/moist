@@ -8,51 +8,6 @@ A cross-platform video encoder GUI built with C# / .NET 8 / [Avalonia UI](https:
 
 ---
 
-## Bring the old tapes back to life — SD → HD restoration
-
-> *"Everything worth keepin' gets old. Don't mean you let it rot."*
-
-That shelf of ripped DVDs and old fight tapes — 512×384, soft, blocky, dark — moist
-will bring up to sharp 1080p in one command. There's a built-in profile that does the
-whole job:
-
-```bash
-moist encode "UFC 01.avi" -o "UFC 01 - Restored.mkv" --profile "Restore SD to HD"
-```
-
-That's the whole draw. The profile carries the full restoration pipeline and encodes
-HEVC 10-bit. In the GUI, pick **Restore SD to HD (vintage)** from the profile dropdown
-and hit encode.
-
-**What it does — and why the order matters.** You repair the picture at its native size,
-*then* enlarge it, *then* sharpen. Any other order and you just upscale the dirt:
-
-| # | Stage | Filter | Why |
-|---|-------|--------|-----|
-| 1 | De-block | `deblock` (spp) | Old DivX/XviD/DVD rips are riddled with DCT block noise in crowds and shadows. Clean it first — everything downstream rides on it. |
-| 2 | Denoise | `hqdn3d` | A light, motion-safe pass. Keeps real detail; no ghosting on fast action. |
-| 3 | Upscale | `resize` (spline) | Scale to 1080p *after* the picture is clean. `-2:1080` keeps the source shape — a 4:3 tape lands at 1440×1080. |
-| 4 | Sharpen | `cas` | Contrast-adaptive sharpening crisps edges after the upscale, without the halos an unsharp mask leaves behind. |
-| 5 | Deband | `deband` | Smooths the banding that low-bitrate gradients (dark arenas, skies) fall into — especially before a 10-bit encode. |
-
-Measured on real 2000-era fight tapes, the encode lands **VMAF ~98** against a
-near-lossless master at about a third of the bitrate, and NVENC on a modern GPU runs it
-faster than real time.
-
-**Tips from the trail:**
-
-- **Fast vs. archival.** The profile ships with x265 so it runs anywhere. For the
-  whole-library grind, hand it to the GPU: `--video-encoder hw-nvenc-hevc --mode quality
-  --crf 24`. For a keepsake master, `--video-encoder ffmpeg-x265 --preset slow`.
-- **Interlaced source?** These tapes were progressive. Check yours with `moist probe`;
-  if it says interlaced, put a deinterlacer at the front of the chain
-  (`--filter bwdif`).
-- **It's restoration, not resurrection.** moist cleans, scales and sharpens with
-  classical filters — it invents nothing. A motion-blurred face in the source stays soft;
-  that blur was baked in the day it was shot.
-
----
-
 ## Features
 
 ### Video Encoding
