@@ -6,8 +6,6 @@
 
 A cross-platform video encoder GUI built with C# / .NET 8 / [Avalonia UI](https://avaloniaui.net/). moist provides a professional-grade frontend for video encoding, audio encoding, filtering, and muxing — the kind of tool a man builds when he's tired of doing things the hard way.
 
-It won't judge your source material. It'll just make it better.
-
 ---
 
 ## Bring the old tapes back to life — SD → HD restoration
