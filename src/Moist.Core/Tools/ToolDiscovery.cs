@@ -93,6 +93,17 @@ public sealed class ToolDiscovery
         },
         new ToolDefinition
         {
+            Id = "rife", Name = "RIFE (AI frame interpolation)", DefaultBinaryName = "rife-ncnn-vulkan", IsRequired = false,
+            Description = "Deep-model frame interpolation for --fps-mode rife (24->60, slow-mo) — Vulkan, cross-platform",
+            VersionArgs = "-h",
+            DownloadUrls = new()
+            {
+                ["win-x64"] = "https://github.com/nihui/rife-ncnn-vulkan/releases/download/20221029/rife-ncnn-vulkan-20221029-windows.zip",
+                ["linux-x64"] = "https://github.com/nihui/rife-ncnn-vulkan/releases/download/20221029/rife-ncnn-vulkan-20221029-ubuntu.zip",
+            }
+        },
+        new ToolDefinition
+        {
             Id = "vspipe", Name = "VapourSynth (vspipe)", DefaultBinaryName = "vspipe", IsRequired = false,
             Description = "VapourSynth pipe — required for VapourSynth filter scripts",
             VersionArgs = "--version",

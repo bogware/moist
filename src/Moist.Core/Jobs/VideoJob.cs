@@ -62,7 +62,13 @@ public sealed class VideoJob : Job
     public int AiUpscaleHeight { get; set; } = 1080;
 
     /// <summary>
-    /// Lift the safety cap that refuses the (disk- and time-heavy) Real-ESRGAN path on long sources.
+    /// Reserved. Windowed processing now handles any length, so this no longer gates anything.
     /// </summary>
     public bool AiUpscaleAllowLong { get; set; }
+
+    /// <summary>
+    /// When &gt; 0, the video is handled by <c>RifeVideoProcessor</c>: AI frame interpolation to this
+    /// target frame rate (synthesizes in-between frames). 0 = off. Mutually exclusive with an AI upscale.
+    /// </summary>
+    public double RifeTargetFps { get; set; }
 }

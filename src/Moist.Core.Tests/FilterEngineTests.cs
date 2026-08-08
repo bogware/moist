@@ -172,6 +172,21 @@ public class FilterEngineTests
         Assert.Null(GpuShaders.FileNameFor("not-a-model"));
     }
 
+    [Theory]
+    [InlineData("mci", "mi_mode=mci")]
+    [InlineData("blend", "mi_mode=blend")]
+    public void FFmpegEngine_Minterpolate_EmitsMotionCompensatedFps(string mode, string expectedMode)
+    {
+        var engine = new FFmpegFilterEngine();
+        var chain = new FilterChain();
+        chain.Add(engine.GetAvailableFilters().First(f => f.Id == "minterpolate"),
+            new Dictionary<string, object> { ["fps"] = 60.0, ["mode"] = mode });
+
+        var script = engine.GenerateScript(chain, "in.mkv");
+        Assert.Contains("minterpolate=fps=60", script);
+        Assert.Contains(expectedMode, script);
+    }
+
     [Fact]
     public void FFmpegEngine_GenerateScript_UnknownFilter_SkipsIt()
     {

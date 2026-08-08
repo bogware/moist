@@ -63,8 +63,11 @@ Three engines. One chain. No manual script editing required.
   anime). Runs the AI shader on the GPU, in the same FFmpeg pass; falls back to a spline scale
   automatically on machines without a Vulkan GPU
 - **`--ai-upscale` — Real-ESRGAN deep-model upscaling**, the highest-quality option. Frame-based
-  (extract → upscale → re-encode), so it's slow and disk-heavy — best for short or precious clips.
-  moist can auto-download the tool from Settings; capped by source length unless `--ai-upscale-allow-long`
+  (extract → upscale → re-encode), so it's slow and disk-heavy — but it streams long sources in
+  windows (bounded scratch, resumable), so it handles full films, not just clips. Auto-downloadable
+- **`--fps <n>` — change the frame rate of anything.** `--fps-mode dup` (drop/duplicate, default),
+  `motion` (motion-compensated `minterpolate`), or `rife` (**AI frame interpolation** — smooth
+  24→60 or slow-mo, via the auto-downloadable RIFE tool)
 - **30+ built-in presets** — professional, anime, restoration, upscaling, color grading, speed, creative
 - **Save your own presets** — because nobody wants to rebuild a filter chain from memory
 

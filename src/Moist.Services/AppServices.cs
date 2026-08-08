@@ -285,6 +285,10 @@ public sealed class AppServices : IDisposable
         JobQueue.RegisterProcessorFactory(() => new RealEsrganVideoProcessor(
             Settings.FFmpegPath, Settings.FFprobePath, Settings.RealEsrganPath, Settings.TempDirectory));
 
+        // RIFE AI frame interpolation, likewise before the normal encoders (CanProcess: RifeTargetFps set).
+        JobQueue.RegisterProcessorFactory(() => new RifeVideoProcessor(
+            Settings.FFmpegPath, Settings.FFprobePath, Settings.RifePath, Settings.TempDirectory));
+
         foreach (var encoder in Encoders.Encoders.Values)
         {
             var encoderId = encoder.Id; // capture for closure
@@ -377,6 +381,7 @@ public sealed class AppServices : IDisposable
         "vspipe" => Settings.VapourSynthPath,
         "mp4box" => Settings.Mp4BoxPath,
         "realesrgan" => Settings.RealEsrganPath,
+        "rife" => Settings.RifePath,
         _ => string.Empty,
     };
 
@@ -394,6 +399,7 @@ public sealed class AppServices : IDisposable
             case "vspipe": Settings.VapourSynthPath = path; break;
             case "mp4box": Settings.Mp4BoxPath = path; break;
             case "realesrgan": Settings.RealEsrganPath = path; break;
+            case "rife": Settings.RifePath = path; break;
         }
     }
 

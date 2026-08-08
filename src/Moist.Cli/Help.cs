@@ -80,7 +80,10 @@ public static class Help
                                     Frame-based, slow, disk-heavy — best for short/precious clips.
                                     Needs the 'realesrgan' tool (install from Settings).
               --ai-upscale-height <h>   Target height for --ai-upscale        (default: 1080)
-              --ai-upscale-allow-long   Lift the source-length safety cap on --ai-upscale
+              --fps <n>             Change the frame rate to n. Works on any source.
+              --fps-mode <mode>     dup (drop/duplicate, default) | motion (minterpolate,
+                                    motion-compensated) | rife (AI interpolation, needs the
+                                    'rife' tool). Real-ESRGAN and RIFE are frame-based, so slow.
               --av1-tune <name>     vq | psnr | ssim | iq | ms-ssim | vmaf
                                     SVT-AV1 only. 'vq' is the perceptual tuning that
                                     SVT-AV1 4.0 merged from the PSY fork; the encoder's

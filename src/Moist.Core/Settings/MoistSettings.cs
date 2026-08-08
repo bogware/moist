@@ -24,6 +24,9 @@ public sealed class MoistSettings
     /// profile refuses to run without it, and points at Settings / auto-download.</summary>
     public string RealEsrganPath { get; set; } = "realesrgan-ncnn-vulkan";
 
+    /// <summary>RIFE ncnn-vulkan binary for AI frame interpolation (--fps-mode rife). Optional.</summary>
+    public string RifePath { get; set; } = "rife-ncnn-vulkan";
+
     /// <summary>Dolby Vision RPU tooling. Optional; without it a re-encode drops the RPU.</summary>
     public string DoviToolPath { get; set; } = "dovi_tool";
 

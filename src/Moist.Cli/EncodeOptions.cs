@@ -82,6 +82,10 @@ public static class EncodeOptions
             AiUpscaleModel = (cl.String("ai-upscale") is { Length: > 0 } m ? m : null) ?? profile?.AiUpscaleModel,
             AiUpscaleHeight = cl.Int("ai-upscale-height") ?? profile?.AiUpscaleHeight ?? 1080,
             AiUpscaleAllowLong = cl.Flag("ai-upscale-allow-long"),
+
+            // --fps-mode rife routes framerate change through RIFE AI interpolation (a processor);
+            // dup/motion modes are handled as filters in BuildFilters.
+            RifeTargetFps = cl.Double("fps") is { } fps && string.Equals(cl.String("fps-mode"), "rife", StringComparison.OrdinalIgnoreCase) ? fps : 0,
             Chroma = ParseChroma(cl.String("chroma")),
             SvtAv1Tune = ParseSvtTune(cl.String("av1-tune")),
 
@@ -272,49 +276,63 @@ public static class EncodeOptions
         if (specs.Count == 0)
         {
             var prof = ResolveProfile(cl, services);
-            if (prof is null || prof.Filters.Count == 0) return (null, null);
-            foreach (var pf in prof.Filters)
-            {
-                var pdef = available.FirstOrDefault(f => string.Equals(f.Id, pf.FilterId, StringComparison.OrdinalIgnoreCase));
-                if (pdef is not null) chain.Add(pdef, new Dictionary<string, object>(pf.Parameters));
-            }
-            return chain.Filters.Count > 0 ? (engine.GenerateScript(chain, inputFile), engine.Id) : (null, null);
-        }
-
-        foreach (var spec in specs)
-        {
-            var colon = spec.IndexOf(':');
-            var id = (colon < 0 ? spec : spec[..colon]).Trim();
-
-            var def = available.FirstOrDefault(f => string.Equals(f.Id, id, StringComparison.OrdinalIgnoreCase))
-                      ?? throw new UsageException(
-                          $"unknown filter '{id}'. Run 'moist list filters' to see the {available.Count} available.");
-
-            var values = new Dictionary<string, object>();
-            if (colon >= 0)
-            {
-                foreach (var pair in spec[(colon + 1)..].Split(',', StringSplitOptions.RemoveEmptyEntries))
+            if (prof is not null)
+                foreach (var pf in prof.Filters)
                 {
-                    var eq = pair.IndexOf('=');
-                    if (eq < 0)
-                        throw new UsageException($"filter '{id}': expected key=value, got '{pair}'");
-
-                    var key = pair[..eq].Trim();
-                    var raw = pair[(eq + 1)..].Trim();
-
-                    if (!def.Parameters.ContainsKey(key))
-                    {
-                        var keys = string.Join(", ", def.Parameters.Keys);
-                        throw new UsageException($"filter '{id}' has no parameter '{key}'. Valid: {keys}");
-                    }
-
-                    values[key] = Coerce(raw);
+                    var pdef = available.FirstOrDefault(f => string.Equals(f.Id, pf.FilterId, StringComparison.OrdinalIgnoreCase));
+                    if (pdef is not null) chain.Add(pdef, new Dictionary<string, object>(pf.Parameters));
                 }
-            }
+        }
+        else
+        {
+            foreach (var spec in specs)
+            {
+                var colon = spec.IndexOf(':');
+                var id = (colon < 0 ? spec : spec[..colon]).Trim();
 
-            chain.Add(def, values);
+                var def = available.FirstOrDefault(f => string.Equals(f.Id, id, StringComparison.OrdinalIgnoreCase))
+                          ?? throw new UsageException(
+                              $"unknown filter '{id}'. Run 'moist list filters' to see the {available.Count} available.");
+
+                var values = new Dictionary<string, object>();
+                if (colon >= 0)
+                {
+                    foreach (var pair in spec[(colon + 1)..].Split(',', StringSplitOptions.RemoveEmptyEntries))
+                    {
+                        var eq = pair.IndexOf('=');
+                        if (eq < 0)
+                            throw new UsageException($"filter '{id}': expected key=value, got '{pair}'");
+
+                        var key = pair[..eq].Trim();
+                        var raw = pair[(eq + 1)..].Trim();
+
+                        if (!def.Parameters.ContainsKey(key))
+                        {
+                            var keys = string.Join(", ", def.Parameters.Keys);
+                            throw new UsageException($"filter '{id}' has no parameter '{key}'. Valid: {keys}");
+                        }
+
+                        values[key] = Coerce(raw);
+                    }
+                }
+
+                chain.Add(def, values);
+            }
         }
 
+        // --fps convenience: append a frame-rate filter. dup/drop -> fps; motion/blend -> minterpolate.
+        // 'rife' is AI interpolation, handled as a processor in Build(), so it adds no filter here.
+        if (cl.Double("fps") is { } targetFps)
+        {
+            var mode = (cl.String("fps-mode") ?? "dup").ToLowerInvariant();
+            if (mode is "motion" or "blend")
+                chain.Add(available.First(f => f.Id == "minterpolate"),
+                    new() { ["fps"] = targetFps, ["mode"] = mode == "motion" ? "mci" : "blend" });
+            else if (mode != "rife")
+                chain.Add(available.First(f => f.Id == "fps"), new() { ["fps"] = targetFps });
+        }
+
+        if (chain.Filters.Count == 0) return (null, null);
         return (engine.GenerateScript(chain, inputFile), engine.Id);
     }
 

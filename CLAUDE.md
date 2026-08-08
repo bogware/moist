@@ -343,11 +343,19 @@ Things that path gets right on purpose:
   because cleaning has to happen on the native frames before the model enlarges them.
 - **Frames are verified, not trusted.** It counts the extracted frames and asserts the encoded
   output matches — a re-encode that silently drops frames desyncs the audio. JPEG intermediates
-  (a 4× frame is multi-MB as PNG) keep the scratch bounded, and a frame-count cap refuses whole
-  films unless `AiUpscaleAllowLong`: at ~3 fps and gigabytes of frames it's a short/precious-clip
-  tool, and the built-in profile is named to say so.
+  (a 4× frame is multi-MB as PNG) keep the scratch bounded.
+- **Long sources stream in windows.** Above `WindowFrames`, it copies a slice of frames, upscales
+  and encodes that window to a segment, drops the scratch, repeats, then concats — so the huge
+  upscaled frames never all land at once and it handles full films, not just clips. The work dir is
+  keyed on source+settings (`WorkKey`) and only cleaned on success, so an interrupted run **resumes**
+  by reusing finished segments.
 - **It's a tool, so it's optional.** `realesrgan-ncnn-vulkan` is in `ToolDiscovery.KnownTools`
   (auto-downloadable), and the processor refuses with a pointer to Settings when it's absent.
+
+`RifeVideoProcessor` is the same shape for **frame-rate** work: RIFE synthesizes in-between frames,
+so it too is a frame-based processor (handles a job whose `RifeTargetFps > 0`, reusing Real-ESRGAN's
+extract/codec builders). It's the `--fps-mode rife` path; `dup`/`motion` framerate changes stay
+filters (`fps` / `minterpolate`) added to the `-vf` in `EncodeOptions.BuildFilters`.
 
 ### Profiles: built-ins are materialized to disk
 

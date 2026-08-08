@@ -24,13 +24,6 @@ public sealed partial class RealEsrganVideoProcessor : IJobProcessor
     private readonly string _realesrganPath;
     private readonly string _tempDir;
 
-    /// <summary>
-    /// Refuse sources longer than this many frames unless <see cref="VideoJob.AiUpscaleAllowLong"/>
-    /// is set — at ~3 fps and multi-MB per upscaled frame, a whole film is hours of work and a
-    /// mountain of scratch. ~8 minutes at 25 fps.
-    /// </summary>
-    public const long DefaultMaxFrames = 12_000;
-
     public RealEsrganVideoProcessor(string ffmpegPath, string ffprobePath, string realesrganPath, string tempDir)
     {
         _ffmpegPath = ffmpegPath;
@@ -61,54 +54,131 @@ public sealed partial class RealEsrganVideoProcessor : IJobProcessor
                 "(or run 'moist tools'), or set its path, then try again.");
 
         var stopwatch = Stopwatch.StartNew();
-        var (frameRate, estimatedFrames) = await ProbeAsync(vj.InputFile, ct);
+        var (frameRate, _) = await ProbeAsync(vj.InputFile, ct);
 
-        if (!vj.AiUpscaleAllowLong && estimatedFrames > DefaultMaxFrames)
-            throw new InvalidOperationException(
-                $"This source is ~{estimatedFrames:N0} frames. Real-ESRGAN is frame-by-frame and very " +
-                $"slow/disk-heavy, so it's capped at {DefaultMaxFrames:N0} frames (~8 min). Trim the source, " +
-                "use the GPU 'superres' filter instead, or pass --ai-upscale-allow-long to override.");
-
-        var work = Path.Combine(_tempDir, $"realesrgan_{vj.Id}");
+        // Deterministic work dir keyed on source + settings, so an interrupted run resumes (finished
+        // segments are reused) rather than starting the whole slog over.
+        var work = Path.Combine(_tempDir, $"realesrgan_{WorkKey(vj)}");
         var framesIn = Path.Combine(work, "in");
-        var framesOut = Path.Combine(work, "out");
         Directory.CreateDirectory(framesIn);
-        Directory.CreateDirectory(framesOut);
 
+        var success = false;
         try
         {
-            // 1) Extract cleaned frames (the job's FilterScript is the pre-clean: de-block, denoise).
-            Report(progress, 3, "Extracting frames", stopwatch);
-            await RunAsync(_ffmpegPath, BuildExtractArgs(vj, Path.Combine(framesIn, "%06d.png")), null, ct);
-            var frameCount = Directory.EnumerateFiles(framesIn, "*.png").Count();
-            if (frameCount == 0) throw new InvalidOperationException("Frame extraction produced no frames.");
+            // 1) Extract cleaned frames once (FilterScript = the pre-clean). Skipped on resume.
+            if (!Directory.EnumerateFiles(framesIn, "*.png").Any())
+            {
+                Report(progress, 2, "Extracting frames", stopwatch);
+                await RunAsync(_ffmpegPath, BuildExtractArgs(vj, Path.Combine(framesIn, "%06d.png")), null, ct);
+            }
+            var frames = Directory.GetFiles(framesIn, "*.png").OrderBy(f => f, StringComparer.Ordinal).ToList();
+            if (frames.Count == 0) throw new InvalidOperationException("Frame extraction produced no frames.");
 
-            // 2) Upscale every frame with Real-ESRGAN. This is the slow part; map its % to 10–85.
-            await RunAsync(_realesrganPath, BuildRealesrganArgs(vj, framesIn, framesOut, ModelsDir()),
-                line =>
-                {
-                    var m = PercentRegex().Match(line);
-                    if (m.Success && double.TryParse(m.Groups[1].Value, CultureInfo.InvariantCulture, out var pct))
-                        Report(progress, 10 + pct / 100.0 * 75, "Upscaling (Real-ESRGAN)", stopwatch);
-                }, ct);
-
-            // 3) Encode the upscaled frames at the target height with the job's encoder settings.
-            Report(progress, 88, "Encoding", stopwatch);
-            await RunAsync(_ffmpegPath, BuildEncodeArgs(vj, Path.Combine(framesOut, "%06d.jpg"), frameRate), null, ct);
+            // 2+3) Small clips go all-at-once; longer ones stream in windows so the multi-MB upscaled
+            //       frames never all hit disk at once — this is what lifts the old frame cap.
+            if (frames.Count <= WindowFrames)
+                await UpscaleSegmentAsync(vj, work, framesIn, 1, frameRate, vj.OutputFile, progress, stopwatch, 8, 96, ct);
+            else
+                await WindowedAsync(vj, work, frames, frameRate, progress, stopwatch, ct);
 
             // 4) Verify nothing was lost — a re-encode that silently drops frames desyncs the audio.
             var outFrames = await CountFramesAsync(vj.OutputFile, ct);
-            if (outFrames > 0 && Math.Abs(outFrames - frameCount) > 1)
+            if (outFrames > 0 && Math.Abs(outFrames - frames.Count) > 1)
                 throw new InvalidOperationException(
-                    $"Real-ESRGAN output has {outFrames} frames but {frameCount} were upscaled — refusing a desynced result.");
+                    $"Real-ESRGAN output has {outFrames} frames but {frames.Count} were upscaled — refusing a desynced result.");
 
             Report(progress, 100, "Done", stopwatch);
+            success = true;
         }
         finally
         {
-            try { Directory.Delete(work, recursive: true); } catch { /* best-effort scratch cleanup */ }
+            // Keep the scratch on failure so a re-run resumes; clear it once we have a good result.
+            if (success) { try { Directory.Delete(work, recursive: true); } catch { /* best effort */ } }
         }
     }
+
+    private const int WindowFrames = 900;
+
+    /// <summary>Stable key for the work dir: the same source + settings resume the same scratch.</summary>
+    private static string WorkKey(VideoJob vj)
+    {
+        var raw = $"{vj.InputFile}|{vj.AiUpscaleModel}|{vj.AiUpscaleHeight}|{vj.EncoderId}|{vj.Settings.Quality}|{vj.FilterScript}";
+        return Convert.ToHexString(System.Security.Cryptography.SHA1.HashData(System.Text.Encoding.UTF8.GetBytes(raw)))[..12];
+    }
+
+    /// <summary>Upscale every PNG in <paramref name="framesInDir"/> and encode straight to
+    /// <paramref name="outFile"/>. The whole-clip path, reused per window over a copied subset.</summary>
+    private async Task UpscaleSegmentAsync(VideoJob vj, string work, string framesInDir, long startNumber,
+        string frameRate, string outFile, IProgress<JobProgress> progress, Stopwatch sw, double pctStart, double pctEnd, CancellationToken ct)
+    {
+        var outDir = Path.Combine(work, "up");
+        if (Directory.Exists(outDir)) Directory.Delete(outDir, recursive: true);
+        Directory.CreateDirectory(outDir);
+
+        await RunAsync(_realesrganPath, BuildRealesrganArgs(vj, framesInDir, outDir, ModelsDir()),
+            line =>
+            {
+                var m = PercentRegex().Match(line);
+                if (m.Success && double.TryParse(m.Groups[1].Value, CultureInfo.InvariantCulture, out var pct))
+                    Report(progress, pctStart + pct / 100.0 * (pctEnd - pctStart), "Upscaling (Real-ESRGAN)", sw);
+            }, ct);
+
+        await RunAsync(_ffmpegPath, BuildEncodeArgs(vj, Path.Combine(outDir, "%06d.jpg"), frameRate, startNumber), null, ct);
+        Directory.Delete(outDir, recursive: true);
+    }
+
+    /// <summary>Stream a long source in windows: copy a slice of frames, upscale+encode it to a
+    /// segment, drop the scratch, repeat — then concat. Peak upscaled-frame disk is one window.</summary>
+    private async Task WindowedAsync(VideoJob vj, string work, List<string> frames, string frameRate,
+        IProgress<JobProgress> progress, Stopwatch sw, CancellationToken ct)
+    {
+        var segDir = Path.Combine(work, "segments");
+        Directory.CreateDirectory(segDir);
+        var windows = PlanWindows(frames.Count, WindowFrames);
+        var segments = new List<string>();
+
+        for (var i = 0; i < windows.Count; i++)
+        {
+            var (start, count) = windows[i];
+            var seg = Path.Combine(segDir, $"seg_{i:D5}.mkv");
+
+            // Resume: reuse a segment already fully encoded to the right length.
+            if (File.Exists(seg) && await CountFramesAsync(seg, ct) == count) { segments.Add(seg); continue; }
+
+            var winIn = Path.Combine(work, "win");
+            if (Directory.Exists(winIn)) Directory.Delete(winIn, recursive: true);
+            Directory.CreateDirectory(winIn);
+            // Copy (don't move) so framesIn stays intact for a robust resume.
+            for (var f = start; f < start + count; f++)
+                File.Copy(frames[f], Path.Combine(winIn, Path.GetFileName(frames[f])), overwrite: true);
+
+            var baseP = 5 + (double)i / windows.Count * 92;
+            var spanP = 92.0 / windows.Count;
+            await UpscaleSegmentAsync(vj, work, winIn, FrameNumber(frames[start]), frameRate, seg, progress, sw, baseP, baseP + spanP * 0.9, ct);
+            Directory.Delete(winIn, recursive: true);
+            segments.Add(seg);
+            Report(progress, baseP + spanP, $"Window {i + 1}/{windows.Count}", sw);
+        }
+
+        // Concat the segments — same encoder settings throughout, so a stream copy is exact.
+        var listPath = Path.Combine(work, "concat.txt");
+        await File.WriteAllTextAsync(listPath,
+            string.Join("\n", segments.Select(s => $"file '{s.Replace('\\', '/')}'")), ct);
+        await RunAsync(_ffmpegPath,
+            ["-y", "-hide_banner", "-f", "concat", "-safe", "0", "-i", listPath, "-c", "copy", vj.OutputFile], null, ct);
+    }
+
+    /// <summary>Split <paramref name="total"/> frames into contiguous windows of at most <paramref name="size"/>.</summary>
+    internal static List<(int Start, int Count)> PlanWindows(int total, int size)
+    {
+        var windows = new List<(int, int)>();
+        for (var start = 0; start < total; start += size)
+            windows.Add((start, Math.Min(size, total - start)));
+        return windows;
+    }
+
+    private static long FrameNumber(string path)
+        => long.TryParse(Path.GetFileNameWithoutExtension(path), out var n) ? n : 1;
 
     // === Command builders (pure; unit-tested without launching anything) ===
 
@@ -136,7 +206,7 @@ public sealed partial class RealEsrganVideoProcessor : IJobProcessor
         return [.. args];
     }
 
-    internal static string[] BuildEncodeArgs(VideoJob vj, string framesPattern, string frameRate)
+    internal static string[] BuildEncodeArgs(VideoJob vj, string framesPattern, string frameRate, long startNumber = 1)
     {
         var s = vj.Settings;
         var height = vj.AiUpscaleHeight > 0 ? vj.AiUpscaleHeight : 1080;
@@ -145,6 +215,7 @@ public sealed partial class RealEsrganVideoProcessor : IJobProcessor
         {
             "-y", "-hide_banner", "-progress", "pipe:1",
             "-framerate", frameRate,          // the source rate, so playback speed is preserved
+            "-start_number", startNumber.ToString(CultureInfo.InvariantCulture),
             "-i", framesPattern,
             // Scale the AI-upscaled frames to the exact target height (aspect preserved), then a light
             // sharpen + deband finish. CAS is gentle here because the model already added detail.
