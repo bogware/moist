@@ -297,7 +297,7 @@ Things that path gets wrong if you touch it carelessly:
 
 ### Filter engines and the FFmpeg-only constraint
 
-`IFilterEngine` implementations turn an engine-agnostic `FilterChain` into a script: FFmpeg → a `-vf` chain string, VapourSynth → `.vpy`, AviSynth+ → `.avs`. Only the FFmpeg engine's output is consumable by `FFmpegVideoProcessor` (it passes the string to `-vf`). VapourSynth/AviSynth scripts need vspipe/avs2pipe piping into a standalone CLI encoder, which is not implemented — nothing on the encode path reads `FilterEngineId` at all — so `EncodeTabViewModel.AddToQueue()` **rejects the enqueue** when a non-FFmpeg engine has a non-empty chain, and the CLI's `--filter` can only select the FFmpeg engine. If you build the piping, note that the generated `.vpy` calls `lsmas.LWLibavSource`, a third-party plugin that ships with neither VapourSynth nor moist. Also note `FFmpegFilterEngine` silently drops filters it doesn't recognize (it records them in `SkippedFilterIds`, which nothing currently reads).
+`IFilterEngine` implementations turn an engine-agnostic `FilterChain` into a script: FFmpeg → a `-vf` chain string, VapourSynth → `.vpy`, AviSynth+ → `.avs`. The FFmpeg engine's output goes straight to `FFmpegVideoProcessor` (`-vf`). **VapourSynth is now wired too**: a job whose `FilterEngineId == "vapoursynth"` is caught by `VapourSynthPipeProcessor`, which writes the `.vpy` and runs `vspipe --y4m script.vpy - | ffmpeg …` via `ShellPipeline` — the same producer|consumer machinery behind the standalone x264/x265 encoders. That's the seam that makes vs-mlrt ML super-resolution (`vs_superres`, emitting `core.ort/trt/ov.Model`) reachable. The CLI selects the engine with `--filter-engine ffmpeg|vapoursynth`; the GUI now rejects only engines that are neither (i.e. **AviSynth**, whose avs2pipe piping still isn't built). Note the generated `.vpy` calls `lsmas.LWLibavSource` and any vs-mlrt node, all third-party plugins that ship with neither VapourSynth nor moist — so the VS path is correct-by-construction here but only runs where the user has that stack installed. Also note `FFmpegFilterEngine` silently drops filters it doesn't recognize (it records them in `SkippedFilterIds`, which nothing currently reads).
 
 ### GPU super-resolution reaches across the filter/processor seam
 
@@ -343,11 +343,19 @@ Things that path gets right on purpose:
   because cleaning has to happen on the native frames before the model enlarges them.
 - **Frames are verified, not trusted.** It counts the extracted frames and asserts the encoded
   output matches — a re-encode that silently drops frames desyncs the audio. JPEG intermediates
-  (a 4× frame is multi-MB as PNG) keep the scratch bounded, and a frame-count cap refuses whole
-  films unless `AiUpscaleAllowLong`: at ~3 fps and gigabytes of frames it's a short/precious-clip
-  tool, and the built-in profile is named to say so.
+  (a 4× frame is multi-MB as PNG) keep the scratch bounded.
+- **Long sources stream in windows.** Above `WindowFrames`, it copies a slice of frames, upscales
+  and encodes that window to a segment, drops the scratch, repeats, then concats — so the huge
+  upscaled frames never all land at once and it handles full films, not just clips. The work dir is
+  keyed on source+settings (`WorkKey`) and only cleaned on success, so an interrupted run **resumes**
+  by reusing finished segments.
 - **It's a tool, so it's optional.** `realesrgan-ncnn-vulkan` is in `ToolDiscovery.KnownTools`
   (auto-downloadable), and the processor refuses with a pointer to Settings when it's absent.
+
+`RifeVideoProcessor` is the same shape for **frame-rate** work: RIFE synthesizes in-between frames,
+so it too is a frame-based processor (handles a job whose `RifeTargetFps > 0`, reusing Real-ESRGAN's
+extract/codec builders). It's the `--fps-mode rife` path; `dup`/`motion` framerate changes stay
+filters (`fps` / `minterpolate`) added to the `-vf` in `EncodeOptions.BuildFilters`.
 
 ### Profiles: built-ins are materialized to disk
 

@@ -285,6 +285,16 @@ public sealed class AppServices : IDisposable
         JobQueue.RegisterProcessorFactory(() => new RealEsrganVideoProcessor(
             Settings.FFmpegPath, Settings.FFprobePath, Settings.RealEsrganPath, Settings.TempDirectory));
 
+        // RIFE AI frame interpolation, likewise before the normal encoders (CanProcess: RifeTargetFps set).
+        JobQueue.RegisterProcessorFactory(() => new RifeVideoProcessor(
+            Settings.FFmpegPath, Settings.FFprobePath, Settings.RifePath, Settings.TempDirectory));
+
+        // VapourSynth jobs (FilterEngineId == "vapoursynth") are piped vspipe -> ffmpeg. This is the
+        // seam that lets a .vpy (incl. vs-mlrt ML nodes) reach the encoder; the FFmpeg engine's -vf
+        // path can't run it. Registered before the normal encoders, which key on EncoderId.
+        JobQueue.RegisterProcessorFactory(() => new VapourSynthPipeProcessor(
+            Settings.FFmpegPath, Settings.VapourSynthPath));
+
         foreach (var encoder in Encoders.Encoders.Values)
         {
             var encoderId = encoder.Id; // capture for closure
@@ -377,8 +387,30 @@ public sealed class AppServices : IDisposable
         "vspipe" => Settings.VapourSynthPath,
         "mp4box" => Settings.Mp4BoxPath,
         "realesrgan" => Settings.RealEsrganPath,
+        "rife" => Settings.RifePath,
         _ => string.Empty,
     };
+
+    /// <summary>
+    /// Download and install a known tool to the moist tools directory, record its path in Settings,
+    /// and persist. Returns the installed binary path, or null if there's no download for this platform.
+    /// This is what makes tools installable from the CLI (<c>moist tools install</c>), not just the GUI.
+    /// </summary>
+    public async Task<string?> InstallToolAsync(string toolId,
+        IProgress<(string Status, double Percent)>? progress = null, CancellationToken ct = default)
+    {
+        var tool = ToolDiscovery.KnownTools.FirstOrDefault(t => string.Equals(t.Id, toolId, StringComparison.OrdinalIgnoreCase))
+                   ?? throw new ArgumentException(
+                       $"unknown tool '{toolId}'. Known: {string.Join(", ", Core.Tools.ToolDiscovery.KnownTools.Select(t => t.Id))}");
+
+        var path = await ToolDiscovery.DownloadAndInstallAsync(tool, progress, ct);
+        if (path is not null)
+        {
+            SetConfiguredToolPath(tool.Id, path);
+            Save();
+        }
+        return path;
+    }
 
     private void SetConfiguredToolPath(string toolId, string path)
     {
@@ -394,6 +426,7 @@ public sealed class AppServices : IDisposable
             case "vspipe": Settings.VapourSynthPath = path; break;
             case "mp4box": Settings.Mp4BoxPath = path; break;
             case "realesrgan": Settings.RealEsrganPath = path; break;
+            case "rife": Settings.RifePath = path; break;
         }
     }
 

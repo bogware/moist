@@ -737,6 +737,43 @@ public static class ToolsCommand
     public static async Task<int> RunAsync(CommandLine cl, CancellationToken ct)
     {
         using var services = Cli.CreateServices(cl);
+
+        // `moist tools install <id> [id...]` downloads and installs tools (FFmpeg, realesrgan, rife,
+        // vapoursynth, vsmlrt, …) into the moist tools directory and records the path.
+        if (cl.Positional.Count > 0 && cl.Positional[0].Equals("install", StringComparison.OrdinalIgnoreCase))
+        {
+            var ids = cl.Positional.Skip(1).ToList();
+            if (ids.Count == 0)
+            {
+                Console.Error.WriteLine("usage: moist tools install <id> [id...]   e.g. realesrgan, rife, vapoursynth, vsmlrt");
+                return Program.ExitUsage;
+            }
+
+            var anyFailed = false;
+            foreach (var id in ids)
+            {
+                Console.WriteLine($"Installing {id}...");
+                var progress = new Progress<(string Status, double Percent)>(p =>
+                {
+                    if (p.Percent >= 0) Console.Write($"\r  {p.Status,-60}");
+                });
+                try
+                {
+                    var path = await services.InstallToolAsync(id, progress, ct);
+                    Console.WriteLine();
+                    if (path is not null) Console.WriteLine($"  ok: {path}");
+                    else { Console.Error.WriteLine($"  no download available for '{id}' on this platform."); anyFailed = true; }
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine();
+                    Console.Error.WriteLine($"  {id}: {ex.Message}");
+                    anyFailed = true;
+                }
+            }
+            return anyFailed ? Program.ExitMissingTool : Program.ExitOk;
+        }
+
         var statuses = await services.DiscoverToolsAsync(ct);
 
         if (cl.Flag("json"))

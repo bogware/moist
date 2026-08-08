@@ -168,10 +168,25 @@ public sealed class FFmpegFilterEngine : IFilterEngine
         new FilterDefinition
         {
             Id = "fps", Name = "Frame Rate", Category = FilterCategory.FrameRate,
-            Description = "Convert to a target frame rate",
+            Description = "Convert to a target frame rate by dropping/duplicating frames",
             Parameters = new()
             {
                 ["fps"] = new() { Name = "FPS", Type = FilterParameterType.Double, DefaultValue = 23.976 },
+            }
+        },
+        new FilterDefinition
+        {
+            Id = "minterpolate", Name = "Motion Interpolate (frame rate)", Category = FilterCategory.FrameRate,
+            Description = "Change frame rate with motion-compensated interpolation — smooth 24->60 or slow-mo, "
+                          + "no dropped/duplicated frames. CPU-heavy. (For AI interpolation use --fps-mode rife.)",
+            Parameters = new()
+            {
+                ["fps"] = new() { Name = "Target FPS", Type = FilterParameterType.Double, DefaultValue = 60.0, MinValue = 1, MaxValue = 480 },
+                ["mode"] = new()
+                {
+                    Name = "Mode", Type = FilterParameterType.Choice, DefaultValue = "mci",
+                    Options = ["dup", "blend", "mci"]
+                },
             }
         },
         // Deband
@@ -282,6 +297,7 @@ public sealed class FFmpegFilterEngine : IFilterEngine
                 "deblock" => BuildDeblockFilter(applied),
                 "eq" => BuildEqFilter(applied),
                 "fps" => BuildFpsFilter(applied),
+                "minterpolate" => BuildMinterpolateFilter(applied),
                 "deband" => BuildDebandFilter(applied),
                 "tonemap" => BuildTonemapFilter(applied),
                 "vidstabtransform" => BuildVidstabFilter(applied),
@@ -401,6 +417,16 @@ public sealed class FFmpegFilterEngine : IFilterEngine
     {
         var fps = GetDouble(af, "fps", 23.976);
         return $"fps={Fmt(fps)}";
+    }
+
+    private static string BuildMinterpolateFilter(AppliedFilter af)
+    {
+        var fps = GetDouble(af, "fps", 60.0);
+        var mode = GetString(af, "mode", "mci");
+        // Full motion-compensated interpolation is the smooth one; dup/blend are cheaper fallbacks.
+        return mode == "mci"
+            ? $"minterpolate=fps={Fmt(fps)}:mi_mode=mci:mc_mode=aobmc:me_mode=bidir:vsbmc=1"
+            : $"minterpolate=fps={Fmt(fps)}:mi_mode={mode}";
     }
 
     private static string BuildDebandFilter(AppliedFilter af)

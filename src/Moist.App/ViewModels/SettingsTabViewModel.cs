@@ -278,6 +278,7 @@ public partial class ToolStatusViewModel : ViewModelBase
                     case "vspipe": _services.Settings.VapourSynthPath = installedPath; break;
                     case "mp4box": _services.Settings.Mp4BoxPath = installedPath; break;
                     case "realesrgan": _services.Settings.RealEsrganPath = installedPath; break;
+                    case "rife": _services.Settings.RifePath = installedPath; break;
                 }
                 _services.Save();
                 _parent.SetToolPath(_status.Tool.Id, installedPath);

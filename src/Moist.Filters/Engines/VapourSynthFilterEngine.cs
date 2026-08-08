@@ -70,6 +70,21 @@ public sealed class VapourSynthFilterEngine : IFilterEngine
                 ["sigma"] = new() { Name = "Sigma", Type = FilterParameterType.Double, DefaultValue = 3.0, MinValue = 0.0, MaxValue = 50.0 },
             }
         },
+        new FilterDefinition
+        {
+            Id = "vs_superres", Name = "AI Super-Resolution (vs-mlrt)", Category = FilterCategory.Resize,
+            Description = "Neural super-resolution via vs-mlrt (ONNX / TensorRT / OpenVINO) — the "
+                          + "temporally-aware quality ceiling. Needs VapourSynth + vs-mlrt + an ONNX model.",
+            Parameters = new()
+            {
+                ["model"] = new() { Name = "ONNX model path", Type = FilterParameterType.String, DefaultValue = "" },
+                ["backend"] = new()
+                {
+                    Name = "Backend", Type = FilterParameterType.Choice, DefaultValue = "ort",
+                    Options = ["ort", "trt", "ov"] // onnxruntime / TensorRT / OpenVINO
+                },
+            }
+        },
     ];
 
     public string GenerateScript(FilterChain chain, string inputFile)
@@ -110,6 +125,15 @@ public sealed class VapourSynthFilterEngine : IFilterEngine
                     var sigma = GetDouble(applied, "sigma", 3.0);
                     sb.AppendLine($"ref = core.bm3d.BM3D(clip, sigma={Fmt(sigma)})");
                     sb.AppendLine($"clip = core.bm3d.VAggregate(ref)");
+                    break;
+
+                case "vs_superres":
+                    var model = GetString(applied, "model", "").Replace("\\", "\\\\").Replace("\"", "\\\"");
+                    var ns = GetString(applied, "backend", "ort") switch { "trt" => "trt", "ov" => "ov", _ => "ort" };
+                    // vs-mlrt models want planar RGB float; convert in, run the network, convert back.
+                    sb.AppendLine("clip = core.resize.Bicubic(clip, format=vs.RGBS, matrix_in_s=\"709\")");
+                    sb.AppendLine($"clip = core.{ns}.Model(clip, network_path=\"{model}\")");
+                    sb.AppendLine("clip = core.resize.Bicubic(clip, format=vs.YUV420P8, matrix_s=\"709\")");
                     break;
             }
         }

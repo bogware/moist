@@ -42,6 +42,9 @@ public sealed record EncodeRequest
     public int AiUpscaleHeight { get; init; } = 1080;
     public bool AiUpscaleAllowLong { get; init; }
 
+    /// <summary>RIFE AI frame-interpolation target frame rate (0 = off). See RifeVideoProcessor.</summary>
+    public double RifeTargetFps { get; init; }
+
     /// <summary>Chroma sampling. Auto follows the source.</summary>
     public ChromaSubsampling Chroma { get; init; } = ChromaSubsampling.Auto;
 
@@ -398,6 +401,7 @@ public static class EncodeJobBuilder
                 AiUpscaleModel = req.AiUpscaleModel,
                 AiUpscaleHeight = req.AiUpscaleHeight,
                 AiUpscaleAllowLong = req.AiUpscaleAllowLong,
+                RifeTargetFps = req.RifeTargetFps,
             };
         }
 

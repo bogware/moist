@@ -49,11 +49,16 @@ Every knob, every dial. Professional audio encoding with nothing hidden.
 
 Three engines. One chain. No manual script editing required.
 
-| Engine | Platform | Output |
-|--------|----------|--------|
-| FFmpeg | All | `-filter_complex` argument string |
-| VapourSynth | All | `.vpy` Python script |
-| AviSynth+ | Windows | `.avs` script |
+| Engine | Platform | Output | Encodes? |
+|--------|----------|--------|----------|
+| FFmpeg | All | `-vf` filter chain | ✓ direct |
+| VapourSynth | All | `.vpy` Python script | ✓ piped `vspipe → ffmpeg` (`--filter-engine vapoursynth`) |
+| AviSynth+ | Windows | `.avs` script | — (script only) |
+
+The **VapourSynth** engine is fully encodable — moist pipes `vspipe --y4m script.vpy - | ffmpeg …`,
+which is what unlocks **`vs_superres`**: neural super-resolution via **vs-mlrt** (ONNX / TensorRT /
+OpenVINO), the temporally-aware quality ceiling. It needs a VapourSynth + vs-mlrt + model install of
+your own; moist generates the script and runs the pipe.
 
 - **Visual filter chain editor** — drag, reorder, configure. See the generated script update live.
 - **A working restoration toolkit** — crop, resize (bilinear→spline/lanczos), `bwdif`/`yadif`
@@ -63,8 +68,11 @@ Three engines. One chain. No manual script editing required.
   anime). Runs the AI shader on the GPU, in the same FFmpeg pass; falls back to a spline scale
   automatically on machines without a Vulkan GPU
 - **`--ai-upscale` — Real-ESRGAN deep-model upscaling**, the highest-quality option. Frame-based
-  (extract → upscale → re-encode), so it's slow and disk-heavy — best for short or precious clips.
-  moist can auto-download the tool from Settings; capped by source length unless `--ai-upscale-allow-long`
+  (extract → upscale → re-encode), so it's slow and disk-heavy — but it streams long sources in
+  windows (bounded scratch, resumable), so it handles full films, not just clips. Auto-downloadable
+- **`--fps <n>` — change the frame rate of anything.** `--fps-mode dup` (drop/duplicate, default),
+  `motion` (motion-compensated `minterpolate`), or `rife` (**AI frame interpolation** — smooth
+  24→60 or slow-mo, via the auto-downloadable RIFE tool)
 - **30+ built-in presets** — professional, anime, restoration, upscaling, color grading, speed, creative
 - **Save your own presets** — because nobody wants to rebuild a filter chain from memory
 
@@ -425,12 +433,19 @@ reports what was actually found.
 - Exit codes: `0` success, `1` encode failed, `2` bad usage, `3` missing prerequisite
 - `Ctrl+C` cancels gracefully and kills the FFmpeg process tree
 
-### Tool Auto-Discovery
+### Tool Auto-Discovery & install
 
 - **Automatic detection** — Scans PATH, common install locations, and bundled tool directories at startup
-- **One-click install** — Download and install FFmpeg, FFprobe, and other tools directly from Settings
+- **One-click install** — Download and install standalone tools from the GUI (Settings → Prerequisites)
+  or the CLI: `moist tools install ffmpeg realesrgan rife`. Covers FFmpeg/FFprobe and the AI tools
+  (Real-ESRGAN, RIFE) — self-contained binaries moist fetches, extracts, and wires up
 - **Version detection** — Shows installed tool versions in the prerequisites panel
 - **Missing tool warnings** — Clear startup warnings when required tools (FFmpeg, FFprobe) aren't found
+
+> **VapourSynth + vs-mlrt** (the `vs_superres` ceiling) are a Python + plugin *ecosystem*, not a
+> drop-in binary, so moist **detects** them and runs the `vspipe → ffmpeg` pipe once present, but
+> doesn't auto-provision them — install VapourSynth with its own installer and drop vs-mlrt + your
+> ONNX model into its plugins folder.
 
 ---
 

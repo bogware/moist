@@ -87,6 +87,27 @@ public class RealEsrganProcessorTests
     }
 
     [Fact]
+    public void PlanWindows_TilesFramesExactly_NoGapsOrOverlaps()
+    {
+        var windows = RealEsrganVideoProcessor.PlanWindows(2050, 900);
+        Assert.Equal(3, windows.Count);
+        Assert.Equal((0, 900), windows[0]);
+        Assert.Equal((900, 900), windows[1]);
+        Assert.Equal((1800, 250), windows[2]);
+        // The windows must cover every frame once — no gap loses footage, no overlap repeats it.
+        Assert.Equal(2050, windows.Sum(w => w.Count));
+        for (var i = 1; i < windows.Count; i++)
+            Assert.Equal(windows[i - 1].Start + windows[i - 1].Count, windows[i].Start);
+    }
+
+    [Fact]
+    public void BuildEncodeArgs_UsesStartNumberForWindowSegments()
+    {
+        var args = RealEsrganVideoProcessor.BuildEncodeArgs(Job(), "f/%06d.jpg", "25/1", startNumber: 901);
+        Assert.Equal("901", args[Array.IndexOf(args, "-start_number") + 1]);
+    }
+
+    [Fact]
     public void RealEsrganProfile_IsPreCleanPlusModel()
     {
         var p = ProfileManager.GetBuiltInProfiles()
