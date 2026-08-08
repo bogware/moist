@@ -203,6 +203,32 @@ public sealed class ProfileManager
         },
         new()
         {
+            // GPU variant of the restore profile: a neural-shader upscale (FSRCNNX via libplacebo)
+            // in place of the spline scale, with a lighter CAS since the shader adds its own edge
+            // definition. Needs a Vulkan GPU; the superres filter falls back to spline automatically
+            // where one isn't present, so this is safe to ship as a built-in.
+            Name = "AI Upscale SD to HD (GPU)",
+            Description = "Vintage SD to sharp 1080p with a GPU neural upscale (FSRCNNX via libplacebo). Needs a Vulkan GPU; falls back to spline without one.",
+            VideoEncoderId = "ffmpeg-x265",
+            VideoMode = VideoEncodingMode.ConstantRateFactor,
+            VideoQuality = 19,
+            VideoPreset = VideoPreset.Medium,
+            BitDepth = VideoBitDepth.Ten,
+            AudioEncoderId = "ffmpeg-audio-opus",
+            AudioBitrate = 192,
+            Container = ContainerFormat.Mkv,
+            FilterEngineId = "ffmpeg",
+            Filters =
+            [
+                new() { FilterId = "deblock",  Parameters = new() { ["quality"] = 3, ["strength"] = 4 } },
+                new() { FilterId = "hqdn3d",   Parameters = new() { ["luma_spatial"] = 2.0, ["chroma_spatial"] = 1.5, ["luma_temporal"] = 3.0 } },
+                new() { FilterId = "superres", Parameters = new() { ["model"] = "fsrcnnx", ["height"] = 1080 } },
+                new() { FilterId = "cas",      Parameters = new() { ["strength"] = 0.4 } },
+                new() { FilterId = "deband",   Parameters = new() { ["range"] = 16 } },
+            ],
+        },
+        new()
+        {
             Name = "Web - H.265 High Quality",
             Description = "High quality H.265 for web streaming. Opus audio.",
             VideoEncoderId = "ffmpeg-x265",

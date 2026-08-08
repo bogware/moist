@@ -1,0 +1,18 @@
+Bundled GPU upscaling shaders
+=============================
+
+These GLSL shaders run through FFmpeg's libplacebo filter (custom_shader_path) to give
+moist a GPU, neural-network upscale ("superres" filter). They are third-party works,
+redistributed here under their original MIT licenses.
+
+- FSRCNNX_x2_8-0-4-1.glsl
+  FSRCNNX super-resolution shader by igv.
+  https://github.com/igv/FSRCNN-TensorFlow   (MIT License)
+  General / live-action luma upscaler.
+
+- Anime4K_Upscale_CNN_x2_M.glsl
+  Anime4K by bloc97 and contributors.
+  https://github.com/bloc97/Anime4K          (MIT License)
+  Anime / line-art upscaler.
+
+See each project's repository for the full license text and attribution.

@@ -41,4 +41,17 @@ public class ProfileTests
         var ids = restore.Filters.Select(f => f.FilterId).ToList();
         Assert.Equal(new[] { "deblock", "hqdn3d", "resize", "cas", "deband" }, ids);
     }
+
+    [Fact]
+    public void RestoreAiProfile_SwapsSuperResForTheSplineScale()
+    {
+        var ai = ProfileManager.GetBuiltInProfiles()
+            .Single(p => p.Name.Contains("AI Upscale", StringComparison.OrdinalIgnoreCase));
+
+        Assert.Equal(VideoBitDepth.Ten, ai.BitDepth);
+        Assert.Equal("ffmpeg", ai.FilterEngineId);
+        // Same pipeline as the classical restore, with the GPU neural upscale in the resize slot.
+        Assert.Equal(new[] { "deblock", "hqdn3d", "superres", "cas", "deband" },
+            ai.Filters.Select(f => f.FilterId));
+    }
 }

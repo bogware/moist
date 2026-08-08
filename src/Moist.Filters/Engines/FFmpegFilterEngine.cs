@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text;
+using Moist.Core.Media;
 
 namespace Moist.Filters.Engines;
 
@@ -42,6 +43,23 @@ public sealed class FFmpegFilterEngine : IFilterEngine
                     Name = "Algorithm", Type = FilterParameterType.Choice, DefaultValue = "lanczos",
                     Options = ["bilinear", "bicubic", "lanczos", "spline", "neighbor"]
                 },
+            }
+        },
+        // AI / GPU super-resolution — a neural GLSL shader run through libplacebo.
+        new FilterDefinition
+        {
+            Id = "superres", Name = "AI Upscale (GPU)", Category = FilterCategory.Resize,
+            Description = "GPU neural-network upscale via libplacebo — FSRCNNX for live action, "
+                          + "Anime4K for anime. Preserves aspect (targets a height). Falls back to "
+                          + "a spline scale when no Vulkan GPU is present. Run it after de-block/denoise.",
+            Parameters = new()
+            {
+                ["model"] = new()
+                {
+                    Name = "Model", Type = FilterParameterType.Choice, DefaultValue = "fsrcnnx",
+                    Options = ["fsrcnnx", "anime4k"]
+                },
+                ["height"] = new() { Name = "Target Height", Type = FilterParameterType.Int, DefaultValue = 1080, MinValue = 240, MaxValue = 4320 },
             }
         },
         // Deinterlace
@@ -232,6 +250,13 @@ public sealed class FFmpegFilterEngine : IFilterEngine
     public IReadOnlyList<string> SkippedFilters => _skippedFilters;
     private List<string> _skippedFilters = [];
 
+    /// <summary>
+    /// Decides whether the GPU superres path (libplacebo + Vulkan) is usable. Wired by AppServices
+    /// to a real capability probe; defaults to available so unit tests are deterministic. When it
+    /// returns false, the <c>superres</c> filter degrades to a plain spline upscale.
+    /// </summary>
+    public Func<bool> IsSuperResAvailable { get; set; } = static () => true;
+
     public string GenerateScript(FilterChain chain, string inputFile)
     {
         _skippedFilters = [];
@@ -247,6 +272,7 @@ public sealed class FFmpegFilterEngine : IFilterEngine
             {
                 "crop" => BuildCropFilter(applied),
                 "resize" => BuildResizeFilter(applied),
+                "superres" => BuildSuperResFilter(applied),
                 "yadif" => BuildYadifFilter(applied),
                 "bwdif" => BuildBwdifFilter(applied),
                 "nlmeans" => BuildNlmeansFilter(applied),
@@ -292,6 +318,24 @@ public sealed class FFmpegFilterEngine : IFilterEngine
         var h = GetInt(af, "height", -1);
         var algo = GetString(af, "algorithm", "lanczos");
         return $"scale={w}:{h}:flags={algo}";
+    }
+
+    private string BuildSuperResFilter(AppliedFilter af)
+    {
+        var model = GetString(af, "model", "fsrcnnx");
+        var height = GetInt(af, "height", 1080);
+        var shader = GpuShaders.FileNameFor(model);
+
+        // No Vulkan/libplacebo, or an unrecognized model: still upscale, just with a classical
+        // scaler so the AI profile keeps producing HD output on machines without a usable GPU.
+        if (shader is null || !IsSuperResAvailable())
+            return $"scale=-2:{height}:flags=spline";
+
+        // libplacebo runs the neural shader AND the scale on the Vulkan device; hwupload/hwdownload
+        // move the frame on and off the GPU. w=-2 keeps the source aspect at the target height.
+        // The bare shader filename resolves against FFmpeg's working directory, which the video
+        // processor sets to GpuShaders.Directory to avoid filter-graph path escaping.
+        return $"format=yuv420p,hwupload,libplacebo=w=-2:h={height}:upscaler=ewa_lanczos:custom_shader_path={shader},hwdownload,format=yuv420p";
     }
 
     private static string BuildYadifFilter(AppliedFilter af)

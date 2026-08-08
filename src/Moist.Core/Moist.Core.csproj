@@ -4,6 +4,13 @@
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="8.0.2" />
   </ItemGroup>
 
+  <!-- Bundled GLSL upscaling shaders (FSRCNNX / Anime4K), run through FFmpeg's libplacebo
+       filter. Copied next to the binary so GpuShaders.Directory can find them at runtime;
+       Content flows to the referencing app/CLI output too. -->
+  <ItemGroup>
+    <Content Include="Shaders\**" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
   <!-- Argument-building helpers are internal by design, but they are exactly the parts
        worth asserting on without launching a process. -->
   <ItemGroup>

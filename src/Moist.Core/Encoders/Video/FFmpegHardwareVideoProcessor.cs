@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Globalization;
 using System.Text.RegularExpressions;
 using Moist.Core.Jobs;
+using Moist.Core.Media;
 
 namespace Moist.Core.Encoders.Video;
 
@@ -58,6 +59,12 @@ public sealed partial class FFmpegHardwareVideoProcessor : CommandLineProcessor
         if (_vendor == HardwareVendor.Vaapi)
             args.AddRange(["-vaapi_device", hw?.VaapiDevice ?? "/dev/dri/renderD128"]);
 
+        // The superres filter upscales via libplacebo, which needs a Vulkan device declared before
+        // the input — even when the encoder is a GPU one (NVENC filters on Vulkan, encodes on its
+        // own engine). Skipped for VA-API, whose filter chain already binds the render device.
+        if (_vendor != HardwareVendor.Vaapi && GpuShaders.UsedInFilterScript(vj.FilterScript))
+            args.AddRange(["-init_hw_device", "vulkan=vk:0", "-filter_hw_device", "vk"]);
+
         if (vj.TrimStart is { } trimStart)
             args.AddRange(["-ss", trimStart.TotalSeconds.ToString("F3", CultureInfo.InvariantCulture)]);
 
@@ -95,6 +102,14 @@ public sealed partial class FFmpegHardwareVideoProcessor : CommandLineProcessor
         args.Add(Quote(vj.OutputFile));
 
         return string.Join(" ", args);
+    }
+
+    protected override void OnBeforeStart(ProcessStartInfo psi, Job job)
+    {
+        // superres references its GLSL shader by bare filename; resolve it by running FFmpeg from
+        // the shaders folder rather than escaping a drive-lettered path into the filter graph.
+        if (job is VideoJob vj && GpuShaders.UsedInFilterScript(vj.FilterScript))
+            psi.WorkingDirectory = GpuShaders.Directory;
     }
 
     /// <summary>

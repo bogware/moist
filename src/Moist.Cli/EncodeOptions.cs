@@ -231,16 +231,21 @@ public static class EncodeOptions
         if (name is null) return null;
 
         var all = services.ProfileManager.GetAllProfiles();
-        var match = all.FirstOrDefault(p => string.Equals(p.Name, name, StringComparison.OrdinalIgnoreCase))
-                    ?? all.FirstOrDefault(p => p.Name.Contains(name, StringComparison.OrdinalIgnoreCase));
 
-        if (match is null)
-        {
-            var names = string.Join("\n  ", all.Select(p => p.Name));
-            throw new UsageException($"no profile named '{name}'. Available:\n  {names}");
-        }
+        // An exact (case-insensitive) name always wins, even if it's a substring of another profile.
+        var exact = all.FirstOrDefault(p => string.Equals(p.Name, name, StringComparison.OrdinalIgnoreCase));
+        if (exact is not null) return exact;
 
-        return match;
+        // Otherwise fall back to a substring match — but if it hits more than one, don't silently
+        // pick one (e.g. "Restore" once matched both the classical and AI restore profiles).
+        var partial = all.Where(p => p.Name.Contains(name, StringComparison.OrdinalIgnoreCase)).ToList();
+        if (partial.Count == 1) return partial[0];
+        if (partial.Count > 1)
+            throw new UsageException(
+                $"'{name}' matches {partial.Count} profiles: {string.Join(", ", partial.Select(p => $"\"{p.Name}\""))}. Be more specific.");
+
+        var names = string.Join("\n  ", all.Select(p => p.Name));
+        throw new UsageException($"no profile named '{name}'. Available:\n  {names}");
     }
 
     /// <summary>
