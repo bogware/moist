@@ -27,6 +27,9 @@ public sealed class EncodingProfile
     public int SvtAv1Preset { get; set; } = 6;
     public string VideoCustomArgs { get; set; } = string.Empty;
 
+    /// <summary>Output bit depth. <see cref="VideoBitDepth.Auto"/> follows the source.</summary>
+    public VideoBitDepth BitDepth { get; set; } = VideoBitDepth.Auto;
+
     // Audio settings
     public string AudioEncoderId { get; set; } = "ffmpeg-audio-opus";
     public AudioBitrateMode AudioBitrateMode { get; set; } = AudioBitrateMode.Vbr;
@@ -171,6 +174,33 @@ public sealed class ProfileManager
 
     public static List<EncodingProfile> GetBuiltInProfiles() =>
     [
+        new()
+        {
+            // One-click restoration of vintage SD DVDRips (DivX/XviD/DVD) to sharp HD.
+            // Restore at native res, THEN upscale, THEN sharpen — order matters. The resize
+            // uses -2:1080 so it lands at 1080p while preserving the source aspect (a 4:3 512x384
+            // tape becomes 1440x1080). x265 10-bit here is portable; swap the encoder to
+            // hw-nvenc-hevc for a much faster GPU encode where NVENC is available.
+            Name = "Restore SD to HD (vintage)",
+            Description = "Old SD tape to sharp 1080p: de-block, denoise, spline upscale, adaptive sharpen, deband. HEVC 10-bit.",
+            VideoEncoderId = "ffmpeg-x265",
+            VideoMode = VideoEncodingMode.ConstantRateFactor,
+            VideoQuality = 19,
+            VideoPreset = VideoPreset.Medium,
+            BitDepth = VideoBitDepth.Ten,
+            AudioEncoderId = "ffmpeg-audio-opus",
+            AudioBitrate = 192,
+            Container = ContainerFormat.Mkv,
+            FilterEngineId = "ffmpeg",
+            Filters =
+            [
+                new() { FilterId = "deblock", Parameters = new() { ["quality"] = 3, ["strength"] = 4 } },
+                new() { FilterId = "hqdn3d",  Parameters = new() { ["luma_spatial"] = 2.0, ["chroma_spatial"] = 1.5, ["luma_temporal"] = 3.0 } },
+                new() { FilterId = "resize",  Parameters = new() { ["width"] = -2, ["height"] = 1080, ["algorithm"] = "spline" } },
+                new() { FilterId = "cas",     Parameters = new() { ["strength"] = 0.5 } },
+                new() { FilterId = "deband",  Parameters = new() { ["range"] = 16 } },
+            ],
+        },
         new()
         {
             Name = "Web - H.265 High Quality",

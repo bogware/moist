@@ -107,7 +107,7 @@ public static class EncodeCommand
 
         var output = cl.String("output", "o") is { } o
             ? Path.GetFullPath(o)
-            : EncodeOptions.DefaultOutputPath(cl, services, input, null, "_encoded");
+            : EncodeOptions.DefaultOutputPath(cl, services, input, null, services.Settings.DefaultOutputSuffix);
 
         output = Cli.ResolveOutput(output, cl.Flag("overwrite", "y"));
 
@@ -146,7 +146,7 @@ public static class BatchCommand
         var dryRun = cl.Flag("dry-run");
         var keepGoing = cl.Flag("keep-going");
         var outputDir = cl.String("output-dir") is { } d ? Path.GetFullPath(d) : null;
-        var suffix = cl.String("suffix") ?? "_encoded";
+        var suffix = cl.String("suffix") ?? services.Settings.DefaultOutputSuffix;
 
         if (outputDir is not null) Directory.CreateDirectory(outputDir);
 

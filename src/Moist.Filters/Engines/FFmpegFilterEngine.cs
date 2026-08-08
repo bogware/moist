@@ -111,6 +111,28 @@ public sealed class FFmpegFilterEngine : IFilterEngine
                 ["luma_amount"] = new() { Name = "Luma Amount", Type = FilterParameterType.Double, DefaultValue = 1.0, MinValue = -2.0, MaxValue = 5.0 },
             }
         },
+        new FilterDefinition
+        {
+            Id = "cas", Name = "Contrast Adaptive Sharpen", Category = FilterCategory.Sharpen,
+            Description = "Sharpens fine detail without the halos unsharp produces (AMD FidelityFX CAS). "
+                          + "The right sharpener after an upscale.",
+            Parameters = new()
+            {
+                ["strength"] = new() { Name = "Strength", Type = FilterParameterType.Double, DefaultValue = 0.4, MinValue = 0.0, MaxValue = 1.0 },
+            }
+        },
+        // Deblock — DCT-domain artifact removal for low-bitrate MPEG/DivX/XviD sources.
+        new FilterDefinition
+        {
+            Id = "deblock", Name = "Deblock (MPEG artifacts)", Category = FilterCategory.Denoise,
+            Description = "Removes DCT block artifacts from low-bitrate MPEG-4/DivX/XviD/DVD sources (FFmpeg spp). "
+                          + "Run it before denoise and upscale.",
+            Parameters = new()
+            {
+                ["quality"] = new() { Name = "Quality", Type = FilterParameterType.Int, DefaultValue = 4, MinValue = 0, MaxValue = 6 },
+                ["strength"] = new() { Name = "Strength (qp)", Type = FilterParameterType.Int, DefaultValue = 5, MinValue = 1, MaxValue = 63 },
+            }
+        },
         // Color
         new FilterDefinition
         {
@@ -230,6 +252,8 @@ public sealed class FFmpegFilterEngine : IFilterEngine
                 "nlmeans" => BuildNlmeansFilter(applied),
                 "hqdn3d" => BuildHqdn3dFilter(applied),
                 "unsharp" => BuildUnsharpFilter(applied),
+                "cas" => BuildCasFilter(applied),
+                "deblock" => BuildDeblockFilter(applied),
                 "eq" => BuildEqFilter(applied),
                 "fps" => BuildFpsFilter(applied),
                 "deband" => BuildDebandFilter(applied),
@@ -307,6 +331,19 @@ public sealed class FFmpegFilterEngine : IFilterEngine
         return $"unsharp={lx}:{ly}:{Fmt(la)}";
     }
 
+    private static string BuildCasFilter(AppliedFilter af)
+    {
+        var s = GetDouble(af, "strength", 0.4);
+        return $"cas=strength={Fmt(s)}";
+    }
+
+    private static string BuildDeblockFilter(AppliedFilter af)
+    {
+        var quality = GetInt(af, "quality", 4);
+        var qp = GetInt(af, "strength", 5);
+        return $"spp=quality={quality}:qp={qp}";
+    }
+
     private static string BuildEqFilter(AppliedFilter af)
     {
         var br = GetDouble(af, "brightness", 0.0);
@@ -325,7 +362,7 @@ public sealed class FFmpegFilterEngine : IFilterEngine
     private static string BuildDebandFilter(AppliedFilter af)
     {
         var range = GetInt(af, "range", 16);
-        var blur = !af.ParameterValues.TryGetValue("blur", out var v) || Convert.ToBoolean(v); // default true
+        var blur = !af.ParameterValues.TryGetValue("blur", out var v) || Convert.ToBoolean(Unwrap(v)); // default true
         return $"deband=range={range}:blur={(blur ? 1 : 0)}";
     }
 
@@ -363,14 +400,32 @@ public sealed class FFmpegFilterEngine : IFilterEngine
         return $"setpts={expr}";
     }
 
+    // Filters carried on a profile are serialized to JSON, so their parameter values come back
+    // as JsonElement rather than int/double/bool/string. Convert.ToXxx can't read a JsonElement,
+    // so unwrap it to the underlying primitive first — otherwise every profile-carried filter
+    // throws the moment its script is generated.
+    private static object? Unwrap(object? v)
+    {
+        if (v is System.Text.Json.JsonElement je)
+            return je.ValueKind switch
+            {
+                System.Text.Json.JsonValueKind.Number => je.TryGetInt64(out var l) ? l : je.GetDouble(),
+                System.Text.Json.JsonValueKind.True => true,
+                System.Text.Json.JsonValueKind.False => false,
+                System.Text.Json.JsonValueKind.String => je.GetString(),
+                _ => je.ToString()
+            };
+        return v;
+    }
+
     private static int GetInt(AppliedFilter af, string key, int def = 0)
-        => af.ParameterValues.TryGetValue(key, out var v) ? Convert.ToInt32(v) : def;
+        => af.ParameterValues.TryGetValue(key, out var v) && Unwrap(v) is { } u ? Convert.ToInt32(u, CultureInfo.InvariantCulture) : def;
 
     private static double GetDouble(AppliedFilter af, string key, double def = 0)
-        => af.ParameterValues.TryGetValue(key, out var v) ? Convert.ToDouble(v) : def;
+        => af.ParameterValues.TryGetValue(key, out var v) && Unwrap(v) is { } u ? Convert.ToDouble(u, CultureInfo.InvariantCulture) : def;
 
     private static string GetString(AppliedFilter af, string key, string def = "")
-        => af.ParameterValues.TryGetValue(key, out var v) ? v.ToString() ?? def : def;
+        => af.ParameterValues.TryGetValue(key, out var v) ? Unwrap(v)?.ToString() ?? def : def;
 
     private static string Fmt(double v) => v.ToString("G", CultureInfo.InvariantCulture);
 }

@@ -29,6 +29,13 @@ dotnet publish Moist.App -c Release -r win-x64 --self-contained true -o ../dist
 dotnet publish Moist.Cli -c Release -r win-x64 --self-contained true -o ../dist-cli
 ```
 
+The Docker image is the one thing that builds from the **repo root**, not `src/` (the `Dockerfile` `COPY`s `src/...`), and it packages `Moist.Cli` only — the GUI is never containerized:
+
+```bash
+docker build -t moist .                                          # from repo root
+docker run -p 7788:7788 -v /media:/media -e MOIST_TOKEN=secret moist   # defaults to `moist serve`
+```
+
 **Prerequisites**: .NET 8 SDK. FFmpeg/FFprobe on PATH for actual encoding — the app builds and runs without them, and Settings can auto-download them.
 
 `Moist.IntegrationTests` **skips itself** when FFmpeg/FFprobe aren't on PATH (see `FfmpegFactAttribute`), so CI stays green on runners without them — but it also means a green local run proves nothing if the tools are missing. Check the skip count.
@@ -41,9 +48,9 @@ There is no linter or formatter configured; `dotnet build` warnings are the only
 |---------|------|
 | `Moist.Core` | Jobs, encoders, muxers, media analysis, profiles, settings, tool discovery, plugin loading. **No UI dependency**, and does not reference `Moist.Filters`. |
 | `Moist.Filters` | Engine-agnostic filter chain model + FFmpeg / VapourSynth / AviSynth+ script generators. Depends only on `Moist.Core`. |
-| `Moist.Services` | `AppServices` (the composition root) and `EncodeJobBuilder`. UI-free, references Core + Filters. **This is the seam that lets the GUI and CLI share one pipeline** — it exists because `Moist.Core` can't reference `Moist.Filters`. |
+| `Moist.Services` | `AppServices` (the composition root) and `EncodeJobBuilder`, plus the engine-agnostic `WatchFolderService` and `LibraryHealthChecker`. UI-free, references Core + Filters. **This is the seam that lets the GUI and CLI share one pipeline** — it exists because `Moist.Core` can't reference `Moist.Filters`. |
 | `Moist.App` | Avalonia GUI. MVVM via CommunityToolkit.Mvvm. |
-| `Moist.Cli` | `moist` command-line binary. No Avalonia dependency — that's the whole point of `Moist.Services`. |
+| `Moist.Cli` | `moist` command-line binary (`encode`, `batch`, `probe`, `compare`, `crf-search`, `watch`, `health`, `serve`, `list`, `tools`), including the `serve` HTTP server (`MoistHttpApi`). No Avalonia dependency — that's the whole point of `Moist.Services`. |
 | `Moist.Core.Tests` | Fast unit tests. Never launches an external process. |
 | `Moist.IntegrationTests` | Real FFmpeg encodes, verified with ffprobe. Skips without FFmpeg. |
 
@@ -317,6 +324,43 @@ Restoring re-records under the *new* final job id, since ids are regenerated on 
 Reading the pending list does not consume it — the old version deleted the file on load,
 so a crash mid-restore lost the queue for good.
 
+### Watch folders, health checks and the server reuse the pipeline — they don't reimplement it
+
+Three headless surfaces were added on top of the existing job graph, not beside it. The
+rule from "One pipeline, two front-ends" extends to all of them: an `EncodeRequest` still
+goes through `EncodeJobBuilder.Validate`/`Build`, so nothing they encode can drift from
+what the GUI and CLI produce. The watcher and health checker are UI-free and live in
+`Moist.Services` (`WatchFolderService`, `LibraryHealthChecker`); the server lives in
+`Moist.Cli` (`ServeCommand`, `MoistHttpApi`). None is a project of its own.
+
+**Watch folders (`moist watch`).** `WatchFolderService` **polls** on an interval rather
+than using `FileSystemWatcher` — network shares silently drop change events, and this
+feature exists to run against exactly those. A file is handed to the encoder only once its
+size *and* last-write time have held still for `StableFor` (default 30s): a file still
+being copied has a valid header and would encode to a silently truncated output with no
+error. Handled files are recorded in `watch-<hash>.json` (beside `settings.json`) so a
+restart doesn't re-encode them, and the source is moved or deleted **only after the encode
+succeeds** (`WatchPostAction`). `WatchFolderOptions.Validate()` rejects an output directory
+inside the watched folder — otherwise it would encode its own output forever.
+
+**Health checks (`moist health`).** `LibraryHealthChecker` is shallow by default —
+ffprobe headers only, flagging unreadable / no-video / zero-duration files. `--deep`
+additionally decodes every file (`ffmpeg -xerror -f null -`) and counts frames, because
+mid-file corruption has a perfectly good header and a plausible duration and is invisible
+to a header read. It exits non-zero when any fault is found, so it can gate a cron job or
+CI. `NoAudioStream` is informational, not a fault (`LibraryIssue.IsFault`).
+
+**The server (`moist serve`).** Built on `System.Net.HttpListener`, deliberately not
+ASP.NET Core, to keep the self-contained binary a single dependency-free file. It is
+authenticated by default (bearer `--token`, token compared in fixed time) and bound to
+loopback by default; `--no-auth` is allowed only on loopback, and any non-loopback bind
+requires a token, because an encode names its own input and output paths — that is a
+filesystem trust boundary. `POST /api/encode` takes a JSON body, converts it **back into
+CLI arguments** and runs them through the same `EncodeOptions` parser the CLI uses, so the
+option set cannot drift from the command line. Progress is mirrored into a dictionary from
+`JobQueue.JobProgressUpdated` because a `Job` carries no progress of its own. The Docker
+image is purpose-built to run this command (see CI/CD).
+
 ### HDR detection can't trust the colour tags
 
 Matroska doesn't necessarily surface `color_transfer` at container level; the HDR10 test
@@ -373,7 +417,7 @@ it on the strength of it compiling.
 | Change per-scene behaviour | `PerSceneOptimizer`. Per-chunk CRFs feed the chunk directory fingerprint, so a run at a different target can't reuse the previous run's chunks — keep that true |
 | Add an audio encoder | Settings class in `Core/Encoders/Audio/` → `AppServices.RegisterAudioEncoder()` (ID must be `ffmpeg-audio-{codec}`) → `FFmpegAudioProcessor.GetCodecSpecificArgs()` + `GetFfmpegCodecName()` → `EncodeJobBuilder.CreateAudioSettings()` + `AudioFileExtension()` → `ContainerCompatibility` |
 | Add an encode option | `EncodeRequest` first, then `EncodeJobBuilder`, then surface it in *both* `EncodeTabViewModel.BuildRequest()` and `EncodeOptions.Build()` + `Help.cs` |
-| Add a CLI command | `Commands.cs` + dispatch in `Program.Main` + a section in `Help.cs` |
+| Add a CLI command | Dispatch word in the `Program.Main` switch (`Program.cs`) + a section in `Help.cs`. A small command handler goes in `Commands.cs`; a substantial one gets its own file (`watch`/`health` → `WatchCommands.cs`, `serve` → `ServeCommand.cs`). Anything it encodes must still go through `EncodeJobBuilder`. |
 | Test encoder arguments | `Core.Tests/AudioProcessorTests.cs` — subclass the processor, call `BuildArguments()`, assert on the string. No process launch. |
 | Test real encoding | `Moist.IntegrationTests` — use `[FfmpegFact]`/`[FfmpegTheory]` so it skips without FFmpeg, and assert on the **probed** output, not the exit code |
 | Add a filter | `FilterDefinition` in the engine's `GetAvailableFilters()` + the emit branch in its `GenerateScript()` |
@@ -392,10 +436,16 @@ All under `%AppData%/moist` (Windows) / `~/.config/moist` (Linux/macOS) — the 
 - `tools/` — auto-downloaded tool binaries
 - `logs/moist_<timestamp>.log` — per-session; last 10 kept. Completed/failed job output is appended here via `AppServices.WriteJobLogToFile`.
 - `queue.json` — written on close, consumed once on startup (see the persistence gap above)
+- `watch-<hash>.json` — per-watched-folder record of already-handled files, so `moist watch` doesn't re-encode on restart
 
 Temp encodes go to `Settings.TempDirectory`, default `%TEMP%/moist`.
+
+The Docker image relocates this whole config root to `/config` by setting
+`XDG_CONFIG_HOME` (the container's `SpecialFolder.ApplicationData`), and declares it a
+volume so settings, profiles and the queue survive a restart.
 
 ## CI/CD
 
 - `ci.yml` — push/PR to `main`. Builds Debug + Release and runs tests on **self-hosted** runners (group `Default`, labels `Windows`/`Linux`). `DOTNET_INSTALL_DIR` is pinned into the workspace because the runners are self-hosted. A non-blocking step reports whether FFmpeg is present; if it isn't, the integration suite skips and CI still passes — install FFmpeg on the runners to actually exercise it. macOS jobs exist but are commented out.
 - `release.yml` — on `v*` tags. Self-contained single-file builds of both the GUI and the CLI for Windows x64 (ZIP, plus a framework-dependent GUI ZIP) and Linux x64 (tar.gz), then a GitHub release. CLI archives are named `moist-cli-*`. Tags containing `-` are marked prerelease.
+- `Dockerfile` (repo root) — a two-stage image that publishes **`Moist.Cli` only** and runs `moist serve` as a non-root user on port 7788. It installs Debian's `ffmpeg`, which has **no libsvtav1 or libvmaf**, so AV1 encoding and `--target-vmaf` are unavailable in the stock image — `moist tools` reports what the build actually has. The version is stamped once for the whole solution from `src/Directory.Build.props` (`<Version>`), not per-project.

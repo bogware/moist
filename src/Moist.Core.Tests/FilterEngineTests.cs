@@ -94,6 +94,48 @@ public class FilterEngineTests
     }
 
     [Fact]
+    public void FFmpegEngine_GenerateScript_CasFilter()
+    {
+        var engine = new FFmpegFilterEngine();
+        var chain = new FilterChain();
+        var cas = engine.GetAvailableFilters().First(f => f.Id == "cas");
+        chain.Add(cas, new Dictionary<string, object> { ["strength"] = 0.5 });
+
+        var script = engine.GenerateScript(chain, "input.mkv");
+        Assert.Equal("cas=strength=0.5", script);
+    }
+
+    [Fact]
+    public void FFmpegEngine_GenerateScript_DeblockFilter_EmitsSpp()
+    {
+        var engine = new FFmpegFilterEngine();
+        var chain = new FilterChain();
+        var deblock = engine.GetAvailableFilters().First(f => f.Id == "deblock");
+        chain.Add(deblock, new Dictionary<string, object> { ["quality"] = 6, ["strength"] = 4 });
+
+        var script = engine.GenerateScript(chain, "input.mkv");
+        Assert.Equal("spp=quality=6:qp=4", script);
+    }
+
+    [Fact]
+    public void FFmpegEngine_GenerateScript_HandlesJsonElementParams_FromSerializedProfile()
+    {
+        // A profile's filter params survive a round-trip to JSON as JsonElement, not primitives.
+        var engine = new FFmpegFilterEngine();
+        var resize = engine.GetAvailableFilters().First(f => f.Id == "resize");
+        var json = System.Text.Json.JsonSerializer.Serialize(new Dictionary<string, object>
+        {
+            ["width"] = -2, ["height"] = 1080, ["algorithm"] = "spline"
+        });
+        var roundTripped = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, object>>(json)!;
+
+        var chain = new FilterChain();
+        chain.Add(resize, roundTripped);
+
+        Assert.Equal("scale=-2:1080:flags=spline", engine.GenerateScript(chain, "in.mkv"));
+    }
+
+    [Fact]
     public void FFmpegEngine_GenerateScript_UnknownFilter_SkipsIt()
     {
         var engine = new FFmpegFilterEngine();

@@ -343,14 +343,16 @@ public partial class EncodeTabViewModel : ViewModelBase, IDisposable
                 SubtitleTrackLabels.Add(label);
             }
 
-            // Auto-generate output path
-            if (string.IsNullOrWhiteSpace(OutputFile))
+            // Auto-generate output path — unless the user wants to be asked where to save each
+            // time, in which case leave it blank so Browse (the prompt) is required.
+            if (string.IsNullOrWhiteSpace(OutputFile) && !_services.Settings.PromptForOutputLocation)
             {
                 var dir = string.IsNullOrEmpty(_services.Settings.DefaultOutputDirectory)
                     ? Path.GetDirectoryName(InputFile)!
                     : _services.Settings.DefaultOutputDirectory;
                 var name = Path.GetFileNameWithoutExtension(InputFile);
-                OutputFile = Path.Combine(dir, $"{name}_encoded{Container.GetExtension()}");
+                var suffix = _services.Settings.DefaultOutputSuffix ?? string.Empty;
+                OutputFile = Path.Combine(dir, $"{name}{suffix}{Container.GetExtension()}");
             }
 
             // Set preview max position from duration
@@ -486,6 +488,7 @@ public partial class EncodeTabViewModel : ViewModelBase, IDisposable
         Tune = profile.VideoTune;
         SvtAv1Preset = profile.SvtAv1Preset;
         CustomVideoArgs = profile.VideoCustomArgs;
+        BitDepth = profile.BitDepth;
 
         SelectedAudioEncoder = AudioEncoders.FirstOrDefault(e => e.Id == profile.AudioEncoderId)
                                ?? AudioEncoders.FirstOrDefault();
@@ -537,6 +540,7 @@ public partial class EncodeTabViewModel : ViewModelBase, IDisposable
         VideoTune = Tune,
         SvtAv1Preset = SvtAv1Preset,
         VideoCustomArgs = CustomVideoArgs,
+        BitDepth = BitDepth,
         AudioEncoderId = SelectedAudioEncoder?.Id ?? "ffmpeg-audio-opus",
         AudioBitrateMode = AudioBitrateMode,
         AudioBitrate = AudioBitrate,
@@ -567,6 +571,7 @@ public partial class EncodeTabViewModel : ViewModelBase, IDisposable
             VideoTune = Tune,
             SvtAv1Preset = SvtAv1Preset,
             VideoCustomArgs = CustomVideoArgs,
+            BitDepth = BitDepth,
             AudioEncoderId = SelectedAudioEncoder?.Id ?? "ffmpeg-audio-opus",
             AudioBitrateMode = AudioBitrateMode,
             AudioBitrate = AudioBitrate,

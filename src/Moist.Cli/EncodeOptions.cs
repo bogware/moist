@@ -52,7 +52,13 @@ public static class EncodeOptions
 
         var audioOnly = cl.Flag("audio-only") || (profile?.AudioOnly ?? false);
 
+        // Precedence: an explicit --container wins; otherwise the output file's own extension
+        // decides (so `-o out.mp4` really is MP4, and a doomed codec/container pair is rejected
+        // up front instead of silently muxing Matroska into a misnamed file); then the profile;
+        // then Matroska. The extension beats the profile because it's the more specific,
+        // per-invocation expression of intent.
         var container = cl.Enum<ContainerFormat>("container")
+                        ?? ContainerFormatExtensions.FromExtension(outputFile)
                         ?? profile?.Container
                         ?? ContainerFormat.Mkv;
 
@@ -70,7 +76,7 @@ public static class EncodeOptions
             Tune = cl.Enum<VideoTune>("tune") ?? profile?.VideoTune ?? VideoTune.None,
             SvtAv1Preset = cl.Int("av1-preset") ?? profile?.SvtAv1Preset ?? 6,
             VideoCustomArgs = cl.String("video-args") ?? profile?.VideoCustomArgs ?? string.Empty,
-            BitDepth = ParseBitDepth(cl.String("bit-depth")),
+            BitDepth = cl.String("bit-depth") is { } bd ? ParseBitDepth(bd) : (profile?.BitDepth ?? VideoBitDepth.Auto),
             Chroma = ParseChroma(cl.String("chroma")),
             SvtAv1Tune = ParseSvtTune(cl.String("av1-tune")),
 
@@ -244,13 +250,26 @@ public static class EncodeOptions
     public static (string? Script, string? EngineId) BuildFilters(CommandLine cl, AppServices services, string inputFile)
     {
         var specs = cl.Many("filter");
-        if (specs.Count == 0) return (null, null);
 
         var engine = services.Filters.Engines.FirstOrDefault(e => e.Id == "ffmpeg")
                      ?? throw new UsageException("the FFmpeg filter engine is not registered");
 
         var available = engine.GetAvailableFilters();
         var chain = new FilterChain();
+
+        // No explicit --filter: fall back to the selected profile's own filter chain, so a profile
+        // like "Restore SD to HD" applies its whole pipeline with nothing more than --profile.
+        if (specs.Count == 0)
+        {
+            var prof = ResolveProfile(cl, services);
+            if (prof is null || prof.Filters.Count == 0) return (null, null);
+            foreach (var pf in prof.Filters)
+            {
+                var pdef = available.FirstOrDefault(f => string.Equals(f.Id, pf.FilterId, StringComparison.OrdinalIgnoreCase));
+                if (pdef is not null) chain.Add(pdef, new Dictionary<string, object>(pf.Parameters));
+            }
+            return chain.Filters.Count > 0 ? (engine.GenerateScript(chain, inputFile), engine.Id) : (null, null);
+        }
 
         foreach (var spec in specs)
         {
