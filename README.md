@@ -49,11 +49,16 @@ Every knob, every dial. Professional audio encoding with nothing hidden.
 
 Three engines. One chain. No manual script editing required.
 
-| Engine | Platform | Output |
-|--------|----------|--------|
-| FFmpeg | All | `-filter_complex` argument string |
-| VapourSynth | All | `.vpy` Python script |
-| AviSynth+ | Windows | `.avs` script |
+| Engine | Platform | Output | Encodes? |
+|--------|----------|--------|----------|
+| FFmpeg | All | `-vf` filter chain | ✓ direct |
+| VapourSynth | All | `.vpy` Python script | ✓ piped `vspipe → ffmpeg` (`--filter-engine vapoursynth`) |
+| AviSynth+ | Windows | `.avs` script | — (script only) |
+
+The **VapourSynth** engine is fully encodable — moist pipes `vspipe --y4m script.vpy - | ffmpeg …`,
+which is what unlocks **`vs_superres`**: neural super-resolution via **vs-mlrt** (ONNX / TensorRT /
+OpenVINO), the temporally-aware quality ceiling. It needs a VapourSynth + vs-mlrt + model install of
+your own; moist generates the script and runs the pipe.
 
 - **Visual filter chain editor** — drag, reorder, configure. See the generated script update live.
 - **A working restoration toolkit** — crop, resize (bilinear→spline/lanczos), `bwdif`/`yadif`

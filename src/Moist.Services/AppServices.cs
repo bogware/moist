@@ -289,6 +289,12 @@ public sealed class AppServices : IDisposable
         JobQueue.RegisterProcessorFactory(() => new RifeVideoProcessor(
             Settings.FFmpegPath, Settings.FFprobePath, Settings.RifePath, Settings.TempDirectory));
 
+        // VapourSynth jobs (FilterEngineId == "vapoursynth") are piped vspipe -> ffmpeg. This is the
+        // seam that lets a .vpy (incl. vs-mlrt ML nodes) reach the encoder; the FFmpeg engine's -vf
+        // path can't run it. Registered before the normal encoders, which key on EncoderId.
+        JobQueue.RegisterProcessorFactory(() => new VapourSynthPipeProcessor(
+            Settings.FFmpegPath, Settings.VapourSynthPath));
+
         foreach (var encoder in Encoders.Encoders.Values)
         {
             var encoderId = encoder.Id; // capture for closure

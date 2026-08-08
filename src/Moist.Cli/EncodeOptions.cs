@@ -265,8 +265,12 @@ public static class EncodeOptions
     {
         var specs = cl.Many("filter");
 
-        var engine = services.Filters.Engines.FirstOrDefault(e => e.Id == "ffmpeg")
-                     ?? throw new UsageException("the FFmpeg filter engine is not registered");
+        // Which engine turns the chain into a script: FFmpeg (a -vf string) or VapourSynth (a .vpy
+        // piped through vspipe -> ffmpeg, which is what makes vs-mlrt ML super-resolution reachable).
+        var engineId = (cl.String("filter-engine") ?? "ffmpeg").ToLowerInvariant();
+        var engine = services.Filters.Engines.FirstOrDefault(e => string.Equals(e.Id, engineId, StringComparison.OrdinalIgnoreCase))
+                     ?? throw new UsageException(
+                         $"unknown filter engine '{engineId}'. Available: {string.Join(", ", services.Filters.Engines.Select(e => e.Id))}");
 
         var available = engine.GetAvailableFilters();
         var chain = new FilterChain();
@@ -320,9 +324,9 @@ public static class EncodeOptions
             }
         }
 
-        // --fps convenience: append a frame-rate filter. dup/drop -> fps; motion/blend -> minterpolate.
-        // 'rife' is AI interpolation, handled as a processor in Build(), so it adds no filter here.
-        if (cl.Double("fps") is { } targetFps)
+        // --fps convenience: append a frame-rate filter (FFmpeg engine only). dup/drop -> fps;
+        // motion/blend -> minterpolate. 'rife' is AI interpolation, a processor set up in Build().
+        if (engineId == "ffmpeg" && cl.Double("fps") is { } targetFps)
         {
             var mode = (cl.String("fps-mode") ?? "dup").ToLowerInvariant();
             if (mode is "motion" or "blend")

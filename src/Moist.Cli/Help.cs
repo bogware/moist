@@ -84,6 +84,9 @@ public static class Help
               --fps-mode <mode>     dup (drop/duplicate, default) | motion (minterpolate,
                                     motion-compensated) | rife (AI interpolation, needs the
                                     'rife' tool). Real-ESRGAN and RIFE are frame-based, so slow.
+              --filter-engine <e>   ffmpeg (default) | vapoursynth. VapourSynth is piped
+                                    vspipe -> ffmpeg and unlocks vs_superres (vs-mlrt ML upscale);
+                                    needs a VapourSynth + vs-mlrt install.
               --av1-tune <name>     vq | psnr | ssim | iq | ms-ssim | vmaf
                                     SVT-AV1 only. 'vq' is the perceptual tuning that
                                     SVT-AV1 4.0 merged from the PSY fork; the encoder's

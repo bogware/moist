@@ -238,6 +238,21 @@ public class FilterEngineTests
         Assert.Contains("core.std.Crop", script);
     }
 
+    [Fact]
+    public void VapourSynthEngine_SuperRes_EmitsMlrtModelNode()
+    {
+        var engine = new VapourSynthFilterEngine();
+        var chain = new FilterChain();
+        chain.Add(engine.GetAvailableFilters().First(f => f.Id == "vs_superres"),
+            new Dictionary<string, object> { ["model"] = "C:/models/realesr.onnx", ["backend"] = "trt" });
+
+        var script = engine.GenerateScript(chain, "in.mkv");
+        Assert.Contains("core.trt.Model(", script);           // the vs-mlrt backend node
+        Assert.Contains("realesr.onnx", script);              // with the chosen model
+        Assert.Contains("format=vs.RGBS", script);            // converts to RGB float for the network
+        Assert.Contains("format=vs.YUV420P8", script);        // and back to YUV afterwards
+    }
+
     // === AviSynth Filter Engine ===
 
     [Fact]
