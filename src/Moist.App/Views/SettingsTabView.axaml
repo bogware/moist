@@ -109,7 +109,7 @@
                 <StackPanel Spacing="8">
                     <TextBlock Text="General" FontWeight="Bold" FontSize="16"/>
 
-                    <Grid ColumnDefinitions="180,*,Auto" RowDefinitions="Auto,Auto,Auto,Auto,Auto" RowSpacing="8" ColumnSpacing="8">
+                    <Grid ColumnDefinitions="180,*,Auto" RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto" RowSpacing="8" ColumnSpacing="8">
                         <TextBlock Text="Max Concurrent Jobs:" VerticalAlignment="Center"/>
                         <NumericUpDown Grid.Column="1" Value="{Binding MaxConcurrentJobs}"
                                        Minimum="1" Maximum="32" Width="100" HorizontalAlignment="Left"/>
@@ -125,9 +125,21 @@
                                  Watermark="Same as input file"/>
                         <Button Grid.Row="3" Grid.Column="2" Content="Browse" Tag="outputDir" Click="BrowseFolder_Click" Padding="8,4"/>
 
-                        <TextBlock Text="Temp directory:" VerticalAlignment="Center" Grid.Row="4"/>
+                        <TextBlock Text="Temp / scratch directory:" VerticalAlignment="Center" Grid.Row="4"/>
                         <TextBox Grid.Row="4" Grid.Column="1" Text="{Binding TempDirectory}"/>
                         <Button Grid.Row="4" Grid.Column="2" Content="Browse" Tag="tempDir" Click="BrowseFolder_Click" Padding="8,4"/>
+
+                        <TextBlock Text="Ask where to save each time:" VerticalAlignment="Center" Grid.Row="5"/>
+                        <CheckBox Grid.Row="5" Grid.Column="1" IsChecked="{Binding PromptForOutputLocation}"
+                                  Content="Prompt for the output location instead of using the default folder"/>
+
+                        <TextBlock Text="Output name suffix:" VerticalAlignment="Center" Grid.Row="6"/>
+                        <TextBox Grid.Row="6" Grid.Column="1" Text="{Binding DefaultOutputSuffix}"
+                                 Watermark="_encoded"/>
+
+                        <TextBlock Text="Reveal folder when done:" VerticalAlignment="Center" Grid.Row="7"/>
+                        <CheckBox Grid.Row="7" Grid.Column="1" IsChecked="{Binding OpenOutputFolderWhenDone}"
+                                  Content="Open the destination folder when a job finishes"/>
                     </Grid>
                 </StackPanel>
             </Border>

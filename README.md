@@ -10,6 +10,51 @@ It won't judge your source material. It'll just make it better.
 
 ---
 
+## Bring the old tapes back to life — SD → HD restoration
+
+> *"Everything worth keepin' gets old. Don't mean you let it rot."*
+
+That shelf of ripped DVDs and old fight tapes — 512×384, soft, blocky, dark — moist
+will bring up to sharp 1080p in one command. There's a built-in profile that does the
+whole job:
+
+```bash
+moist encode "UFC 01.avi" -o "UFC 01 - Restored.mkv" --profile "Restore SD to HD"
+```
+
+That's the whole draw. The profile carries the full restoration pipeline and encodes
+HEVC 10-bit. In the GUI, pick **Restore SD to HD (vintage)** from the profile dropdown
+and hit encode.
+
+**What it does — and why the order matters.** You repair the picture at its native size,
+*then* enlarge it, *then* sharpen. Any other order and you just upscale the dirt:
+
+| # | Stage | Filter | Why |
+|---|-------|--------|-----|
+| 1 | De-block | `deblock` (spp) | Old DivX/XviD/DVD rips are riddled with DCT block noise in crowds and shadows. Clean it first — everything downstream rides on it. |
+| 2 | Denoise | `hqdn3d` | A light, motion-safe pass. Keeps real detail; no ghosting on fast action. |
+| 3 | Upscale | `resize` (spline) | Scale to 1080p *after* the picture is clean. `-2:1080` keeps the source shape — a 4:3 tape lands at 1440×1080. |
+| 4 | Sharpen | `cas` | Contrast-adaptive sharpening crisps edges after the upscale, without the halos an unsharp mask leaves behind. |
+| 5 | Deband | `deband` | Smooths the banding that low-bitrate gradients (dark arenas, skies) fall into — especially before a 10-bit encode. |
+
+Measured on real 2000-era fight tapes, the encode lands **VMAF ~98** against a
+near-lossless master at about a third of the bitrate, and NVENC on a modern GPU runs it
+faster than real time.
+
+**Tips from the trail:**
+
+- **Fast vs. archival.** The profile ships with x265 so it runs anywhere. For the
+  whole-library grind, hand it to the GPU: `--video-encoder hw-nvenc-hevc --mode quality
+  --crf 24`. For a keepsake master, `--video-encoder ffmpeg-x265 --preset slow`.
+- **Interlaced source?** These tapes were progressive. Check yours with `moist probe`;
+  if it says interlaced, put a deinterlacer at the front of the chain
+  (`--filter bwdif`).
+- **It's restoration, not resurrection.** moist cleans, scales and sharpens with
+  classical filters — it invents nothing. A motion-blurred face in the source stays soft;
+  that blur was baked in the day it was shot.
+
+---
+
 ## Features
 
 ### Video Encoding
@@ -58,6 +103,9 @@ Three engines. One chain. No manual script editing required.
 | AviSynth+ | Windows | `.avs` script |
 
 - **Visual filter chain editor** — drag, reorder, configure. See the generated script update live.
+- **A working restoration toolkit** — crop, resize (bilinear→spline/lanczos), `bwdif`/`yadif`
+  deinterlace, `nlmeans`/`hqdn3d` denoise, `deblock` (MPEG artifact removal), `cas`
+  (contrast-adaptive sharpen), `unsharp`, `deband`, `eq`, tonemap, stabilize, and more
 - **30+ built-in presets** — professional, anime, restoration, upscaling, color grading, speed, creative
 - **Save your own presets** — because nobody wants to rebuild a filter chain from memory
 
@@ -301,10 +349,11 @@ A re-encode shouldn't quietly lose half your file.
 
 ### Profiles
 
-Seven built-in presets ready to ride, plus save your own:
+Eight built-in presets ready to ride, plus save your own:
 
 | Profile | Video | Audio | Container |
 |---------|-------|-------|-----------|
+| **Restore SD to HD (vintage)** | x265 CRF 19, Medium, **10-bit** + restoration filter chain | Opus 192k | MKV |
 | Web - H.265 High Quality | x265 CRF 22, Slow | Opus 128k | MKV |
 | Web - H.264 Compatible | x264 CRF 20, Medium | AAC 192k | MP4 |
 | Archive - Lossless | FFV1 | FLAC | MKV |
@@ -313,7 +362,7 @@ Seven built-in presets ready to ride, plus save your own:
 | Anime - H.265 Grain | x265 CRF 19, Slow, Animation | Opus 192k | MKV |
 | Fast Preview | x264 CRF 28, Ultrafast | AAC 96k | MP4 |
 
-Profiles store everything: video encoder, audio encoder, all codec-specific settings, normalization, audio-only mode, container format, and filter chain.
+Profiles store everything: video encoder, audio encoder, all codec-specific settings, output bit depth, normalization, audio-only mode, container format, and the full filter chain — which is how the one-click restore profile carries its whole pipeline.
 
 ### Plugin Marketplace
 
@@ -340,6 +389,9 @@ Everything the GUI does, scriptable. The CLI and the GUI share the same pipeline
 ```bash
 moist encode input.mkv -o output.mp4 --crf 20 --preset slow
 moist encode input.mkv --profile "Web - H.265 High Quality"
+
+# one-click: restore an old SD tape to sharp 10-bit 1080p (filters + upscale from the profile)
+moist encode "UFC 01.avi" -o "UFC 01 - Restored.mkv" --profile "Restore SD to HD"
 moist encode input.mkv --audio-only --audio-encoder ffmpeg-audio-flac
 moist encode input.mkv --mode twopass --bitrate 8000 --container mp4
 moist encode input.mkv --filter resize:width=1920,height=1080 --filter unsharp:luma_amount=1.2
@@ -421,6 +473,39 @@ reports what was actually found.
 
 ---
 
+## Installation
+
+> *"A carpenter's only as good as his saw. FFmpeg's the saw."*
+
+### The quick way — grab a build
+
+Head to the [Releases](https://github.com/bogware/moist/releases) page and pull the
+archive for your platform. The builds are self-contained — no runtime to chase down.
+
+- **Windows x64** — `moist-*-win-x64.zip` (GUI) or `moist-cli-*-win-x64.zip` (command line). Unzip, run `moist.exe`.
+- **Linux x64** — `moist-*-linux-x64.tar.gz`. Extract, `chmod +x moist`, run it.
+- **macOS** — build from source for now (see [Quick Start](#quick-start) below).
+
+### You'll need FFmpeg
+
+moist shells out to FFmpeg and FFprobe — it's the one thing it can't ride without.
+Either let moist fetch them for you (**Settings → Prerequisites → Install**), or put them
+on your PATH:
+
+| OS | Command |
+|----|---------|
+| Windows | `winget install Gyan.FFmpeg` — or `choco install ffmpeg-full` |
+| macOS | `brew install ffmpeg` |
+| Debian / Ubuntu | `sudo apt install ffmpeg` |
+| Fedora | `sudo dnf install ffmpeg` |
+| Arch | `sudo pacman -S ffmpeg` |
+
+Get a **full** build if you can. The stock Debian package has no libsvtav1 or libvmaf, so
+AV1 encoding and `--target-vmaf` go dark. `moist tools` prints exactly what your FFmpeg
+was built with, so you're never guessing.
+
+---
+
 ## Quick Start
 
 ### Prerequisites
@@ -458,7 +543,7 @@ dotnet test Moist.Core.Tests       # fast unit tests only
 dotnet test Moist.IntegrationTests # real FFmpeg encodes
 ```
 
-**208 unit tests** covering job models, queue behavior, encoder registry, profiles, settings, filter engines, audio processor argument building, hardware encoder plumbing, quality metric parsing, search arithmetic, chunk planning, the per-scene complexity model, and CLI parsing — none of which launch an external process.
+**255 unit tests** covering job models, queue behavior, encoder registry, profiles, settings, filter engines (including the restoration filters and profile-carried filter chains), container/extension mapping, audio processor argument building, hardware encoder plumbing, quality metric parsing, search arithmetic, chunk planning, the per-scene complexity model, and CLI parsing — none of which launch an external process.
 
 **122 integration tests** that run real encodes through the full pipeline and verify the output with ffprobe: every video encoder, every audio codec, every container, 10-bit and HDR sources, silent sources, multi-track audio, chapters and attachments, chroma and subtitle handling, filter chains, cancellation, concurrency, awkward filenames, temp-file cleanup, all four quality metrics, target-quality search, chunked encoding, per-scene optimisation, and queue persistence — including a test that searches then encodes the full file and asserts the sampled prediction held, one that deliberately truncates a chunk to prove the frame-count verification catches it, one that checks per-scene beats a fixed CRF chosen for the hardest scene, and one that measures the picture to prove burned-in subtitles were actually rendered rather than merely not erroring. They skip automatically when FFmpeg isn't on your PATH (and hardware tests skip without a usable GPU), so check the skip count before trusting a green run.
 
@@ -496,8 +581,8 @@ src/
     Views/              AXAML views with compiled bindings
     Themes/             Skinnable theme overlays (MoistDark, etc.)
  Moist.Cli/             'moist' command-line binary — no Avalonia dependency
- Moist.Core.Tests/      Fast unit tests (88)
- Moist.IntegrationTests/ Real FFmpeg encodes verified with ffprobe (43)
+ Moist.Core.Tests/      Fast unit tests (255) — never launch a process
+ Moist.IntegrationTests/ Real FFmpeg encodes verified with ffprobe (skip without FFmpeg)
 ```
 
 The GUI and the CLI are both thin shells over `Moist.Services`. Neither contains encoding
@@ -621,7 +706,10 @@ FFmpeg, FFprobe, MKVMerge, x264, x265, VapourSynth — configurable in the Setti
 - Max concurrent jobs (1-32)
 - Auto-start queue on enqueue
 - Delete temp files after successful completion
-- Default output and temp directories
+- **Default output directory** and **temp / scratch directory**
+- **Ask where to save each time** — prompt for the output location instead of using the default folder
+- **Output name suffix** — what gets appended to an auto-named output (default `_encoded`)
+- **Reveal folder when done** — open the destination when a job finishes
 - Theme selection (moist Dark / Fluent Dark)
 
 ---
@@ -680,7 +768,7 @@ Both front-ends pick these up automatically — there's nothing to add to the GU
 | Settings | `Core/Settings/MoistSettings.cs` + `SettingsTabViewModel.cs` |
 | Theme | `App/Themes/` + `App.axaml` + `App.axaml.cs` |
 | Job pipeline | `Core/Jobs/` + `AppServices.RegisterDefaultProcessors()` |
-| Tests | `Core.Tests/` — xUnit with 71 tests |
+| Tests | `Core.Tests/` (fast, xUnit) + `IntegrationTests/` (real encodes) |
 
 ---
 
@@ -688,6 +776,75 @@ Both front-ends pick these up automatically — there's nothing to add to the GU
 
 - **CI** (`.github/workflows/ci.yml`): Builds Debug + Release and runs xUnit tests on Windows and Linux via self-hosted runners on every push/PR to `main`.
 - **Release** (`.github/workflows/release.yml`): Triggered on `v*` tags. Produces self-contained Windows x64 (ZIP) and Linux x64 (tar.gz) builds. Creates GitHub releases with all artifacts.
+
+---
+
+## Tips, Tricks & Hard-won Hints
+
+> *"Experience is the comb life hands you after you've already lost your hair."*
+
+- **Stop guessing at CRF.** `--target-vmaf 93` samples the file and finds the CRF that hits
+  your quality target. A number you can reason about beats a dial with no units.
+- **NVENC for bulk, x265 for masters.** Fixed-function silicon is ~15× faster at the same
+  look for a slightly bigger file. Previews and the whole-library grind → NVENC. The one
+  you'll keep forever → x265 `slow`.
+- **10-bit from an 8-bit source isn't snake oil.** It gives the encoder headroom and kills
+  banding in gradients — clean skies, clean fades — for a little size. The restore profile
+  does it for you.
+- **Chunked encoding is no free lunch.** It only recovers cores your encoder wasn't already
+  using. x265 `slow` already saturates a big box; SVT-AV1 threads itself. It earns its keep
+  with poorly-threaded encoders, huge core counts, and resumability.
+- **The output extension picks the container.** `-o out.mp4` gives you MP4, `-o out.mkv`
+  gives you Matroska — no `--container` needed. moist checks the codec fits the box *before*
+  it burns an encode, so a doomed pair fails in a second, not an hour.
+- **Let a folder do the work.** `moist watch ./inbox --output-dir ./done --profile "Restore
+  SD to HD"` encodes anything dropped in, waits for the copy to finish, and survives a reboot.
+- **Look the tapes over, before and after.** `moist probe file.avi` shows resolution, fields,
+  and bit depth. `moist health ./library --deep` decodes every file and flags the ones rotting
+  from the inside.
+- **`--dry-run` shows the plan.** Every job and the exact FFmpeg command, without encoding a
+  single frame. Look before you leap.
+
+---
+
+## FAQ
+
+**Does moist upscale with AI, like Topaz?**
+No. moist restores with classical, deterministic filters — de-block, denoise, high-quality
+scaling, adaptive sharpen, deband. It cleans and enlarges what's there; it doesn't invent
+detail. Fast, repeatable, and honest about what it can't do.
+
+**Which video encoder should I use?**
+x265 (`ffmpeg-x265`) for quality masters. NVENC (`hw-nvenc-hevc`) when you've got an NVIDIA
+GPU and a stack of files. SVT-AV1 (`ffmpeg-svtav1`) for the smallest files if you don't mind
+the wait. x264 (`ffmpeg-x264`) when a device won't play anything newer.
+
+**What CRF should I use?**
+Don't. Use `--target-vmaf 93` (good) or `95` (near-transparent) and let moist find it. If you
+insist: x265 CRF 18–20 is visually excellent for most content.
+
+**My `.mp4` came out as Matroska, or my codec got rejected.**
+Older builds ignored the output extension. Current moist reads it: `-o out.mp4` is MP4,
+`-o out.avi` is AVI, and it warns up front if the codec can't live in that container.
+
+**NVENC (or Quick Sync / AMF) doesn't show up.**
+moist test-encodes each hardware path and only offers the ones that actually work. Run
+`moist list hardware` — it prints why each missing one failed. A line in `ffmpeg -encoders`
+means the binary was *compiled* with it, not that your machine can run it. Update your GPU
+driver and try again.
+
+**My restored file looks great, but faces in motion are still soft.**
+That's motion blur baked into the source frame — no filter brings back detail the tape never
+recorded. Static shots (graphics, standing figures, crowds) sharpen up dramatically; fast
+motion stays as sharp as the original exposure allowed.
+
+**4:3 or 16:9 — will the restore profile stretch my video?**
+No. The upscale targets 1080p *height* and keeps the source shape. A 4:3 tape becomes
+1440×1080; a 16:9 one becomes 1920×1080.
+
+**Can I run it headless — on a server or in Docker?**
+Yes. `moist serve` exposes the queue over HTTP (authenticated, loopback by default), and the
+Docker image runs it out of the box. The CLI does everything the GUI does.
 
 ---
 
@@ -705,6 +862,16 @@ Both front-ends pick these up automatically — there's nothing to add to the GU
 
 **Two-pass encoding produces no output** — Check that the output directory is writable and has enough disk space. Two-pass creates temporary log files next to the output.
 
+**Hardware encoder missing from the list** — moist only offers GPU encoders that pass a real test-encode. `moist list hardware` shows why each absent one failed (no driver, no silicon, disabled in the build). NVENC needs a reasonably current NVIDIA driver.
+
+**Full-length x265 encode takes hours** — 1080p at `slow` is genuinely heavy work. Drop to `--preset medium`, or hand it to the GPU with `--video-encoder hw-nvenc-hevc`, for anything short of a final master.
+
+**Output has visible banding** — encode 10-bit (`--bit-depth 10`) and add `--filter deband`. Banding is an 8-bit gradient problem; 10-bit gives the encoder room. The "Restore SD to HD" profile already does both.
+
+**Watch folder keeps re-encoding the same file** — keep the output directory *outside* the watched folder. moist refuses an output dir nested inside the watch path for exactly this reason, and a move-destination inside it will loop.
+
+**Restore profile came out the wrong size** — it targets 1080p height and keeps aspect. If a source is anamorphic (stored 720×480 but meant for 16:9), set the size yourself: `--filter resize:width=1920,height=1080`.
+
 ---
 
 ## Contributing
@@ -712,7 +879,7 @@ Both front-ends pick these up automatically — there's nothing to add to the GU
 1. Fork it
 2. Branch it: `git checkout -b feature/my-feature`
 3. Build it: `dotnet build`
-4. Test it: `dotnet test` (all 71 tests must pass)
+4. Test it: `dotnet test` (all tests must pass)
 5. Commit it with a clear message
 6. Open a Pull Request
 

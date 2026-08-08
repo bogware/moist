@@ -26,4 +26,19 @@ public class ProfileTests
         Assert.Contains(profiles, p => p.Name.Contains("H.265"));
         Assert.Contains(profiles, p => p.Name.Contains("Lossless"));
     }
+
+    [Fact]
+    public void RestoreProfile_CarriesTheFullPipeline()
+    {
+        var restore = ProfileManager.GetBuiltInProfiles()
+            .Single(p => p.Name.Contains("Restore", StringComparison.OrdinalIgnoreCase));
+
+        Assert.Equal("ffmpeg-x265", restore.VideoEncoderId);
+        Assert.Equal(VideoBitDepth.Ten, restore.BitDepth);
+        Assert.Equal("ffmpeg", restore.FilterEngineId);
+
+        // The restoration order is load-bearing: de-block and denoise before the upscale, sharpen after.
+        var ids = restore.Filters.Select(f => f.FilterId).ToList();
+        Assert.Equal(new[] { "deblock", "hqdn3d", "resize", "cas", "deband" }, ids);
+    }
 }

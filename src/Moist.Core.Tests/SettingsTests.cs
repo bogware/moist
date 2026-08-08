@@ -25,4 +25,24 @@ public class SettingsTests
         Assert.False(string.IsNullOrEmpty(path));
         Assert.EndsWith("settings.json", path);
     }
+
+    [Fact]
+    public void OutputLocationDefaults_AreSensible()
+    {
+        var settings = new MoistSettings();
+
+        // Preserve the historical auto-fill behaviour: default folder, "_encoded" suffix, no prompt.
+        Assert.False(settings.PromptForOutputLocation);
+        Assert.Equal("_encoded", settings.DefaultOutputSuffix);
+        Assert.False(settings.OpenOutputFolderWhenDone);
+    }
+
+    [Fact]
+    public void Repaired_StripsInvalidCharsFromOutputSuffix()
+    {
+        // A suffix carrying a path separator would build a broken output path.
+        var settings = new MoistSettings { DefaultOutputSuffix = "_re/stored" }.Repaired();
+        Assert.DoesNotContain('/', settings.DefaultOutputSuffix);
+        Assert.DoesNotContain('\\', settings.DefaultOutputSuffix);
+    }
 }

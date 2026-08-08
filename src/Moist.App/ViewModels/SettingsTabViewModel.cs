@@ -29,6 +29,9 @@ public partial class SettingsTabViewModel : ViewModelBase
     [ObservableProperty] private bool _deleteTempFiles;
     [ObservableProperty] private string _defaultOutputDirectory;
     [ObservableProperty] private string _tempDirectory;
+    [ObservableProperty] private bool _promptForOutputLocation;
+    [ObservableProperty] private string _defaultOutputSuffix;
+    [ObservableProperty] private bool _openOutputFolderWhenDone;
 
     // Status
     [ObservableProperty] private string _saveStatus = string.Empty;
@@ -55,6 +58,9 @@ public partial class SettingsTabViewModel : ViewModelBase
         _deleteTempFiles = s.DeleteTempFiles;
         _defaultOutputDirectory = s.DefaultOutputDirectory;
         _tempDirectory = s.TempDirectory;
+        _promptForOutputLocation = s.PromptForOutputLocation;
+        _defaultOutputSuffix = s.DefaultOutputSuffix;
+        _openOutputFolderWhenDone = s.OpenOutputFolderWhenDone;
 
         // Run initial scan on construction
         _ = ScanToolsAsync();
@@ -163,6 +169,9 @@ public partial class SettingsTabViewModel : ViewModelBase
         s.DeleteTempFiles = DeleteTempFiles;
         s.DefaultOutputDirectory = DefaultOutputDirectory?.Trim() ?? string.Empty;
         s.TempDirectory = TempDirectory?.Trim() ?? string.Empty;
+        s.PromptForOutputLocation = PromptForOutputLocation;
+        s.DefaultOutputSuffix = DefaultOutputSuffix ?? string.Empty;
+        s.OpenOutputFolderWhenDone = OpenOutputFolderWhenDone;
 
         if (!s.Save(out var saveError))
         {

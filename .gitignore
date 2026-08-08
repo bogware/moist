@@ -3,6 +3,7 @@
 [Oo]bj/
 publish/
 dist/
+dist-cli/
 
 # User-specific IDE files
 *.user

@@ -50,6 +50,23 @@ public sealed class MoistSettings
     public string DefaultAudioEncoder { get; set; } = "ffmpeg-audio-opus";
     public string DefaultContainer { get; set; } = "Mkv";
 
+    /// <summary>
+    /// When true, the GUI leaves the output path blank so the user is asked where to save each
+    /// file (via Browse). When false, it auto-fills using <see cref="DefaultOutputDirectory"/>
+    /// (falling back to the source folder) plus <see cref="DefaultOutputSuffix"/>.
+    /// </summary>
+    public bool PromptForOutputLocation { get; set; }
+
+    /// <summary>
+    /// Appended to an auto-generated output filename, before the extension. Empty is allowed
+    /// (write beside the source with the same stem — only safe when the container differs or a
+    /// default output directory is set, so the input isn't overwritten).
+    /// </summary>
+    public string DefaultOutputSuffix { get; set; } = "_encoded";
+
+    /// <summary>Reveal the destination folder in the file manager when a job finishes.</summary>
+    public bool OpenOutputFolderWhenDone { get; set; }
+
     // Temp
     public string TempDirectory { get; set; } = Path.Combine(Path.GetTempPath(), "moist");
 
@@ -122,6 +139,12 @@ public sealed class MoistSettings
         if (MaxConcurrentJobs < 1) MaxConcurrentJobs = 1;
         if (MaxConcurrentJobs > 32) MaxConcurrentJobs = 32;
         if (!IsUsablePath(TempDirectory)) TempDirectory = DefaultTempDirectory;
+
+        // A suffix carrying a path separator or other invalid filename char would build a
+        // broken output path — strip anything that can't appear in a filename.
+        DefaultOutputSuffix ??= string.Empty;
+        foreach (var c in Path.GetInvalidFileNameChars())
+            if (DefaultOutputSuffix.Contains(c)) DefaultOutputSuffix = DefaultOutputSuffix.Replace(c.ToString(), "");
     }
 
     public static string DefaultTempDirectory => Path.Combine(Path.GetTempPath(), "moist");
