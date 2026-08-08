@@ -266,7 +266,13 @@ public sealed class AppServices : IDisposable
 
     private void RegisterDefaultFilters()
     {
-        Filters.Register(new FFmpegFilterEngine());
+        // Wire the GPU superres availability probe. The closure reads the FFmpeg path lazily, so
+        // changing it in Settings takes effect on the next check; SuperResDetector caches the result.
+        var ffmpeg = new FFmpegFilterEngine
+        {
+            IsSuperResAvailable = () => Moist.Core.Encoders.Video.SuperResDetector.IsAvailable(Settings.FFmpegPath),
+        };
+        Filters.Register(ffmpeg);
         Filters.Register(new VapourSynthFilterEngine(Settings.VapourSynthPath));
         Filters.Register(new AviSynthFilterEngine());
     }

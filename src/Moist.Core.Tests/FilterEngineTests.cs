@@ -1,3 +1,4 @@
+using Moist.Core.Media;
 using Moist.Filters;
 using Moist.Filters.Engines;
 
@@ -133,6 +134,42 @@ public class FilterEngineTests
         chain.Add(resize, roundTripped);
 
         Assert.Equal("scale=-2:1080:flags=spline", engine.GenerateScript(chain, "in.mkv"));
+    }
+
+    [Fact]
+    public void FFmpegEngine_SuperRes_EmitsLibplaceboChain_WhenAvailable()
+    {
+        var engine = new FFmpegFilterEngine { IsSuperResAvailable = () => true };
+        var chain = new FilterChain();
+        chain.Add(engine.GetAvailableFilters().First(f => f.Id == "superres"),
+            new Dictionary<string, object> { ["model"] = "fsrcnnx", ["height"] = 1080 });
+
+        var script = engine.GenerateScript(chain, "in.mkv");
+        Assert.Contains("hwupload", script);
+        Assert.Contains("libplacebo=w=-2:h=1080", script);
+        Assert.Contains("custom_shader_path=FSRCNNX_x2_8-0-4-1.glsl", script);
+        Assert.Contains("hwdownload", script);
+    }
+
+    [Fact]
+    public void FFmpegEngine_SuperRes_FallsBackToSpline_WhenGpuUnavailable()
+    {
+        var engine = new FFmpegFilterEngine { IsSuperResAvailable = () => false };
+        var chain = new FilterChain();
+        chain.Add(engine.GetAvailableFilters().First(f => f.Id == "superres"),
+            new Dictionary<string, object> { ["model"] = "fsrcnnx", ["height"] = 720 });
+
+        var script = engine.GenerateScript(chain, "in.mkv");
+        Assert.Equal("scale=-2:720:flags=spline", script);
+        Assert.DoesNotContain("libplacebo", script);
+    }
+
+    [Fact]
+    public void GpuShaders_MapsKnownModelsToGlslFiles()
+    {
+        Assert.EndsWith(".glsl", GpuShaders.FileNameFor("fsrcnnx"));
+        Assert.EndsWith(".glsl", GpuShaders.FileNameFor("anime4k"));
+        Assert.Null(GpuShaders.FileNameFor("not-a-model"));
     }
 
     [Fact]

@@ -299,6 +299,33 @@ Things that path gets wrong if you touch it carelessly:
 
 `IFilterEngine` implementations turn an engine-agnostic `FilterChain` into a script: FFmpeg → a `-vf` chain string, VapourSynth → `.vpy`, AviSynth+ → `.avs`. Only the FFmpeg engine's output is consumable by `FFmpegVideoProcessor` (it passes the string to `-vf`). VapourSynth/AviSynth scripts need vspipe/avs2pipe piping into a standalone CLI encoder, which is not implemented — nothing on the encode path reads `FilterEngineId` at all — so `EncodeTabViewModel.AddToQueue()` **rejects the enqueue** when a non-FFmpeg engine has a non-empty chain, and the CLI's `--filter` can only select the FFmpeg engine. If you build the piping, note that the generated `.vpy` calls `lsmas.LWLibavSource`, a third-party plugin that ships with neither VapourSynth nor moist. Also note `FFmpegFilterEngine` silently drops filters it doesn't recognize (it records them in `SkippedFilterIds`, which nothing currently reads).
 
+### GPU super-resolution reaches across the filter/processor seam
+
+The `superres` filter is the one filter whose `-vf` string isn't self-contained. It runs a
+neural GLSL shader (FSRCNNX for live action, Anime4K for anime) through FFmpeg's `libplacebo`,
+which needs three things the rest of the chain doesn't:
+
+- **A Vulkan device before `-i`.** `FFmpegVideoProcessor` — and the hardware one, so NVENC+superres
+  works — add `-init_hw_device vulkan=vk:0 -filter_hw_device vk` whenever the generated filter
+  script contains `libplacebo` (`GpuShaders.UsedInFilterScript`). VA-API is excluded: its own
+  render device already owns the filter chain.
+- **`hwupload`/`hwdownload` around the filter.** `BuildSuperResFilter` emits the whole
+  `format=yuv420p,hwupload,libplacebo=…,hwdownload,format=yuv420p` sub-chain itself, so it still
+  composes into the linear `-vf` like any other filter.
+- **The shader found by a bare filename.** The shaders live in `Moist.Core/Shaders` (copied to
+  output — `GpuShaders.Directory`), and the processor sets FFmpeg's working directory there so
+  `custom_shader_path=FSRCNNX_x2_8-0-4-1.glsl` resolves without the drive-colon filter escaping
+  that makes libvmaf's `log_path` miserable — the same trick `QualityMeasurer` uses.
+
+**It degrades instead of failing.** `SuperResDetector` runs a tiny libplacebo encode once and
+caches it; `AppServices` wires it into `FFmpegFilterEngine.IsSuperResAvailable`. With no usable
+Vulkan GPU, `superres` emits a plain `scale=-2:H:flags=spline` instead — so the built-in
+"AI Upscale SD to HD (GPU)" profile still produces HD on a GPU-less machine, just without the
+neural upscale. A listed libplacebo is not a working one, same lesson as the hardware encoders.
+
+Order still matters: clean before you enlarge. The AI profile runs `deblock → hqdn3d → superres
+→ cas → deband`, because an AI upscaler sharpens whatever you feed it, block noise included.
+
 ### Profiles: built-ins are materialized to disk
 
 `ProfileManager` writes each of the 7 `GetBuiltInProfiles()` entries to `profiles/*.json` on first run if the file is absent. Editing `GetBuiltInProfiles()` therefore has **no effect on an existing install** — the on-disk copy wins. Delete the JSON to pick up changes.

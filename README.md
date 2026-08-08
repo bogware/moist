@@ -59,6 +59,9 @@ Three engines. One chain. No manual script editing required.
 - **A working restoration toolkit** — crop, resize (bilinear→spline/lanczos), `bwdif`/`yadif`
   deinterlace, `nlmeans`/`hqdn3d` denoise, `deblock` (MPEG artifact removal), `cas`
   (contrast-adaptive sharpen), `unsharp`, `deband`, `eq`, tonemap, stabilize, and more
+- **`superres` — GPU neural upscaling** via libplacebo (FSRCNNX for live action, Anime4K for
+  anime). Runs the AI shader on the GPU, in the same FFmpeg pass; falls back to a spline scale
+  automatically on machines without a Vulkan GPU
 - **30+ built-in presets** — professional, anime, restoration, upscaling, color grading, speed, creative
 - **Save your own presets** — because nobody wants to rebuild a filter chain from memory
 
@@ -302,11 +305,12 @@ A re-encode shouldn't quietly lose half your file.
 
 ### Profiles
 
-Eight built-in presets ready to ride, plus save your own:
+Nine built-in presets ready to ride, plus save your own:
 
 | Profile | Video | Audio | Container |
 |---------|-------|-------|-----------|
 | **Restore SD to HD (vintage)** | x265 CRF 19, Medium, **10-bit** + restoration filter chain | Opus 192k | MKV |
+| **AI Upscale SD to HD (GPU)** | x265 CRF 19, Medium, **10-bit** + restore chain with a **GPU neural upscale** (needs Vulkan) | Opus 192k | MKV |
 | Web - H.265 High Quality | x265 CRF 22, Slow | Opus 128k | MKV |
 | Web - H.264 Compatible | x264 CRF 20, Medium | AAC 192k | MP4 |
 | Archive - Lossless | FFV1 | FLAC | MKV |
