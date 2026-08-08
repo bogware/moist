@@ -7,6 +7,55 @@ minor version carries breaking changes.
 
 ---
 
+## [0.10.0] — 2026-08-08
+
+The AI restoration release. moist grew a full ladder for bringing old SD video up to
+sharp HD — from classical filters through GPU shaders to deep-model AI — plus the
+tooling to make it one command.
+
+### Added
+
+**A one-click restoration pipeline.** Two built-in profiles — *Restore SD to HD
+(vintage)* and *AI Upscale SD to HD (GPU)* — clean, upscale, sharpen and de-band a
+vintage DVDRip in a single step. New filters back them: `deblock` (MPEG artifact
+removal), `cas` (contrast-adaptive sharpen), and `superres` — **GPU neural upscaling**
+(FSRCNNX / Anime4K) that runs as a libplacebo shader inside the same FFmpeg pass and
+falls back to a spline scale where there's no Vulkan GPU.
+
+**Real-ESRGAN deep-model upscaling.** `--ai-upscale` (and the *AI Upscale (Real-ESRGAN)*
+profile) run the deep model frame-by-frame for the highest quality. Long sources stream
+in windows — bounded scratch, resumable — so it handles full films, not just clips.
+
+**RIFE AI frame interpolation** and **arbitrary frame-rate conversion.** `--fps <n>` with
+`--fps-mode dup | motion | rife`: drop/duplicate, motion-compensated (`minterpolate`), or
+AI-interpolated (RIFE) — change any source to any frame rate.
+
+**VapourSynth is now encodable.** A job on the VapourSynth engine is piped
+`vspipe → ffmpeg`, unlocking `vs_superres` (vs-mlrt ONNX / TensorRT / OpenVINO). Select it
+with `--filter-engine vapoursynth`.
+
+**Tools install themselves.** `moist tools install <id>` downloads, extracts and wires up
+standalone tools (FFmpeg, Real-ESRGAN, RIFE) from the command line, not just the GUI.
+
+**Configurable output.** Ask-where-to-save vs. a default folder, a configurable output-name
+suffix, reveal-folder-when-done, and first-class temp/scratch and default-output directories.
+
+### Fixed
+
+- **The output file extension is honoured.** `-o out.mp4` used to write Matroska into a
+  `.mp4` name; the container is now inferred from the extension, and a doomed codec/container
+  pair is rejected up front instead of after a full encode.
+- An ambiguous `--profile` prefix now errors with the matches instead of silently guessing.
+
+### Known gaps
+
+- **VapourSynth + vs-mlrt** are a Python + plugin ecosystem, so they're detected and guided,
+  not auto-provisioned — install VapourSynth and drop vs-mlrt + an ONNX model into its plugins.
+- Real-ESRGAN and RIFE are frame-based, so slow; NVENC-on-frames and a RIFE GUI control are
+  future work.
+
+---
+
 ## [0.9.1] — 2026-08-02
 
 The first published release. (0.9.0 was tagged but never built: the test suite
