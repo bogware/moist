@@ -30,6 +30,11 @@ public sealed class EncodingProfile
     /// <summary>Output bit depth. <see cref="VideoBitDepth.Auto"/> follows the source.</summary>
     public VideoBitDepth BitDepth { get; set; } = VideoBitDepth.Auto;
 
+    /// <summary>Real-ESRGAN upscale model ("x4plus"/"animevideov3"), or null for none. When set, the
+    /// profile's <see cref="Filters"/> are the pre-clean and the processor does the upscale + finish.</summary>
+    public string? AiUpscaleModel { get; set; }
+    public int AiUpscaleHeight { get; set; } = 1080;
+
     // Audio settings
     public string AudioEncoderId { get; set; } = "ffmpeg-audio-opus";
     public AudioBitrateMode AudioBitrateMode { get; set; } = AudioBitrateMode.Vbr;
@@ -225,6 +230,31 @@ public sealed class ProfileManager
                 new() { FilterId = "superres", Parameters = new() { ["model"] = "fsrcnnx", ["height"] = 1080 } },
                 new() { FilterId = "cas",      Parameters = new() { ["strength"] = 0.4 } },
                 new() { FilterId = "deband",   Parameters = new() { ["range"] = 16 } },
+            ],
+        },
+        new()
+        {
+            // Deep-model variant: Real-ESRGAN (frame-based) instead of the libplacebo shader.
+            // Highest quality, but slow and disk-heavy — the processor caps source length unless
+            // overridden. The Filters here are ONLY the pre-clean (de-block + denoise); the
+            // RealEsrganVideoProcessor does the upscale and a light scale/sharpen/deband finish.
+            Name = "AI Upscale SD to HD (Real-ESRGAN)",
+            Description = "Vintage SD to sharp 1080p with the Real-ESRGAN deep model (needs the realesrgan tool). Best for short/precious clips; slow.",
+            VideoEncoderId = "ffmpeg-x265",
+            VideoMode = VideoEncodingMode.ConstantRateFactor,
+            VideoQuality = 19,
+            VideoPreset = VideoPreset.Medium,
+            BitDepth = VideoBitDepth.Ten,
+            AudioEncoderId = "ffmpeg-audio-opus",
+            AudioBitrate = 192,
+            Container = ContainerFormat.Mkv,
+            FilterEngineId = "ffmpeg",
+            AiUpscaleModel = "x4plus",
+            AiUpscaleHeight = 1080,
+            Filters =
+            [
+                new() { FilterId = "deblock", Parameters = new() { ["quality"] = 3, ["strength"] = 4 } },
+                new() { FilterId = "hqdn3d",  Parameters = new() { ["luma_spatial"] = 2.0, ["chroma_spatial"] = 1.5, ["luma_temporal"] = 3.0 } },
             ],
         },
         new()

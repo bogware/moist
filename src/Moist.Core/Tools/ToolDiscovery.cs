@@ -82,6 +82,17 @@ public sealed class ToolDiscovery
         },
         new ToolDefinition
         {
+            Id = "realesrgan", Name = "Real-ESRGAN (AI upscale)", DefaultBinaryName = "realesrgan-ncnn-vulkan", IsRequired = false,
+            Description = "Deep-model super-resolution for the 'AI Upscale (Real-ESRGAN)' profile — Vulkan, cross-platform",
+            VersionArgs = "-h",
+            DownloadUrls = new()
+            {
+                ["win-x64"] = "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/realesrgan-ncnn-vulkan-20220424-windows.zip",
+                ["linux-x64"] = "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/realesrgan-ncnn-vulkan-20220424-ubuntu.zip",
+            }
+        },
+        new ToolDefinition
+        {
             Id = "vspipe", Name = "VapourSynth (vspipe)", DefaultBinaryName = "vspipe", IsRequired = false,
             Description = "VapourSynth pipe — required for VapourSynth filter scripts",
             VersionArgs = "--version",

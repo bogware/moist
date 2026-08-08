@@ -46,7 +46,7 @@ public class ProfileTests
     public void RestoreAiProfile_SwapsSuperResForTheSplineScale()
     {
         var ai = ProfileManager.GetBuiltInProfiles()
-            .Single(p => p.Name.Contains("AI Upscale", StringComparison.OrdinalIgnoreCase));
+            .Single(p => p.Name.Contains("(GPU)", StringComparison.OrdinalIgnoreCase));
 
         Assert.Equal(VideoBitDepth.Ten, ai.BitDepth);
         Assert.Equal("ffmpeg", ai.FilterEngineId);

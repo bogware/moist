@@ -48,4 +48,21 @@ public sealed class VideoJob : Job
     /// Takes precedence over <see cref="TrimDuration"/>.
     /// </summary>
     public long? TrimFrames { get; set; }
+
+    /// <summary>
+    /// When set, the video is upscaled with Real-ESRGAN (a frame-based deep model) instead of
+    /// encoded directly: <c>RealEsrganVideoProcessor</c> extracts cleaned frames (applying
+    /// <see cref="FilterScript"/> as the pre-clean), runs the model, then encodes at
+    /// <see cref="AiUpscaleHeight"/> with this job's encoder settings. Null/empty = normal encode.
+    /// Values: <c>"x4plus"</c> (live action), <c>"animevideov3"</c> (anime).
+    /// </summary>
+    public string? AiUpscaleModel { get; set; }
+
+    /// <summary>Target output height for the Real-ESRGAN upscale; aspect is preserved. Default 1080.</summary>
+    public int AiUpscaleHeight { get; set; } = 1080;
+
+    /// <summary>
+    /// Lift the safety cap that refuses the (disk- and time-heavy) Real-ESRGAN path on long sources.
+    /// </summary>
+    public bool AiUpscaleAllowLong { get; set; }
 }

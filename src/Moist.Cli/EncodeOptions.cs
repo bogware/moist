@@ -77,6 +77,11 @@ public static class EncodeOptions
             SvtAv1Preset = cl.Int("av1-preset") ?? profile?.SvtAv1Preset ?? 6,
             VideoCustomArgs = cl.String("video-args") ?? profile?.VideoCustomArgs ?? string.Empty,
             BitDepth = cl.String("bit-depth") is { } bd ? ParseBitDepth(bd) : (profile?.BitDepth ?? VideoBitDepth.Auto),
+
+            // Real-ESRGAN AI upscale (Tier 2). An explicit --ai-upscale wins; else the profile's.
+            AiUpscaleModel = (cl.String("ai-upscale") is { Length: > 0 } m ? m : null) ?? profile?.AiUpscaleModel,
+            AiUpscaleHeight = cl.Int("ai-upscale-height") ?? profile?.AiUpscaleHeight ?? 1080,
+            AiUpscaleAllowLong = cl.Flag("ai-upscale-allow-long"),
             Chroma = ParseChroma(cl.String("chroma")),
             SvtAv1Tune = ParseSvtTune(cl.String("av1-tune")),
 

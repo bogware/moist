@@ -20,6 +20,10 @@ public sealed class MoistSettings
     public string VapourSynthPath { get; set; } = "vspipe";
     public string AviSynthPath { get; set; } = "avs2pipemod";
 
+    /// <summary>Real-ESRGAN ncnn-vulkan binary for the deep-model AI upscale. Optional; the AI
+    /// profile refuses to run without it, and points at Settings / auto-download.</summary>
+    public string RealEsrganPath { get; set; } = "realesrgan-ncnn-vulkan";
+
     /// <summary>Dolby Vision RPU tooling. Optional; without it a re-encode drops the RPU.</summary>
     public string DoviToolPath { get; set; } = "dovi_tool";
 

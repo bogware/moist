@@ -76,6 +76,11 @@ public static class Help
               --av1-preset <0-13>   SVT-AV1 speed preset
               --bit-depth <d>       auto | 8 | 10 | 12                  (default: auto = match source)
               --chroma <c>          auto | 420 | 422 | 444              (default: auto = match source)
+              --ai-upscale <model>  Real-ESRGAN deep upscale: x4plus (live) | animevideov3 (anime).
+                                    Frame-based, slow, disk-heavy — best for short/precious clips.
+                                    Needs the 'realesrgan' tool (install from Settings).
+              --ai-upscale-height <h>   Target height for --ai-upscale        (default: 1080)
+              --ai-upscale-allow-long   Lift the source-length safety cap on --ai-upscale
               --av1-tune <name>     vq | psnr | ssim | iq | ms-ssim | vmaf
                                     SVT-AV1 only. 'vq' is the perceptual tuning that
                                     SVT-AV1 4.0 merged from the PSY fork; the encoder's

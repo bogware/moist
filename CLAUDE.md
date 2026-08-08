@@ -326,6 +326,29 @@ neural upscale. A listed libplacebo is not a working one, same lesson as the har
 Order still matters: clean before you enlarge. The AI profile runs `deblock → hqdn3d → superres
 → cas → deband`, because an AI upscaler sharpens whatever you feed it, block noise included.
 
+### Real-ESRGAN is a processor, not a filter
+
+The deep-model upscaler can't be a filter — Real-ESRGAN only processes still images — so
+`RealEsrganVideoProcessor` owns the whole VideoJob when `VideoJob.AiUpscaleModel` is set:
+extract cleaned frames → run the model → encode. It's registered **before** the normal video
+processors in `AppServices.RegisterDefaultProcessors`, because an AI-upscale job still names a
+real encoder (x265, …) that `FFmpegVideoProcessor.CanProcess` would otherwise claim; it wins by
+additionally requiring `AiUpscaleModel`.
+
+Things that path gets right on purpose:
+
+- **The filter chain is split.** The profile carries only the pre-clean (`deblock`, `hqdn3d`) in
+  its `Filters` — that becomes the job's `FilterScript`, applied during frame *extraction*. The
+  scale-to-height, `cas` and `deband` finish are added by the processor during the *encode*,
+  because cleaning has to happen on the native frames before the model enlarges them.
+- **Frames are verified, not trusted.** It counts the extracted frames and asserts the encoded
+  output matches — a re-encode that silently drops frames desyncs the audio. JPEG intermediates
+  (a 4× frame is multi-MB as PNG) keep the scratch bounded, and a frame-count cap refuses whole
+  films unless `AiUpscaleAllowLong`: at ~3 fps and gigabytes of frames it's a short/precious-clip
+  tool, and the built-in profile is named to say so.
+- **It's a tool, so it's optional.** `realesrgan-ncnn-vulkan` is in `ToolDiscovery.KnownTools`
+  (auto-downloadable), and the processor refuses with a pointer to Settings when it's absent.
+
 ### Profiles: built-ins are materialized to disk
 
 `ProfileManager` writes each of the 7 `GetBuiltInProfiles()` entries to `profiles/*.json` on first run if the file is absent. Editing `GetBuiltInProfiles()` therefore has **no effect on an existing install** — the on-disk copy wins. Delete the JSON to pick up changes.

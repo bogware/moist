@@ -33,6 +33,15 @@ public sealed record EncodeRequest
     /// <summary>Output bit depth. Auto follows the source.</summary>
     public VideoBitDepth BitDepth { get; init; } = VideoBitDepth.Auto;
 
+    /// <summary>
+    /// When set, the video is upscaled with Real-ESRGAN (frame-based deep model) rather than a
+    /// filter. The value is the model — "x4plus" (live action) or "animevideov3" (anime); null or
+    /// empty leaves normal encoding. Frame-heavy and slow, so it's capped unless AllowLong is set.
+    /// </summary>
+    public string? AiUpscaleModel { get; init; }
+    public int AiUpscaleHeight { get; init; } = 1080;
+    public bool AiUpscaleAllowLong { get; init; }
+
     /// <summary>Chroma sampling. Auto follows the source.</summary>
     public ChromaSubsampling Chroma { get; init; } = ChromaSubsampling.Auto;
 
@@ -386,6 +395,9 @@ public static class EncodeJobBuilder
                 FilterEngineId = req.FilterEngineId,
                 TotalFrames = info?.Video?.TotalFrames ?? 0,
                 SourceBitDepth = info?.Video?.BitDepth ?? 8,
+                AiUpscaleModel = req.AiUpscaleModel,
+                AiUpscaleHeight = req.AiUpscaleHeight,
+                AiUpscaleAllowLong = req.AiUpscaleAllowLong,
             };
         }
 

@@ -279,6 +279,12 @@ public sealed class AppServices : IDisposable
 
     private void RegisterDefaultProcessors()
     {
+        // Real-ESRGAN upscaler runs before the normal encoders: an AI-upscale VideoJob still names a
+        // real encoder (x265, …), so FFmpegVideoProcessor.CanProcess would also claim it — this must
+        // be registered first so it wins via CanProcess (AiUpscaleModel set). Factory: per-job state.
+        JobQueue.RegisterProcessorFactory(() => new RealEsrganVideoProcessor(
+            Settings.FFmpegPath, Settings.FFprobePath, Settings.RealEsrganPath, Settings.TempDirectory));
+
         foreach (var encoder in Encoders.Encoders.Values)
         {
             var encoderId = encoder.Id; // capture for closure
@@ -370,6 +376,7 @@ public sealed class AppServices : IDisposable
         "x265" => Settings.X265Path,
         "vspipe" => Settings.VapourSynthPath,
         "mp4box" => Settings.Mp4BoxPath,
+        "realesrgan" => Settings.RealEsrganPath,
         _ => string.Empty,
     };
 
@@ -386,6 +393,7 @@ public sealed class AppServices : IDisposable
             case "x265": Settings.X265Path = path; break;
             case "vspipe": Settings.VapourSynthPath = path; break;
             case "mp4box": Settings.Mp4BoxPath = path; break;
+            case "realesrgan": Settings.RealEsrganPath = path; break;
         }
     }
 
