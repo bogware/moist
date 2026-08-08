@@ -80,6 +80,9 @@ public partial class EncodeTabViewModel : ViewModelBase, IDisposable
     [ObservableProperty] private VideoBitDepth _bitDepth = VideoBitDepth.Auto;
     public static VideoBitDepth[] BitDepthOptions { get; } = Enum.GetValues<VideoBitDepth>();
 
+    /// <summary>Real-ESRGAN AI-upscale model, or null for none. Driven by the AI profile.</summary>
+    [ObservableProperty] private string? _aiUpscaleModel;
+
     [ObservableProperty] private ChromaSubsampling _chroma = ChromaSubsampling.Auto;
     public static ChromaSubsampling[] ChromaOptions { get; } = Enum.GetValues<ChromaSubsampling>();
 
@@ -489,6 +492,7 @@ public partial class EncodeTabViewModel : ViewModelBase, IDisposable
         SvtAv1Preset = profile.SvtAv1Preset;
         CustomVideoArgs = profile.VideoCustomArgs;
         BitDepth = profile.BitDepth;
+        AiUpscaleModel = profile.AiUpscaleModel;
 
         SelectedAudioEncoder = AudioEncoders.FirstOrDefault(e => e.Id == profile.AudioEncoderId)
                                ?? AudioEncoders.FirstOrDefault();
@@ -541,6 +545,7 @@ public partial class EncodeTabViewModel : ViewModelBase, IDisposable
         SvtAv1Preset = SvtAv1Preset,
         VideoCustomArgs = CustomVideoArgs,
         BitDepth = BitDepth,
+        AiUpscaleModel = AiUpscaleModel,
         AudioEncoderId = SelectedAudioEncoder?.Id ?? "ffmpeg-audio-opus",
         AudioBitrateMode = AudioBitrateMode,
         AudioBitrate = AudioBitrate,
@@ -572,6 +577,7 @@ public partial class EncodeTabViewModel : ViewModelBase, IDisposable
             SvtAv1Preset = SvtAv1Preset,
             VideoCustomArgs = CustomVideoArgs,
             BitDepth = BitDepth,
+            AiUpscaleModel = AiUpscaleModel,
             AudioEncoderId = SelectedAudioEncoder?.Id ?? "ffmpeg-audio-opus",
             AudioBitrateMode = AudioBitrateMode,
             AudioBitrate = AudioBitrate,
@@ -888,6 +894,7 @@ public partial class EncodeTabViewModel : ViewModelBase, IDisposable
             CopyAttachments = CopyAttachments,
             BitDepth = BitDepth,
             Chroma = Chroma,
+            AiUpscaleModel = AiUpscaleModel,
             BurnInSubtitles = BurnInSubtitles,
 
             FilterScript = filterScript,
