@@ -15,11 +15,20 @@ suite is green.
 
 ### Added
 
-**Preview overhaul.** A resizable **Full Preview** window that renders a short snippet
-through the *entire* pipeline — filters, encoder, bit depth, chroma, AI upscale / RIFE —
-so what you see is what you'd get, not just the filter chain. Scrub within the snippet,
-compare **side-by-side** against the untouched source, resize/expand the window freely, and
-**Open in player** for motion. Reached from the Encode tab's preview panel.
+**Preview overhaul.** The Encode-tab preview panel is now **resizable** (drag the divider)
+and shows **source and output together** — the output rendered through the *entire* pipeline
+(filters, encoder, bit depth, chroma, AI upscale / RIFE), on demand, so it's a true
+before/after rather than just the filter chain. A separate resizable **Full Preview** window
+adds snippet scrubbing, a bigger side-by-side, and **Open in player** for motion.
+
+**Every prerequisite is installable in-app.** Settings → Prerequisites now offers, for each
+tool, one-click **Install** (auto-download) or **Get** (opens its download page), plus a
+**Browse…** to locate an existing binary — and the list **re-scans automatically** after any
+of them, so it's seamless. `dovi_tool` and `hdr10plus_tool` gained auto-download.
+
+**Plugin discovery.** The Plugins tab browses a curated online catalog (search + engine /
+category filters) and installs plugins directly (https-only download into the plugins folder),
+or opens the plugin's page when there's no direct link.
 
 **SVT-AV1 controls.** Film-grain synthesis, tile rows/columns and keyframe interval are now
 exposed (`--av1-film-grain`, `--av1-tile-rows`, `--av1-tile-columns`, `--av1-keyint`, and in

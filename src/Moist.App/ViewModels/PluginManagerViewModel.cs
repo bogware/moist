@@ -20,6 +20,7 @@ public partial class PluginManagerViewModel : ViewModelBase
     [ObservableProperty] private string? _catalogEngineFilter;
     [ObservableProperty] private string? _catalogCategoryFilter;
     [ObservableProperty] private bool _isLoadingCatalog;
+    [ObservableProperty] private bool _isInstalling;
     [ObservableProperty] private string _statusMessage = string.Empty;
 
     public static IReadOnlyList<string> EngineFilters { get; } = ["All", "ffmpeg", "vapoursynth", "avisynth"];
@@ -154,36 +155,60 @@ public partial class PluginManagerViewModel : ViewModelBase
     }
 
     [RelayCommand]
-    private void InstallPlugin(PluginPackageViewModel? pkg)
+    private async Task InstallPlugin(PluginPackageViewModel? pkg)
     {
         if (pkg is null || pkg.IsInstalled) return;
 
         if (string.IsNullOrWhiteSpace(pkg.DownloadUrl))
         {
-            // Plugin download not yet implemented — register as tracked but inform user
-            StatusMessage = $"Registered: {pkg.Name} v{pkg.Version} (manual install required — download from the plugin's website and place in the plugins directory)";
-        }
-        else
-        {
-            StatusMessage = $"Installed: {pkg.Name} v{pkg.Version}";
+            // No direct archive to fetch — the user installs manually from the plugin's page
+            // (the "Open page" button in the view handles launching the browser).
+            StatusMessage = string.IsNullOrWhiteSpace(pkg.Website)
+                ? $"{pkg.Name} has no download link — install it manually into the plugins directory, then restart moist."
+                : $"{pkg.Name} must be installed manually — open its page, download it, drop the files in the plugins directory, then restart moist.";
+            return;
         }
 
-        var package = new PluginPackage
+        IsInstalling = true;
+        try
         {
-            Id = pkg.Id,
-            Name = pkg.Name,
-            Version = pkg.Version,
-            Description = pkg.Description,
-            Author = pkg.Author,
-            Category = pkg.Category,
-            Engine = pkg.Engine,
-            IsInstalled = true,
-            InstalledPath = Path.Combine(_services.PluginSources.PluginsDirectory, pkg.Id),
-        };
+            var progress = new Progress<(string Status, double Percent)>(p => StatusMessage = p.Status);
+            StatusMessage = $"Downloading {pkg.Name}...";
 
-        _services.PluginSources.AddInstalledPlugin(package);
-        pkg.IsInstalled = true;
-        RefreshInstalledPlugins();
+            var package = new PluginPackage
+            {
+                Id = pkg.Id,
+                Name = pkg.Name,
+                Version = pkg.Version,
+                Description = pkg.Description,
+                Author = pkg.Author,
+                Category = pkg.Category,
+                Engine = pkg.Engine,
+                DownloadUrl = pkg.DownloadUrl,
+                Website = pkg.Website,
+            };
+
+            var installedPath = await _services.PluginSources.DownloadPluginAsync(package, progress);
+            if (installedPath is null)
+            {
+                // DownloadPluginAsync already reported the specific failure through progress.
+                if (!StatusMessage.StartsWith("Failed", StringComparison.OrdinalIgnoreCase)
+                    && !StatusMessage.StartsWith("Refusing", StringComparison.OrdinalIgnoreCase))
+                    StatusMessage = $"Failed to install {pkg.Name}. Try installing it manually from its page.";
+                return;
+            }
+
+            package.IsInstalled = true;
+            package.InstalledPath = installedPath;
+            _services.PluginSources.AddInstalledPlugin(package);
+            pkg.IsInstalled = true;
+            RefreshInstalledPlugins();
+            StatusMessage = $"Installed {pkg.Name} v{pkg.Version} — restart moist to load it.";
+        }
+        finally
+        {
+            IsInstalling = false;
+        }
     }
 
     [RelayCommand]
@@ -238,10 +263,20 @@ public partial class PluginPackageViewModel : ObservableObject
     [ObservableProperty] private bool _isInstalled;
     public string DownloadUrl { get; }
 
+    /// <summary>Project/documentation page, opened in the browser for a manual install.</summary>
+    public string Website { get; }
+
+    /// <summary>True when the plugin can be downloaded directly (an Install button is shown).</summary>
+    public bool HasDownloadUrl => !string.IsNullOrWhiteSpace(DownloadUrl);
+
+    /// <summary>True when there is a page to open for a manual install.</summary>
+    public bool HasWebsite => !string.IsNullOrWhiteSpace(Website);
+
     public PluginPackageViewModel(PluginPackage package)
     {
         Id = package.Id;
         DownloadUrl = package.DownloadUrl;
+        Website = package.Website;
         _name = package.Name;
         _version = package.Version;
         _description = package.Description;

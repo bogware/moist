@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Diagnostics;
 using Avalonia.Media.Imaging;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
@@ -222,6 +223,16 @@ public partial class EncodeTabViewModel : ViewModelBase, IDisposable
     [ObservableProperty] private double _previewPosition;
     [ObservableProperty] private double _previewMaxPosition = 100;
     [ObservableProperty] private bool _isPreviewLoading;
+
+    // Output preview: the SAME frame as the source scrub position, but rendered through the full
+    // pipeline (filters + encoder + bit depth + AI/RIFE) so it's a true before/after. Rendered on
+    // demand (it runs the real encoder, so it's not continuous like the source scrub).
+    [ObservableProperty] private Bitmap? _outputPreviewImage;
+    private MemoryStream? _outputPreviewStream;
+    [ObservableProperty] private bool _isRenderingOutput;
+    [ObservableProperty] private double _outputRenderProgress;
+    [ObservableProperty] private string _outputPreviewStatus = string.Empty;
+    private string? _outputSnippetPath;
 
     // Profiles
     [ObservableProperty] private EncodingProfile? _selectedProfile;
@@ -495,6 +506,65 @@ public partial class EncodeTabViewModel : ViewModelBase, IDisposable
             await UpdatePreview();
         }
         catch (OperationCanceledException) { }
+    }
+
+    /// <summary>
+    /// Render a short snippet at the current scrub position through the FULL pipeline and show its
+    /// first frame beside the source frame — a true before/after. On demand (not on every scrub)
+    /// because it runs the real encoder. For a bigger, resizable comparison use "Full Preview".
+    /// </summary>
+    [RelayCommand]
+    private async Task RenderOutputPreview()
+    {
+        if (string.IsNullOrWhiteSpace(InputFile)) { OutputPreviewStatus = "Load a video first."; return; }
+        if (AudioOnly) { OutputPreviewStatus = "Audio-only mode has no video to preview."; return; }
+
+        IsRenderingOutput = true;
+        OutputRenderProgress = 0;
+        OutputPreviewStatus = "Rendering through the full pipeline…";
+        try
+        {
+            var request = BuildRequest(InputFile, string.IsNullOrWhiteSpace(OutputFile) ? InputFile : OutputFile);
+            var progress = new Progress<double>(p => OutputRenderProgress = p);
+            var result = await _services.SnippetPreview.RenderAsync(
+                request, MediaInfo, TimeSpan.FromSeconds(PreviewPosition), duration: null, progress);
+            _outputSnippetPath = result.SnippetPath;
+
+            var framePath = await _services.PreviewService.ExtractFrameAsync(
+                result.SnippetPath, TimeSpan.Zero, maxWidth: 960);
+            if (framePath is not null)
+            {
+                var oldImage = OutputPreviewImage;
+                var oldStream = _outputPreviewStream;
+                var memoryStream = new MemoryStream();
+                await using (var fileStream = File.OpenRead(framePath))
+                    await fileStream.CopyToAsync(memoryStream);
+                memoryStream.Seek(0, SeekOrigin.Begin);
+                OutputPreviewImage = new Bitmap(memoryStream);
+                _outputPreviewStream = memoryStream;
+                oldImage?.Dispose();
+                oldStream?.Dispose();
+                try { File.Delete(framePath); } catch { }
+            }
+            OutputPreviewStatus = $"Output at {PreviewPosition:F1}s (rendered {result.DurationSeconds:F1}s snippet).";
+        }
+        catch (Exception ex)
+        {
+            OutputPreviewStatus = $"Preview failed: {ex.Message}";
+        }
+        finally
+        {
+            IsRenderingOutput = false;
+        }
+    }
+
+    /// <summary>Play the last rendered output snippet in the system player (true motion).</summary>
+    [RelayCommand]
+    private void OpenOutputSnippet()
+    {
+        if (_outputSnippetPath is null || !File.Exists(_outputSnippetPath)) return;
+        try { Process.Start(new ProcessStartInfo { FileName = _outputSnippetPath, UseShellExecute = true }); }
+        catch (Exception ex) { OutputPreviewStatus = $"Couldn't open the player: {ex.Message}"; }
     }
 
     // === Profiles ===
@@ -1084,5 +1154,9 @@ public partial class EncodeTabViewModel : ViewModelBase, IDisposable
         PreviewImage = null;
         _previewStream?.Dispose();
         _previewStream = null;
+        OutputPreviewImage?.Dispose();
+        OutputPreviewImage = null;
+        _outputPreviewStream?.Dispose();
+        _outputPreviewStream = null;
     }
 }

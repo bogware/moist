@@ -42,11 +42,27 @@
                                         <TextBlock Grid.Column="2" Text="{Binding StatusText}" Opacity="0.7"
                                                    VerticalAlignment="Center" FontSize="12" TextTrimming="CharacterEllipsis"
                                                    ToolTip.Tip="{Binding StatusText}"/>
-                                        <Button Grid.Column="3" Content="{Binding ActionLabel}"
-                                                Command="{Binding InstallCommand}"
-                                                IsVisible="{Binding CanInstall}"
-                                                IsEnabled="{Binding !IsInstalling}"
-                                                Padding="10,3" FontSize="11" Margin="8,0,0,0"/>
+                                        <!-- Install (auto-download), Get (opens the tool's download
+                                             page when there's no auto-download), and Browse… (locate
+                                             the binary manually). Only one of Install/Get shows per
+                                             tool; Browse… shows whenever the tool is missing. -->
+                                        <StackPanel Grid.Column="3" Orientation="Horizontal" Spacing="6"
+                                                    Margin="8,0,0,0" VerticalAlignment="Center">
+                                            <Button Content="{Binding ActionLabel}"
+                                                    Command="{Binding InstallCommand}"
+                                                    IsVisible="{Binding CanInstall}"
+                                                    IsEnabled="{Binding !IsInstalling}"
+                                                    Padding="10,3" FontSize="11"/>
+                                            <Button Content="Get"
+                                                    Command="{Binding OpenPageCommand}"
+                                                    IsVisible="{Binding CanOpenPage}"
+                                                    Padding="10,3" FontSize="11"/>
+                                            <Button Content="Browse…"
+                                                    Click="BrowseToolRow_Click"
+                                                    IsVisible="{Binding IsNotAvailable}"
+                                                    IsEnabled="{Binding !IsInstalling}"
+                                                    Padding="10,3" FontSize="11"/>
+                                        </StackPanel>
                                     </Grid>
                                 </Border>
                             </DataTemplate>

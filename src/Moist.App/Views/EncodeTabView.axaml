@@ -8,7 +8,9 @@
              x:DataType="vm:EncodeTabViewModel"
              DragDrop.AllowDrop="True">
 
-    <Grid ColumnDefinitions="*,300" ColumnSpacing="12">
+    <!-- The preview column is user-resizable via the GridSplitter; MinWidth keeps the settings
+         readable. Default is wide enough to show source and output side by side. -->
+    <Grid ColumnDefinitions="*,6,420">
 
         <!-- Left: Settings -->
         <ScrollViewer Grid.Column="0">
@@ -383,47 +385,80 @@
         </ScrollViewer>
 
         <!-- Right: Video Preview Panel -->
-        <Border Grid.Column="1" Classes="section" Margin="0,16,16,16">
+        <!-- Drag to resize the preview panel -->
+        <GridSplitter Grid.Column="1" Width="6" ResizeDirection="Columns"
+                      Background="Transparent" HorizontalAlignment="Center"/>
+
+        <Border Grid.Column="2" Classes="section" Margin="0,16,16,16" MinWidth="240">
             <DockPanel>
                 <Grid DockPanel.Dock="Top" ColumnDefinitions="*,Auto" Margin="0,0,0,8">
-                    <TextBlock Text="Preview (source)" Classes="section-header" VerticalAlignment="Center"/>
+                    <TextBlock Text="Preview" Classes="section-header" VerticalAlignment="Center"/>
                     <Button Grid.Column="1" Content="Full Preview ⤢"
                             Name="FullPreviewButton" Click="FullPreview_Click"
                             FontSize="11" Padding="8,3"
                             IsEnabled="{Binding MediaInfo, Converter={x:Static ObjectConverters.IsNotNull}}"
-                            ToolTip.Tip="Open a resizable preview that renders a snippet through the full pipeline (filters + encoder), with side-by-side before/after"/>
+                            ToolTip.Tip="Open a separate, resizable preview window with scrubbing and side-by-side before/after"/>
                 </Grid>
 
-                <!-- Preview Controls -->
-                <StackPanel DockPanel.Dock="Bottom" Spacing="4" Margin="0,8,0,0">
+                <!-- Controls: shared scrub + render/open output -->
+                <StackPanel DockPanel.Dock="Bottom" Spacing="6" Margin="0,8,0,0">
                     <Slider Value="{Binding PreviewPosition}"
                             Minimum="0"
                             Maximum="{Binding PreviewMaxPosition}"
                             IsEnabled="{Binding MediaInfo, Converter={x:Static ObjectConverters.IsNotNull}}"/>
                     <TextBlock Text="{Binding PreviewPosition, StringFormat=Position: {0:F1}s}"
                                FontSize="11" Opacity="0.6" HorizontalAlignment="Center"/>
+                    <ProgressBar Value="{Binding OutputRenderProgress}" Minimum="0" Maximum="100" Height="4"
+                                 IsVisible="{Binding IsRenderingOutput}"/>
+                    <StackPanel Orientation="Horizontal" Spacing="6" HorizontalAlignment="Center">
+                        <Button Content="Render output ▶"
+                                Command="{Binding RenderOutputPreviewCommand}"
+                                IsEnabled="{Binding !IsRenderingOutput}"
+                                FontSize="11" Padding="8,3"
+                                ToolTip.Tip="Render this frame through the full pipeline (filters + encoder + bit depth + AI) for a true before/after"/>
+                        <Button Content="Open in player"
+                                Command="{Binding OpenOutputSnippetCommand}"
+                                IsEnabled="{Binding OutputPreviewImage, Converter={x:Static ObjectConverters.IsNotNull}}"
+                                FontSize="11" Padding="8,3"
+                                ToolTip.Tip="Play the rendered output snippet with motion"/>
+                    </StackPanel>
+                    <TextBlock Text="{Binding OutputPreviewStatus}" FontSize="10" Opacity="0.6"
+                               TextWrapping="Wrap" TextAlignment="Center"
+                               IsVisible="{Binding OutputPreviewStatus, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
                 </StackPanel>
 
-                <!-- Preview Image -->
-                <Border Background="{DynamicResource SystemControlBackgroundChromeMediumLowBrush}"
-                        CornerRadius="4">
-                    <Panel>
-                        <TextBlock Text="Loading..."
-                                   IsVisible="{Binding IsPreviewLoading}"
-                                   HorizontalAlignment="Center" VerticalAlignment="Center"
-                                   Opacity="0.5"/>
+                <!-- Source | Output, side by side -->
+                <Grid RowDefinitions="Auto,*,Auto,*">
+                    <TextBlock Grid.Row="0" Text="Source" FontSize="11" Opacity="0.6"
+                               HorizontalAlignment="Center" Margin="0,0,0,4"/>
+                    <Border Grid.Row="1" Background="{DynamicResource SystemControlBackgroundChromeMediumLowBrush}"
+                            CornerRadius="4">
+                        <Panel>
+                            <TextBlock Text="Loading..." IsVisible="{Binding IsPreviewLoading}"
+                                       HorizontalAlignment="Center" VerticalAlignment="Center" Opacity="0.5"/>
+                            <TextBlock Text="Open a video file to see preview"
+                                       IsVisible="{Binding PreviewImage, Converter={x:Static ObjectConverters.IsNull}}"
+                                       HorizontalAlignment="Center" VerticalAlignment="Center"
+                                       Opacity="0.3" FontSize="12" TextWrapping="Wrap" TextAlignment="Center"/>
+                            <Image Source="{Binding PreviewImage}" Stretch="Uniform" StretchDirection="DownOnly"/>
+                        </Panel>
+                    </Border>
 
-                        <TextBlock Text="Open a video file&#xa;to see preview"
-                                   IsVisible="{Binding PreviewImage, Converter={x:Static ObjectConverters.IsNull}}"
-                                   HorizontalAlignment="Center" VerticalAlignment="Center"
-                                   Opacity="0.3" FontSize="12" TextWrapping="Wrap"
-                                   TextAlignment="Center"/>
-
-                        <Image Source="{Binding PreviewImage}"
-                               Stretch="Uniform"
-                               StretchDirection="DownOnly"/>
-                    </Panel>
-                </Border>
+                    <TextBlock Grid.Row="2" Text="Output (full pipeline)" FontSize="11" Opacity="0.6"
+                               HorizontalAlignment="Center" Margin="0,8,0,4"/>
+                    <Border Grid.Row="3" Background="{DynamicResource SystemControlBackgroundChromeMediumLowBrush}"
+                            CornerRadius="4">
+                        <Panel>
+                            <TextBlock Text="Rendering…" IsVisible="{Binding IsRenderingOutput}"
+                                       HorizontalAlignment="Center" VerticalAlignment="Center" Opacity="0.5"/>
+                            <TextBlock Text="Click “Render output” to&#xa;see it through the pipeline"
+                                       IsVisible="{Binding OutputPreviewImage, Converter={x:Static ObjectConverters.IsNull}}"
+                                       HorizontalAlignment="Center" VerticalAlignment="Center"
+                                       Opacity="0.3" FontSize="12" TextWrapping="Wrap" TextAlignment="Center"/>
+                            <Image Source="{Binding OutputPreviewImage}" Stretch="Uniform" StretchDirection="DownOnly"/>
+                        </Panel>
+                    </Border>
+                </Grid>
             </DockPanel>
         </Border>
     </Grid>

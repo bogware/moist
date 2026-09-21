@@ -67,30 +67,60 @@ public sealed class ToolDiscovery
             Id = "mkvmerge", Name = "MKVToolNix (mkvmerge)", DefaultBinaryName = "mkvmerge", IsRequired = false,
             Description = "MKV muxer — advanced Matroska container support",
             VersionArgs = "--version",
+            // MKVToolNix ships as a platform installer/package (and a Windows portable 7z), not a
+            // single drop-in binary we can safely auto-extract, so there's no DownloadUrls entry —
+            // the panel offers a one-click "Get" to the official downloads page instead.
+            HelpUrl = "https://mkvtoolnix.download/downloads.html",
         },
         new ToolDefinition
         {
             Id = "dovi_tool", Name = "dovi_tool (Dolby Vision)", DefaultBinaryName = "dovi_tool", IsRequired = false,
             Description = "Extracts and re-injects Dolby Vision RPUs, which a re-encode otherwise drops",
             VersionArgs = "--version",
+            // Clean single-binary GitHub releases from quietvoid/dovi_tool. Pinned to an immutable
+            // versioned tag (NOT a rolling "latest") so a recorded SHA-256 stays valid: win = the
+            // *-x86_64-pc-windows-msvc.zip asset, linux = the *-x86_64-unknown-linux-musl.tar.gz asset.
+            // Version: 2.1.3. To update: bump the tag in both URLs, download each asset, hash it
+            // (`Get-FileHash -Algorithm SHA256` / `sha256sum`), and record the hex in ExpectedSha256.
+            DownloadUrls = new()
+            {
+                ["win-x64"] = "https://github.com/quietvoid/dovi_tool/releases/download/2.1.3/dovi_tool-2.1.3-x86_64-pc-windows-msvc.zip",
+                ["linux-x64"] = "https://github.com/quietvoid/dovi_tool/releases/download/2.1.3/dovi_tool-2.1.3-x86_64-unknown-linux-musl.tar.gz",
+            },
+            // ExpectedSha256 intentionally omitted until a maintainer records the pinned artifact hashes;
+            // while absent, installs succeed but log an unverified-download warning.
         },
         new ToolDefinition
         {
             Id = "hdr10plus_tool", Name = "hdr10plus_tool", DefaultBinaryName = "hdr10plus_tool", IsRequired = false,
             Description = "Extracts and re-injects HDR10+ dynamic metadata, which a re-encode otherwise drops",
             VersionArgs = "--version",
+            // Clean single-binary GitHub releases from quietvoid/hdr10plus_tool, same asset-naming
+            // pattern and pinning rules as dovi_tool above. Version: 1.7.0. To update: bump the tag,
+            // download each asset, hash it, and record the hex in ExpectedSha256.
+            DownloadUrls = new()
+            {
+                ["win-x64"] = "https://github.com/quietvoid/hdr10plus_tool/releases/download/1.7.0/hdr10plus_tool-1.7.0-x86_64-pc-windows-msvc.zip",
+                ["linux-x64"] = "https://github.com/quietvoid/hdr10plus_tool/releases/download/1.7.0/hdr10plus_tool-1.7.0-x86_64-unknown-linux-musl.tar.gz",
+            },
+            // ExpectedSha256 intentionally omitted until a maintainer records the pinned artifact hashes.
         },
         new ToolDefinition
         {
             Id = "x264", Name = "x264 CLI", DefaultBinaryName = "x264", IsRequired = false,
             Description = "Standalone H.264 encoder for maximum control",
             VersionArgs = "--version",
+            // No canonical single-file cross-platform binary release; users grab a build for their OS.
+            // Offer the VideoLAN developer page rather than an auto-download.
+            HelpUrl = "https://www.videolan.org/developers/x264.html",
         },
         new ToolDefinition
         {
             Id = "x265", Name = "x265 CLI", DefaultBinaryName = "x265", IsRequired = false,
             Description = "Standalone H.265/HEVC encoder for maximum control",
             VersionArgs = "--version",
+            // As with x264: no clean drop-in binary release, so point at the VideoLAN developer page.
+            HelpUrl = "https://www.videolan.org/developers/x265.html",
         },
         new ToolDefinition
         {
@@ -120,14 +150,19 @@ public sealed class ToolDiscovery
             // VapourSynth is a Python package, not a drop-in binary — the "portable" is a pip
             // bootstrap (vspipe.bat + pip.bat + wheel), so it's detection-only: install VapourSynth
             // with its own installer, then moist finds vspipe and can pipe .vpy scripts to FFmpeg.
+            // No DownloadUrls; the "Get" button points at the official installation guide instead.
             Description = "VapourSynth pipe — runs .vpy scripts (incl. vs-mlrt ML nodes) for the VapourSynth engine",
             VersionArgs = "--version",
+            HelpUrl = "https://www.vapoursynth.com/doc/installation.html",
         },
         new ToolDefinition
         {
             Id = "mp4box", Name = "MP4Box (GPAC)", DefaultBinaryName = "mp4box", IsRequired = false,
             Description = "MP4 container tool for advanced MP4 muxing",
             VersionArgs = "-version",
+            // GPAC ships as a platform installer, not a single drop-in binary — point at the GPAC
+            // downloads page for a one-click "Get" rather than auto-downloading.
+            HelpUrl = "https://gpac.io/downloads/gpac-nightly-builds/",
         },
     ];
 
@@ -349,7 +384,11 @@ public sealed class ToolDiscovery
                 using var tarProcess = Process.Start(new ProcessStartInfo
                 {
                     FileName = "tar",
-                    Arguments = $"xf \"{downloadPath}\" -C \"{extractDir}\" --strip-components=1",
+                    // No --strip-components: FindBinaryInDirectory searches recursively, so a nested
+                    // archive (ffmpeg's <build>/bin/ffmpeg) and a flat one (dovi_tool's bare binary
+                    // at the root) both resolve. Stripping the top level would delete the binary from
+                    // a flat archive, so it must not be applied blindly.
+                    Arguments = $"xf \"{downloadPath}\" -C \"{extractDir}\"",
                     UseShellExecute = false,
                     CreateNoWindow = true,
                     RedirectStandardError = true,
