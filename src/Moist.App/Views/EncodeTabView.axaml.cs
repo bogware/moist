@@ -75,6 +75,20 @@ public partial class EncodeTabView : UserControl
         }
     }
 
+    private void FullPreview_Click(object? sender, RoutedEventArgs e)
+    {
+        if (DataContext is not EncodeTabViewModel vm) return;
+
+        // Non-modal + owned, so the user can keep tweaking settings on the Encode tab and hit
+        // "Generate" again — the preview re-reads the current state via BuildPreviewRequest.
+        var previewVm = new PreviewViewModel(vm.Services, vm.BuildPreviewRequest, vm.MediaInfo, vm.InputFile);
+        var window = new PreviewWindow(previewVm);
+        if (TopLevel.GetTopLevel(this) is Window owner)
+            window.Show(owner);
+        else
+            window.Show();
+    }
+
     private async void BrowseInput_Click(object? sender, RoutedEventArgs e)
     {
         try

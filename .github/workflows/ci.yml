@@ -6,6 +6,12 @@ on:
   pull_request:
     branches: [main]
 
+# Self-hosted runners are scarce; superseded pushes to the same ref should not
+# tie up a runner running a build nobody is waiting on.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 

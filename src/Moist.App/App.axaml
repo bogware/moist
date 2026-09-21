@@ -18,6 +18,10 @@
 
     <Application.Styles>
         <FluentTheme />
+        <!-- DataGrid ships its control template in a separate theme dictionary that must be
+             included explicitly; without it every DataGrid (Queue, Batch, Plugins) renders blank.
+             Kept before the moist skin so MoistDark's DataGrid setters override the Fluent defaults. -->
+        <StyleInclude Source="avares://Avalonia.Controls.DataGrid/Themes/Fluent.xaml"/>
         <!-- moist Dark skin — overlays on Fluent. Toggled via Settings > Theme. -->
         <StyleInclude Source="avares://Moist.App/Themes/MoistDark.axaml"/>
     </Application.Styles>

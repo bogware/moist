@@ -70,12 +70,23 @@ public abstract class CommandLineProcessor : IJobProcessor
         job.AppendLog($"[{DisplayName}] {command}");
 
         using var process = new Process { StartInfo = psi };
+
+        // Only the tail is ever read (last 10 lines on failure, below), so retain a bounded
+        // tail rather than every line — a multi-hour single-pass encode emits an output block
+        // ~twice a second and would otherwise hold hundreds of thousands of dead strings.
+        const int maxTailLines = 50;
         var outputLines = new ConcurrentQueue<string>();
+        void RecordTail(string line)
+        {
+            outputLines.Enqueue(line);
+            while (outputLines.Count > maxTailLines)
+                outputLines.TryDequeue(out _);
+        }
 
         process.OutputDataReceived += (_, e) =>
         {
             if (e.Data is null) return;
-            outputLines.Enqueue(e.Data);
+            RecordTail(e.Data);
             job.AppendLog(e.Data);
             var p = ParseOutputLine(e.Data, job);
             if (p is not null) progress.Report(p);
@@ -84,7 +95,7 @@ public abstract class CommandLineProcessor : IJobProcessor
         process.ErrorDataReceived += (_, e) =>
         {
             if (e.Data is null) return;
-            outputLines.Enqueue(e.Data);
+            RecordTail(e.Data);
             job.AppendLog(e.Data);
             var p = ParseOutputLine(e.Data, job);
             if (p is not null) progress.Report(p);
@@ -109,9 +120,18 @@ public abstract class CommandLineProcessor : IJobProcessor
         catch (OperationCanceledException)
         {
             Logger.LogWarning("{Processor} cancelled for job {JobId}, killing process", DisplayName, job.Id);
-            if (!process.HasExited)
+            try
             {
-                process.Kill(entireProcessTree: true);
+                if (!process.HasExited)
+                    process.Kill(entireProcessTree: true);
+            }
+            catch (Exception killEx)
+            {
+                // The process can exit between HasExited and Kill, or Kill can fail
+                // outright; either way this is best-effort teardown and must not mask
+                // the cancellation as a job failure.
+                Logger.LogWarning(killEx, "{Processor} best-effort kill after cancel failed for job {JobId}",
+                    DisplayName, job.Id);
             }
             throw;
         }

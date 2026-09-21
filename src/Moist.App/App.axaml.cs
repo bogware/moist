@@ -3,6 +3,7 @@ using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Data.Core;
 using Avalonia.Data.Core.Plugins;
 using Avalonia.Markup.Xaml;
+using Avalonia.Markup.Xaml.Styling;
 using Avalonia.Styling;
 using System.Linq;
 using Moist.App.ViewModels;
@@ -18,15 +19,18 @@ public partial class App : Application
     /// The moist Dark skin stylesheet, loaded from AXAML.
     /// When null or removed from Styles, the app falls back to plain Fluent Dark.
     /// </summary>
-    private Styles? _moistDarkSkin;
+    private IStyle? _moistDarkSkin;
 
     public override void Initialize()
     {
         AvaloniaXamlLoader.Load(this);
 
-        // Stash reference to the moist skin (last style added in App.axaml)
-        _moistDarkSkin = Styles.OfType<Styles>().LastOrDefault()
-                         ?? Styles.LastOrDefault() as Styles;
+        // Capture the moist overlay by identity, not by type. The overlay is a StyleInclude
+        // (NOT a Styles), while FluentTheme *is* a Styles — so OfType<Styles>() would grab the
+        // Fluent base and toggling the theme would strip every control template. Match the
+        // include whose Source points at MoistDark.axaml instead.
+        _moistDarkSkin = Styles.OfType<StyleInclude>()
+            .FirstOrDefault(s => s.Source?.OriginalString?.Contains("MoistDark") == true);
 
         // Apply saved theme preference
         ApplyTheme(MoistSettings.Load().Theme);

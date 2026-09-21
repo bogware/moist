@@ -126,7 +126,11 @@ public sealed class ProfileManager
         var fileName = SanitizeFileName(profile.Name) + ".json";
         var path = Path.Combine(_profilesDir, fileName);
         var json = JsonSerializer.Serialize(profile, JsonOptions);
-        File.WriteAllText(path, json);
+        // Write to a temp file then move into place so an interrupted write
+        // can't truncate an existing profile (mirrors MoistSettings.Save).
+        var tmp = path + ".tmp";
+        File.WriteAllText(tmp, json);
+        File.Move(tmp, path, overwrite: true);
     }
 
     public async Task SaveAsync(EncodingProfile profile, CancellationToken ct = default)
@@ -135,7 +139,11 @@ public sealed class ProfileManager
         var fileName = SanitizeFileName(profile.Name) + ".json";
         var path = Path.Combine(_profilesDir, fileName);
         var json = JsonSerializer.Serialize(profile, JsonOptions);
-        await File.WriteAllTextAsync(path, json, ct);
+        // Write to a temp file then move into place so an interrupted write
+        // can't truncate an existing profile (mirrors MoistSettings.Save).
+        var tmp = path + ".tmp";
+        await File.WriteAllTextAsync(tmp, json, ct);
+        File.Move(tmp, path, overwrite: true);
     }
 
     public void Delete(string profileName)
@@ -172,8 +180,24 @@ public sealed class ProfileManager
         foreach (var profile in builtIns)
         {
             var path = Path.Combine(_profilesDir, SanitizeFileName(profile.Name) + ".json");
-            if (!File.Exists(path))
+            // Re-materialize a built-in when its file is absent OR present but
+            // corrupt (a truncated write survives on disk and would otherwise be
+            // silently skipped by GetAllProfiles and never re-created).
+            if (!File.Exists(path) || !IsReadableProfile(path))
                 Save(profile);
+        }
+    }
+
+    private static bool IsReadableProfile(string path)
+    {
+        try
+        {
+            var json = File.ReadAllText(path);
+            return JsonSerializer.Deserialize<EncodingProfile>(json, JsonOptions) is not null;
+        }
+        catch
+        {
+            return false;
         }
     }
 
@@ -351,6 +375,9 @@ public sealed class ProfileManager
             return $"unnamed_{DateTime.UtcNow.Ticks}";
         var invalid = Path.GetInvalidFileNameChars();
         var sanitized = new string(name.Select(c => invalid.Contains(c) ? '_' : c).ToArray()).Trim();
-        return string.IsNullOrEmpty(sanitized) ? $"unnamed_{DateTime.UtcNow.Ticks}" : sanitized;
+        if (string.IsNullOrEmpty(sanitized))
+            return $"unnamed_{DateTime.UtcNow.Ticks}";
+        // Cap length so a long profile name can't overflow the path limit.
+        return sanitized.Length > 150 ? sanitized[..150] : sanitized;
     }
 }

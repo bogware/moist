@@ -21,6 +21,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Directory.Build.props is the single source of truth for <Version> (it stamps
+      # the whole solution), while the tag names the release/archives. If they drift,
+      # the shipped binary reports the wrong version via `moist --version` and
+      # `GET /api/health`. Fail fast rather than publish a mislabelled release.
+      - name: Verify version matches tag
+        working-directory: src
+        shell: bash
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          VER=$(grep -oPm1 '(?<=<Version>)[^<]+' Directory.Build.props)
+          if [ "$TAG" != "$VER" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME (=$TAG) != Directory.Build.props <Version> ($VER). Bump Directory.Build.props before tagging."
+            exit 1
+          fi
+
       - name: Setup .NET 8
         uses: actions/setup-dotnet@v4
         with:
@@ -90,6 +105,21 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+
+      # Directory.Build.props is the single source of truth for <Version> (it stamps
+      # the whole solution), while the tag names the release/archives. If they drift,
+      # the shipped binary reports the wrong version via `moist --version` and
+      # `GET /api/health`. Fail fast rather than publish a mislabelled release.
+      - name: Verify version matches tag
+        working-directory: src
+        shell: bash
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          VER=$(grep -oPm1 '(?<=<Version>)[^<]+' Directory.Build.props)
+          if [ "$TAG" != "$VER" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME (=$TAG) != Directory.Build.props <Version> ($VER). Bump Directory.Build.props before tagging."
+            exit 1
+          fi
 
       - name: Setup .NET 8
         uses: actions/setup-dotnet@v4

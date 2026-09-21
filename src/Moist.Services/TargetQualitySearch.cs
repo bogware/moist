@@ -100,6 +100,17 @@ public sealed class TargetQualitySearch(AppServices services, ILoggerFactory? lo
         CancellationToken ct = default,
         TimeSpan? sceneOffset = null)
     {
+        // Guard the probe budget and sample length: a non-positive MaxProbes leaves the
+        // probe loop with nothing to select from and would throw an opaque "Sequence
+        // contains no elements", and a non-positive SampleDuration produces zero-length
+        // samples that fail to encode. Fail fast with a clear message instead.
+        if (options.MaxProbes < 1)
+            throw new ArgumentOutOfRangeException(
+                nameof(options), options.MaxProbes, "MaxProbes must be at least 1");
+        if (options.SampleDuration <= TimeSpan.Zero)
+            throw new ArgumentOutOfRangeException(
+                nameof(options), options.SampleDuration, "SampleDuration must be greater than zero");
+
         var started = DateTime.UtcNow;
         info ??= await services.MediaAnalyzer.AnalyzeAsync(request.InputFile, ct);
 
@@ -130,6 +141,16 @@ public sealed class TargetQualitySearch(AppServices services, ILoggerFactory? lo
         _logger.LogInformation(
             "Target-quality search on {File}: {Metric} >= {Target}, CRF {Min}-{Max}, {Samples} sample(s)",
             Path.GetFileName(request.InputFile), options.Metric, target, minCrf, maxCrf, samples.Count);
+
+        // A geometry-changing filter (crop/pad/transpose/rotate/flip) alters frame dimensions,
+        // but each sample is measured against the untouched source at its native size — so the
+        // score is skewed and the chosen CRF only approximate. Non-geometry filters (scale,
+        // denoise, sharpen) measure correctly because the metric rescales before comparing.
+        if (HasGeometryFilter(request.FilterScript))
+            _logger.LogWarning(
+                "The filter chain changes frame geometry (crop/pad/rotate/flip); target-quality " +
+                "sampling compares against the un-filtered source, so the predicted {Metric} may be " +
+                "off and the resulting CRF approximate.", options.Metric);
 
         var probes = new List<QualityProbe>();
         var lo = minCrf;   // known to meet the target (or the floor)
@@ -181,7 +202,11 @@ public sealed class TargetQualitySearch(AppServices services, ILoggerFactory? lo
             EstimatedSizePercent = EstimateSizePercent(best, samples, info),
         };
 
-        cache.Store(cacheKey, result);
+        // Scene-scoped searches (per-scene optimiser) pass a sceneOffset and IgnoreCache;
+        // their cache key can't capture the offset, so storing them would both pollute the
+        // shared cache and let a later whole-file search misread a scene's CRF as the answer.
+        if (sceneOffset is null || sceneOffset.Value == TimeSpan.Zero)
+            cache.Store(cacheKey, result);
         return result;
     }
 
@@ -352,6 +377,20 @@ public sealed class TargetQualitySearch(AppServices services, ILoggerFactory? lo
         if (sourceBytesForSpan <= 0) return null;
 
         return probe.SampleBytes / sourceBytesForSpan * 100.0;
+    }
+
+    /// <summary>
+    /// Whether a rendered FFmpeg filter script contains a filter that changes frame geometry,
+    /// which would make measuring the sample against the un-filtered source unreliable.
+    /// </summary>
+    internal static bool HasGeometryFilter(string? filterScript)
+    {
+        if (string.IsNullOrWhiteSpace(filterScript)) return false;
+        string[] geometry = ["crop", "pad", "transpose", "rotate", "hflip", "vflip"];
+        return geometry.Any(f =>
+            filterScript.Contains(f + "=", StringComparison.OrdinalIgnoreCase) ||
+            filterScript.Contains(f + ",", StringComparison.OrdinalIgnoreCase) ||
+            filterScript.EndsWith(f, StringComparison.OrdinalIgnoreCase));
     }
 
     /// <summary>Valid CRF range for the encoder. AV1 and VP9 go to 63; H.264/H.265 stop at 51.</summary>

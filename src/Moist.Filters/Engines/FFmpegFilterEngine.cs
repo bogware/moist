@@ -328,11 +328,17 @@ public sealed class FFmpegFilterEngine : IFilterEngine
         return $"crop=iw-{l + r}:ih-{t + b}:{l}:{t}";
     }
 
-    private static string BuildResizeFilter(AppliedFilter af)
+    private static string? BuildResizeFilter(AppliedFilter af)
     {
         var w = GetInt(af, "width", -1);
         var h = GetInt(af, "height", -1);
         var algo = GetString(af, "algorithm", "lanczos");
+        // FFmpeg can derive one dimension from the other via a negative value, but not both:
+        // "scale=-2:-2" / "scale=-1:-1" fails filtergraph configuration ("Cannot scale to ...").
+        // A resize with no usable target dimension is a no-op, so treat it as pass-through
+        // (skipped) rather than emitting an invalid graph that aborts the whole encode.
+        if (w <= 0 && h <= 0)
+            return null;
         return $"scale={w}:{h}:flags={algo}";
     }
 

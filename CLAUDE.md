@@ -359,7 +359,7 @@ filters (`fps` / `minterpolate`) added to the `-vf` in `EncodeOptions.BuildFilte
 
 ### Profiles: built-ins are materialized to disk
 
-`ProfileManager` writes each of the 7 `GetBuiltInProfiles()` entries to `profiles/*.json` on first run if the file is absent. Editing `GetBuiltInProfiles()` therefore has **no effect on an existing install** — the on-disk copy wins. Delete the JSON to pick up changes.
+`ProfileManager` writes each of the 10 `GetBuiltInProfiles()` entries to `profiles/*.json` on first run if the file is absent. Editing `GetBuiltInProfiles()` therefore has **no effect on an existing install** — the on-disk copy wins. Delete the JSON to pick up changes.
 
 ### Settings must never fail loudly
 
@@ -475,7 +475,7 @@ it on the strength of it compiling.
 | Change per-scene behaviour | `PerSceneOptimizer`. Per-chunk CRFs feed the chunk directory fingerprint, so a run at a different target can't reuse the previous run's chunks — keep that true |
 | Add an audio encoder | Settings class in `Core/Encoders/Audio/` → `AppServices.RegisterAudioEncoder()` (ID must be `ffmpeg-audio-{codec}`) → `FFmpegAudioProcessor.GetCodecSpecificArgs()` + `GetFfmpegCodecName()` → `EncodeJobBuilder.CreateAudioSettings()` + `AudioFileExtension()` → `ContainerCompatibility` |
 | Add an encode option | `EncodeRequest` first, then `EncodeJobBuilder`, then surface it in *both* `EncodeTabViewModel.BuildRequest()` and `EncodeOptions.Build()` + `Help.cs` |
-| Add a CLI command | Dispatch word in the `Program.Main` switch (`Program.cs`) + a section in `Help.cs`. A small command handler goes in `Commands.cs`; a substantial one gets its own file (`watch`/`health` → `WatchCommands.cs`, `serve` → `ServeCommand.cs`). Anything it encodes must still go through `EncodeJobBuilder`. |
+| Add a CLI command | Dispatch word in the `Program.Main` switch (`Program.cs`) + a section in `Help.cs`. A small command handler goes in `Commands.cs` (`encode`, `batch`, `probe`, `list`, `tools`); a substantial one gets its own file (`compare`/`crf-search` → `QualityCommands.cs`, `watch`/`health` → `WatchCommands.cs`, `serve` → `ServeCommand.cs`). Anything it encodes must still go through `EncodeJobBuilder`. |
 | Test encoder arguments | `Core.Tests/AudioProcessorTests.cs` — subclass the processor, call `BuildArguments()`, assert on the string. No process launch. |
 | Test real encoding | `Moist.IntegrationTests` — use `[FfmpegFact]`/`[FfmpegTheory]` so it skips without FFmpeg, and assert on the **probed** output, not the exit code |
 | Add a filter | `FilterDefinition` in the engine's `GetAvailableFilters()` + the emit branch in its `GenerateScript()` |

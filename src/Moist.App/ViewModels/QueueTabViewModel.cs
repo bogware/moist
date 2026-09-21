@@ -12,6 +12,15 @@ public partial class QueueTabViewModel : ViewModelBase
 {
     private readonly AppServices _services;
 
+    /// <summary>Tails the selected job's log while the queue runs. Progress events only fire for
+    /// frame-bearing video lines, so without this the log would sit static for audio/mux/vspipe
+    /// jobs. Ticks on the UI thread; OutputLog is a thread-safe ConcurrentQueue.</summary>
+    private readonly DispatcherTimer _logTailTimer;
+
+    /// <summary>Last folder auto-opened for a finished encode, so a batch writing to one folder
+    /// doesn't spawn a stack of Explorer windows.</summary>
+    private string? _lastAutoOpenedDir;
+
     public ObservableCollection<JobViewModel> Jobs { get; } = [];
 
     [ObservableProperty] private bool _isRunning;
@@ -23,12 +32,23 @@ public partial class QueueTabViewModel : ViewModelBase
     {
         _services = services;
 
+        _logTailTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(500) };
+        _logTailTimer.Tick += (_, _) =>
+        {
+            if (SelectedJob is not null && _services.JobQueue.Jobs.TryGetValue(SelectedJob.Id, out var job))
+                RefreshLog(job);
+        };
+
         _services.JobQueue.JobAdded += (_, job) =>
         {
             Dispatcher.UIThread.Post(() =>
             {
                 Jobs.Add(new JobViewModel(job));
                 QueueStatus = $"{Jobs.Count} job(s) in queue";
+
+                // Give the grid a highlighted row and the log viewer something to show
+                // the moment the first job lands.
+                SelectedJob ??= Jobs[^1];
 
                 // Auto-start queue if enabled and not already running
                 if (_services.Settings.AutoStartQueue && !IsRunning)
@@ -43,10 +63,22 @@ public partial class QueueTabViewModel : ViewModelBase
                 var vm = Jobs.FirstOrDefault(j => j.Id == job.Id);
                 vm?.UpdateFromJob(job);
 
+                // When a job starts running, surface its live log automatically — unless the
+                // user is actively watching a different unfinished job — so "Start Queue"
+                // shows streaming output instead of an empty pane.
+                if (job.Status == JobStatus.Running && vm is not null
+                    && (SelectedJob is null || SelectedJob.Status is "Completed" or "Failed" or "Cancelled"))
+                    SelectedJob = vm;
+
                 // Refresh log whenever job status changes (start, fail, complete)
                 // so error output is visible even when no progress events fired
                 if (SelectedJob is not null && job.Id == SelectedJob.Id)
                     RefreshLog(job);
+
+                if (job.Status == JobStatus.Completed && _services.Settings.OpenOutputFolderWhenDone)
+                    TryAutoOpenOutputFolder(job);
+
+                MaybeMarkBatchComplete();
             });
         };
 
@@ -62,6 +94,12 @@ public partial class QueueTabViewModel : ViewModelBase
                     RefreshLog(args.Job);
             });
         };
+    }
+
+    partial void OnIsRunningChanged(bool value)
+    {
+        if (value) _logTailTimer.Start();
+        else _logTailTimer.Stop();
     }
 
     partial void OnSelectedJobChanged(JobViewModel? value)
@@ -81,23 +119,52 @@ public partial class QueueTabViewModel : ViewModelBase
     }
 
     [RelayCommand]
-    private async Task StartQueue()
+    private void StartQueue()
     {
+        if (IsRunning) return;
+
+        _lastAutoOpenedDir = null;
         IsRunning = true;
         QueueStatus = "Running...";
+
+        // JobQueue.StartAsync only returns when the queue is Stop()ped — its dispatcher loop runs
+        // until the cancellation token fires. Awaiting it as though it signalled batch completion
+        // left QueueStatus stuck on "Running..." and IsRunning stuck true until the user pressed
+        // Stop. Fire it and forget; completion is detected in the JobStatusChanged handler
+        // (MaybeMarkBatchComplete). The continuation resumes on the UI thread, so writing
+        // QueueStatus there is safe.
+        _ = RunQueueAsync();
+    }
+
+    private async Task RunQueueAsync()
+    {
         try
         {
             await _services.JobQueue.StartAsync();
-            QueueStatus = "Completed";
         }
         catch (Exception ex)
         {
             QueueStatus = $"Error: {ex.Message}";
-        }
-        finally
-        {
             IsRunning = false;
         }
+    }
+
+    /// <summary>
+    /// StartAsync never signals that a batch finished (it only unwinds on Stop), so completion is
+    /// inferred here: once the queue is running and nothing is still Running or Queued, the batch
+    /// is done. Runs on the UI thread from the JobStatusChanged handler.
+    /// </summary>
+    private void MaybeMarkBatchComplete()
+    {
+        if (!IsRunning) return;
+
+        var jobs = _services.JobQueue.Jobs.Values;
+        if (!jobs.Any()) return;
+        if (jobs.Any(j => j.Status is JobStatus.Running or JobStatus.Queued)) return;
+
+        IsRunning = false;
+        var failed = jobs.Count(j => j.Status == JobStatus.Failed);
+        QueueStatus = failed > 0 ? $"Completed with {failed} failure(s)" : "Completed";
     }
 
     [RelayCommand]
@@ -172,6 +239,39 @@ public partial class QueueTabViewModel : ViewModelBase
         }
         catch { /* best effort */ }
     }
+
+    /// <summary>
+    /// Honors the "open output folder when done" setting. Fires only for the final output —
+    /// jobs whose OutputFile lives outside the temp directory (the video/audio/chunk
+    /// intermediates all write into TempDirectory) — and skips a folder already opened this run.
+    /// </summary>
+    private void TryAutoOpenOutputFolder(Job job)
+    {
+        if (IsTempPath(job.OutputFile) || !File.Exists(job.OutputFile)) return;
+
+        var dir = Path.GetDirectoryName(job.OutputFile);
+        if (string.IsNullOrEmpty(dir) || dir == _lastAutoOpenedDir || !Directory.Exists(dir)) return;
+        _lastAutoOpenedDir = dir;
+
+        try
+        {
+            Process.Start(new ProcessStartInfo { FileName = dir, UseShellExecute = true });
+        }
+        catch { /* best effort */ }
+    }
+
+    private bool IsTempPath(string path)
+    {
+        var temp = _services.Settings.TempDirectory;
+        if (string.IsNullOrEmpty(temp) || string.IsNullOrEmpty(path)) return false;
+        try
+        {
+            var full = Path.GetFullPath(path);
+            var root = Path.GetFullPath(temp);
+            return full.StartsWith(root, StringComparison.OrdinalIgnoreCase);
+        }
+        catch { return false; }
+    }
 }
 
 public partial class JobViewModel : ObservableObject
@@ -180,8 +280,12 @@ public partial class JobViewModel : ObservableObject
 
     [ObservableProperty] private string _name;
     [ObservableProperty] private string _jobType;
-    [ObservableProperty] private string _status;
-    [ObservableProperty] private double _percentage;
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsIndeterminate))]
+    private string _status;
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsIndeterminate))]
+    private double _percentage;
     [ObservableProperty] private string _fps = "";
     [ObservableProperty] private string _eta = "";
     [ObservableProperty] private string _statusLine = "";
@@ -189,6 +293,10 @@ public partial class JobViewModel : ObservableObject
     [ObservableProperty] private string _estimatedSize = "";
 
     public bool IsCompleted => Status == "Completed";
+
+    /// <summary>Running but with no measurable percentage yet (unknown frame count, or the brief
+    /// audio/mux phase) — drives an indeterminate progress bar so the row still shows motion.</summary>
+    public bool IsIndeterminate => Status == "Running" && Percentage <= 0;
 
     public JobViewModel(Job job)
     {

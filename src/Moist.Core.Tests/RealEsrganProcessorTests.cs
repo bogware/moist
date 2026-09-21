@@ -76,7 +76,7 @@ public class RealEsrganProcessorTests
     [Fact]
     public void BuildEncodeArgs_TargetsHeightWithSourceRateAndEncoderSettings()
     {
-        var args = RealEsrganVideoProcessor.BuildEncodeArgs(Job(depth: VideoBitDepth.Ten, height: 1080), "f/%06d.jpg", "30000/1001");
+        var args = RealEsrganVideoProcessor.BuildEncodeArgs(Job(depth: VideoBitDepth.Ten, height: 1080), "f/%06d.jpg", "30000/1001", "seg_00000.mkv");
         Assert.Equal("30000/1001", args[Array.IndexOf(args, "-framerate") + 1]);
         Assert.Equal("libx265", args[Array.IndexOf(args, "-c:v") + 1]);
         Assert.Equal("19", args[Array.IndexOf(args, "-crf") + 1]);
@@ -84,6 +84,9 @@ public class RealEsrganProcessorTests
         Assert.Contains("scale=-2:1080", vf);
         // 10-bit forced -> p10 pixel format carried into the final encode.
         Assert.Equal("yuv420p10le", args[Array.IndexOf(args, "-pix_fmt") + 1]);
+        // Must write to the caller's target, not vj.OutputFile — otherwise windowed segments
+        // all overwrite the final file and the concat finds nothing.
+        Assert.Equal("seg_00000.mkv", args[^1]);
     }
 
     [Fact]
@@ -103,8 +106,26 @@ public class RealEsrganProcessorTests
     [Fact]
     public void BuildEncodeArgs_UsesStartNumberForWindowSegments()
     {
-        var args = RealEsrganVideoProcessor.BuildEncodeArgs(Job(), "f/%06d.jpg", "25/1", startNumber: 901);
+        var args = RealEsrganVideoProcessor.BuildEncodeArgs(Job(), "f/%06d.jpg", "25/1", "seg_00001.mkv", startNumber: 901);
         Assert.Equal("901", args[Array.IndexOf(args, "-start_number") + 1]);
+        Assert.Equal("seg_00001.mkv", args[^1]);
+    }
+
+    [Fact]
+    public void BuildEncodeArgs_Vp9AddsBv0SoCrfIsTrueConstantQuality()
+    {
+        var args = RealEsrganVideoProcessor.BuildEncodeArgs(Job(encoderId: "ffmpeg-vp9"), "f/%06d.jpg", "25/1", "out.webm");
+        Assert.Equal("libvpx-vp9", args[Array.IndexOf(args, "-c:v") + 1]);
+        // -b:v 0 must accompany -crf; without it libvpx-vp9 falls back to its ~256 kbps default target.
+        var bv = Array.IndexOf(args, "-b:v");
+        Assert.True(bv >= 0 && args[bv + 1] == "0");
+    }
+
+    [Fact]
+    public void BuildEncodeArgs_NonVp9OmitsBv0()
+    {
+        var args = RealEsrganVideoProcessor.BuildEncodeArgs(Job(encoderId: "ffmpeg-x265"), "f/%06d.jpg", "25/1", "out.mkv");
+        Assert.DoesNotContain("-b:v", args);
     }
 
     [Fact]

@@ -50,10 +50,11 @@
                                       Width="100"/>
                         </Grid>
 
-                        <!-- Status / Error Message -->
+                        <!-- Status / Error Message (turns red on error) -->
                         <TextBlock Text="{Binding StatusMessage}"
+                                   Classes.error="{Binding HasError}"
                                    IsVisible="{Binding StatusMessage, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
-                                   FontSize="12" Margin="0,4,0,0" Opacity="0.8"/>
+                                   FontSize="12" Margin="0,4,0,0" Opacity="0.9"/>
 
                         <!-- Anything that will be quietly lost: HDR, chroma, dynamic metadata -->
                         <Border IsVisible="{Binding EncodeWarnings, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
@@ -75,16 +76,23 @@
                 <Border Classes="section">
                     <StackPanel Spacing="8">
                         <TextBlock Text="Encoding Profile" Classes="section-header"/>
-                        <Grid ColumnDefinitions="100,*,Auto,Auto" ColumnSpacing="8">
+                        <TextBlock Text="A profile is a complete encode setup — codec, quality, audio, container and filters. Selecting one applies it; Update saves changes back. (Filter Presets, on the Filters tab, save just a filter chain.)"
+                                   FontSize="11" Opacity="0.55" TextWrapping="Wrap" Margin="0,-2,0,2"/>
+                        <Grid ColumnDefinitions="100,*,Auto,Auto,Auto" ColumnSpacing="8">
                             <TextBlock Text="Profile:" VerticalAlignment="Center"/>
                             <ComboBox Grid.Column="1"
                                       ItemsSource="{Binding Profiles}"
                                       SelectedItem="{Binding SelectedProfile}"
                                       DisplayMemberBinding="{Binding Name}"
                                       HorizontalAlignment="Stretch"/>
-                            <Button Grid.Column="2" Content="Save As..."
-                                    Name="SaveProfileButton" Click="SaveProfile_Click"/>
-                            <Button Grid.Column="3" Content="Delete"
+                            <Button Grid.Column="2" Content="Update"
+                                    Command="{Binding UpdateProfileCommand}"
+                                    ToolTip.Tip="Save the current settings back into the selected profile"
+                                    IsEnabled="{Binding SelectedProfile, Converter={x:Static ObjectConverters.IsNotNull}}"/>
+                            <Button Grid.Column="3" Content="Save As..."
+                                    Name="SaveProfileButton" Click="SaveProfile_Click"
+                                    ToolTip.Tip="Save the current settings as a new named profile"/>
+                            <Button Grid.Column="4" Content="Delete"
                                     Command="{Binding DeleteProfileCommand}"
                                     IsEnabled="{Binding SelectedProfile, Converter={x:Static ObjectConverters.IsNotNull}}"/>
                         </Grid>
@@ -94,7 +102,12 @@
                 <!-- Video Encoder Section -->
                 <Border Classes="section">
                     <StackPanel Spacing="8">
-                        <TextBlock Text="Video Encoder" Classes="section-header"/>
+                        <StackPanel Orientation="Horizontal" Spacing="16">
+                            <TextBlock Text="Video Encoder" Classes="section-header"/>
+                            <TextBlock Text="{Binding HardwareStatus}" VerticalAlignment="Center"
+                                       FontSize="11" Opacity="0.6"
+                                       IsVisible="{Binding HardwareStatus, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
+                        </StackPanel>
 
                         <Grid ColumnDefinitions="120,*,120,*" RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,Auto" RowSpacing="8" ColumnSpacing="8">
                             <TextBlock Text="Codec:" VerticalAlignment="Center"/>
@@ -111,7 +124,8 @@
                                       HorizontalAlignment="Stretch"/>
 
                             <TextBlock Text="Quality/CRF:" VerticalAlignment="Center" Grid.Row="1"/>
-                            <StackPanel Grid.Row="1" Grid.Column="1" Orientation="Horizontal" Spacing="8">
+                            <StackPanel Grid.Row="1" Grid.Column="1" Orientation="Horizontal" Spacing="8"
+                                        IsEnabled="{Binding IsQualityMode}">
                                 <Slider Value="{Binding Quality}" Minimum="0" Maximum="51" Width="200"
                                         TickFrequency="1"/>
                                 <TextBlock Text="{Binding Quality, StringFormat={}{0:F1}}" VerticalAlignment="Center"/>
@@ -130,7 +144,8 @@
                                       HorizontalAlignment="Stretch"/>
 
                             <TextBlock Text="Bitrate:" VerticalAlignment="Center" Grid.Row="2" Grid.Column="2"/>
-                            <StackPanel Grid.Row="2" Grid.Column="3" Orientation="Horizontal" Spacing="8">
+                            <StackPanel Grid.Row="2" Grid.Column="3" Orientation="Horizontal" Spacing="8"
+                                        IsEnabled="{Binding IsBitrateMode}">
                                 <NumericUpDown Value="{Binding Bitrate}" Minimum="100" Maximum="100000"
                                                Increment="500" Width="120"/>
                                 <TextBlock Text="kbps" VerticalAlignment="Center"/>
@@ -146,11 +161,11 @@
 
                             <TextBlock Text="Bit Depth:" VerticalAlignment="Center" Grid.Row="3" Grid.Column="2"/>
                             <StackPanel Grid.Row="3" Grid.Column="3" Orientation="Horizontal" Spacing="8">
-                                <ComboBox ItemsSource="{Binding BitDepthOptions}"
+                                <ComboBox ItemsSource="{x:Static vm:EncodeTabViewModel.BitDepthOptions}"
                                           SelectedItem="{Binding BitDepth}"
                                           Width="100"
                                           ToolTip.Tip="Auto follows the source. Forcing 8-bit on a 10-bit master discards precision."/>
-                                <ComboBox ItemsSource="{Binding ChromaOptions}"
+                                <ComboBox ItemsSource="{x:Static vm:EncodeTabViewModel.ChromaOptions}"
                                           SelectedItem="{Binding Chroma}"
                                           Width="110"
                                           ToolTip.Tip="Chroma sampling. Auto follows the source; dropping 4:4:4 to 4:2:0 throws away colour resolution permanently."/>
@@ -165,7 +180,7 @@
                             <TextBlock Text="Target Quality:" VerticalAlignment="Center" Grid.Row="5"/>
                             <StackPanel Grid.Row="5" Grid.Column="1" Grid.ColumnSpan="3" Spacing="4">
                                 <StackPanel Orientation="Horizontal" Spacing="8">
-                                    <ComboBox ItemsSource="{Binding QualityMetricOptions}"
+                                    <ComboBox ItemsSource="{x:Static vm:EncodeTabViewModel.QualityMetricOptions}"
                                               SelectedItem="{Binding TargetMetric}"
                                               Width="100"
                                               ToolTip.Tip="VMAF is the usual choice — 95 is close to visually transparent."/>
@@ -370,7 +385,14 @@
         <!-- Right: Video Preview Panel -->
         <Border Grid.Column="1" Classes="section" Margin="0,16,16,16">
             <DockPanel>
-                <TextBlock DockPanel.Dock="Top" Text="Preview" Classes="section-header" Margin="0,0,0,8"/>
+                <Grid DockPanel.Dock="Top" ColumnDefinitions="*,Auto" Margin="0,0,0,8">
+                    <TextBlock Text="Preview (source)" Classes="section-header" VerticalAlignment="Center"/>
+                    <Button Grid.Column="1" Content="Full Preview ⤢"
+                            Name="FullPreviewButton" Click="FullPreview_Click"
+                            FontSize="11" Padding="8,3"
+                            IsEnabled="{Binding MediaInfo, Converter={x:Static ObjectConverters.IsNotNull}}"
+                            ToolTip.Tip="Open a resizable preview that renders a snippet through the full pipeline (filters + encoder), with side-by-side before/after"/>
+                </Grid>
 
                 <!-- Preview Controls -->
                 <StackPanel DockPanel.Dock="Bottom" Spacing="4" Margin="0,8,0,0">

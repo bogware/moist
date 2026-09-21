@@ -99,11 +99,21 @@ public partial class X265CliProcessor : CommandLineProcessor
     }
 
     /// <summary>
+    /// The two-pass analysis pass points the output at the null device; x265 accepts NUL /
+    /// /dev/null directly and writes only its stats file, so there is no bitstream to wrap.
+    /// </summary>
+    private static bool IsNullDevice(string path) =>
+        string.Equals(path, "NUL", StringComparison.OrdinalIgnoreCase) ||
+        path == "/dev/null";
+
+    /// <summary>
     /// Where the raw HEVC goes before it is wrapped. Kept next to the real output so it
     /// lands on the same volume — a temp directory elsewhere would turn the wrap into a
-    /// copy across filesystems.
+    /// copy across filesystems. On the analysis pass the output is the null device, so -o
+    /// points straight at it rather than trying to create "/dev/null.hevc".
     /// </summary>
-    private static string RawStreamPath(VideoJob vj) => vj.OutputFile + ".hevc";
+    private static string RawStreamPath(VideoJob vj) =>
+        IsNullDevice(vj.OutputFile) ? vj.OutputFile : vj.OutputFile + ".hevc";
 
     /// <summary>
     /// Wrap the elementary stream into the container the job asked for.
@@ -116,6 +126,11 @@ public partial class X265CliProcessor : CommandLineProcessor
     protected override async Task OnAfterSuccessAsync(Job job, CancellationToken ct)
     {
         var vj = (VideoJob)job;
+
+        // Two-pass analysis (pass 1) writes to the null device: no bitstream is produced,
+        // so there is nothing to wrap. CommandLineProcessor calls this after every run.
+        if (IsNullDevice(vj.OutputFile)) return;
+
         var raw = RawStreamPath(vj);
 
         if (!File.Exists(raw) || new FileInfo(raw).Length == 0)

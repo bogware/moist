@@ -75,6 +75,14 @@ public sealed class AppServices : IDisposable
     private VideoPreviewService? _previewService;
     private string _lastFfmpegPathPreview = string.Empty;
 
+    /// <summary>
+    /// Renders short preview snippets through the real encode pipeline (see
+    /// <see cref="SnippetPreviewService"/>). Holds no tool-path state of its own — it goes back
+    /// through <see cref="JobQueue"/> and the encoder factories, which are already late-bound.
+    /// </summary>
+    public SnippetPreviewService SnippetPreview => _snippetPreview ??= new SnippetPreviewService(this);
+    private SnippetPreviewService? _snippetPreview;
+
     /// <param name="minimumLogLevel">Console verbosity. The CLI raises this so logs don't mix into its output.</param>
     /// <param name="logToStandardError">
     /// Send log lines to stderr instead of stdout. Required for the CLI, whose stdout
@@ -117,6 +125,10 @@ public sealed class AppServices : IDisposable
         Encoders = new EncoderRegistry();
         Filters = new FilterRegistry();
         JobQueue = new JobQueue(Settings.MaxConcurrentJobs, LoggerFactory);
+        // The GUI is long-lived — a session can run hundreds of encodes, each retaining a job
+        // object and its rolling output-log buffer. Bound it so memory stays flat. (`moist serve`
+        // sets its own tighter cap; short-lived CLI commands don't need one.)
+        JobQueue.MaxCompletedJobsRetained = 500;
         ProfileManager = new ProfileManager();
         PluginSources = new PluginSourceManager();
         FilterPresets = new FilterPresetManager();
@@ -237,7 +249,13 @@ public sealed class AppServices : IDisposable
             SettingsType = typeof(object),
             Description = "Universal muxer via FFmpeg",
             OutputFormats = ["mkv", "mp4", "webm", "avi", "ts", "mov"],
-        }, () => new FFmpegMuxProcessor(Settings.FFmpegPath));
+        }, () => new FFmpegMuxProcessor(
+            Settings.FFmpegPath,
+            // Late-bound like the other tool paths (read per job). Empty -> null so the
+            // experimental HDR passthrough reports "tool missing" rather than shelling nothing.
+            string.IsNullOrWhiteSpace(Settings.DoviToolPath) ? null : Settings.DoviToolPath,
+            string.IsNullOrWhiteSpace(Settings.Hdr10PlusToolPath) ? null : Settings.Hdr10PlusToolPath,
+            LoggerFactory));
     }
 
     private void RegisterVideoEncoder(string id, string name, string codec, Type settingsType, string desc)

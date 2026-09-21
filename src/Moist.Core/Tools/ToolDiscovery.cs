@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.IO.Compression;
 using System.Runtime.InteropServices;
+using System.Security.Cryptography;
 using System.Text;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -33,22 +34,33 @@ public sealed class ToolDiscovery
             Id = "ffmpeg", Name = "FFmpeg", DefaultBinaryName = "ffmpeg", IsRequired = true,
             Description = "Video/audio encoder, decoder, and muxer — the core engine",
             VersionArgs = "-version",
+            // Pinned to immutable dated/versioned builds (NOT BtbN's rolling `latest` tag): the
+            // served bytes stay constant, so a recorded SHA-256 stays valid. Windows uses gyan.dev's
+            // versioned release; Linux uses a BtbN dated autobuild. To update: bump these URLs to a
+            // newer build, download each artifact, hash it (`sha256sum <file>` /
+            // `Get-FileHash -Algorithm SHA256 <file>`), and record the hex in ExpectedSha256 below.
             DownloadUrls = new()
             {
-                ["win-x64"] = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip",
-                ["linux-x64"] = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-gpl.tar.xz",
-            }
+                ["win-x64"] = "https://github.com/GyanD/codexffmpeg/releases/download/9.0.2/ffmpeg-9.0.2-full_build.zip",
+                ["linux-x64"] = "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-09-21-13-55/ffmpeg-N-126734-ga9cbcc2bbb-linux64-gpl.tar.xz",
+            },
+            // ExpectedSha256 intentionally omitted until a maintainer records the hashes of the
+            // pinned artifacts above. While absent, installs succeed but log an unverified-download
+            // warning; once filled, a hash mismatch aborts the install.
         },
         new ToolDefinition
         {
             Id = "ffprobe", Name = "FFprobe", DefaultBinaryName = "ffprobe", IsRequired = true,
             Description = "Media file analyzer — reads stream info, codecs, duration",
             VersionArgs = "-version",
-            DownloadUrls = new() // Bundled with FFmpeg
+            // ffprobe ships inside the same FFmpeg archive; pinned identically to the ffmpeg entry
+            // above so both come from the same immutable build. See that entry for hash-update steps.
+            DownloadUrls = new()
             {
-                ["win-x64"] = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip",
-                ["linux-x64"] = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-gpl.tar.xz",
-            }
+                ["win-x64"] = "https://github.com/GyanD/codexffmpeg/releases/download/9.0.2/ffmpeg-9.0.2-full_build.zip",
+                ["linux-x64"] = "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-09-21-13-55/ffmpeg-N-126734-ga9cbcc2bbb-linux64-gpl.tar.xz",
+            },
+            // ExpectedSha256 intentionally omitted until a maintainer records the pinned artifact hashes.
         },
         new ToolDefinition
         {
@@ -226,6 +238,25 @@ public sealed class ToolDiscovery
             return null;
         }
 
+        // The payload is executed as a subprocess for every subsequent encode, so refuse any
+        // non-HTTPS transport — a plaintext download is trivially MITM-able.
+        if (!url.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+        {
+            _logger.LogError("Refusing to download {ToolId}: URL is not HTTPS ({Url})", tool.Id, url);
+            progress?.Report(($"Refusing to download {tool.Name}: download URL is not HTTPS.", -1));
+            return null;
+        }
+
+        // The downloaded archive is verified against a pinned SHA-256 (see below, after the
+        // download completes) before it is extracted and its binary executed. URLs are pinned to
+        // immutable builds so a recorded hash stays valid; a tool/platform with no recorded hash
+        // yet installs with a loud "unverified download" warning rather than silently.
+        var expectedHash = tool.ExpectedSha256 is not null
+            && tool.ExpectedSha256.TryGetValue(platformKey, out var configuredHash)
+            && !string.IsNullOrWhiteSpace(configuredHash)
+                ? configuredHash.Trim()
+                : null;
+
         Directory.CreateDirectory(ToolsDir);
         var downloadPath = Path.Combine(ToolsDir, $"download_{tool.Id}_{Path.GetFileName(url)}");
 
@@ -264,6 +295,43 @@ public sealed class ToolDiscovery
             fileStream.Close();
             _logger.LogInformation("Downloaded {ToolId} ({Bytes} bytes)", tool.Id, downloaded);
 
+            // Integrity check — BEFORE extraction, because extraction writes the archive's contents
+            // to disk and we then execute the extracted binary for every encode. Compute the hash of
+            // the file on disk regardless, so a maintainer can copy it into ExpectedSha256.
+            progress?.Report(($"Verifying {tool.Name}...", 93));
+            var actualHash = await ComputeSha256Async(downloadPath, ct);
+
+            if (expectedHash is not null)
+            {
+                if (!string.Equals(actualHash, expectedHash, StringComparison.OrdinalIgnoreCase))
+                {
+                    // Delete the artifact so a tampered/corrupt file is never left behind to be
+                    // reused or retried, and fail the install naming the tool and both hashes.
+                    try { File.Delete(downloadPath); } catch { /* best effort */ }
+                    _logger.LogError(
+                        "Integrity check FAILED for {ToolName}: expected SHA-256 {Expected} but the " +
+                        "download hashed to {Actual}. The file was deleted and NOT installed.",
+                        tool.Name, expectedHash, actualHash);
+                    progress?.Report((
+                        $"Integrity check failed for {tool.Name}: expected {expectedHash}, got {actualHash}. Not installed.",
+                        -1));
+                    return null;
+                }
+                _logger.LogInformation("Integrity check passed for {ToolId} (SHA-256 {Hash})", tool.Id, actualHash);
+            }
+            else
+            {
+                // No pinned hash for this tool/platform. The verification machinery is in place; a
+                // maintainer must record the SHA-256 of the pinned artifact (see the DownloadUrls
+                // comments in KnownTools). Do NOT proceed silently — make the unverified state loud.
+                _logger.LogWarning(
+                    "UNVERIFIED DOWNLOAD: {ToolName} has no pinned SHA-256 for {Platform}; installing " +
+                    "without an integrity check. Downloaded SHA-256 is {Hash} — record it in " +
+                    "ToolDefinition.ExpectedSha256 to enable verification. Only install on a trusted network.",
+                    tool.Name, platformKey, actualHash);
+                progress?.Report(($"Warning: {tool.Name} download is unverified (no pinned checksum).", 94));
+            }
+
             // Extract
             progress?.Report(($"Extracting {tool.Name}...", 95));
             var extractDir = Path.Combine(ToolsDir, tool.Id);
@@ -278,7 +346,7 @@ public sealed class ToolDiscovery
                   || downloadPath.EndsWith(".tar.gz", StringComparison.OrdinalIgnoreCase))
             {
                 Directory.CreateDirectory(extractDir);
-                var tarProcess = Process.Start(new ProcessStartInfo
+                using var tarProcess = Process.Start(new ProcessStartInfo
                 {
                     FileName = "tar",
                     Arguments = $"xf \"{downloadPath}\" -C \"{extractDir}\" --strip-components=1",
@@ -313,7 +381,8 @@ public sealed class ToolDiscovery
             // On Linux/macOS, make executable
             if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
             {
-                Process.Start("chmod", $"+x \"{foundBinary}\"")?.WaitForExit(5000);
+                using var chmod = Process.Start("chmod", $"+x \"{foundBinary}\"");
+                chmod?.WaitForExit(5000);
             }
 
             progress?.Report(($"{tool.Name} installed successfully!", 100));
@@ -374,6 +443,18 @@ public sealed class ToolDiscovery
         }
     }
 
+    /// <summary>
+    /// Computes the SHA-256 of a file as an uppercase hex string. Comparisons against a configured
+    /// <see cref="ToolDefinition.ExpectedSha256"/> are case-insensitive, so the casing here is cosmetic.
+    /// </summary>
+    private static async Task<string> ComputeSha256Async(string filePath, CancellationToken ct)
+    {
+        await using var stream = File.OpenRead(filePath);
+        using var sha = SHA256.Create();
+        var hash = await sha.ComputeHashAsync(stream, ct);
+        return Convert.ToHexString(hash);
+    }
+
     private static async Task<(bool Success, string Output)> TryRunToolAsync(
         string path, string args, CancellationToken ct)
     {
@@ -396,8 +477,14 @@ public sealed class ToolDiscovery
             using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
             cts.CancelAfter(TimeSpan.FromSeconds(10));
 
-            var stdout = await process.StandardOutput.ReadToEndAsync(cts.Token);
-            var stderr = await process.StandardError.ReadToEndAsync(cts.Token);
+            // Read both pipes concurrently — draining stdout fully before touching stderr can
+            // stall for the full 10s timeout when a tool fills the stderr buffer first (e.g.
+            // realesrgan/rife emit their help text to stderr), and be misreported as unavailable.
+            var stdoutTask = process.StandardOutput.ReadToEndAsync(cts.Token);
+            var stderrTask = process.StandardError.ReadToEndAsync(cts.Token);
+            await Task.WhenAll(stdoutTask, stderrTask);
+            var stdout = await stdoutTask;
+            var stderr = await stderrTask;
 
             await process.WaitForExitAsync(cts.Token);
 

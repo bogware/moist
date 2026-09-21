@@ -44,15 +44,30 @@ public sealed partial class VapourSynthPipeProcessor : CommandLineProcessor
     internal static List<string> BuildConsumerArgs(VideoJob vj)
     {
         var s = vj.Settings;
-        var args = new List<string>
-        {
-            "-y", "-hide_banner", "-progress", "pipe:1",
-            "-f", "yuv4mpegpipe", "-i", "-",
-            "-c:v", RealEsrganVideoProcessor.FinalCodec(vj.EncoderId),
+        var args = new List<string> { "-y", "-hide_banner", "-progress", "pipe:1" };
+
+        // Honor trims — otherwise chunked encoding, per-scene optimisation and target-quality
+        // sampling would each re-encode the WHOLE source (the trap CLAUDE.md warns about).
+        // Seek before the pipe input; a frame count is exact where seconds are not, so it wins.
+        if (vj.TrimStart is { } trimStart)
+            args.AddRange(["-ss", trimStart.TotalSeconds.ToString("F3", CultureInfo.InvariantCulture)]);
+
+        args.AddRange(["-f", "yuv4mpegpipe", "-i", "-"]);
+
+        if (vj.TrimFrames is { } frames)
+            args.AddRange(["-frames:v", frames.ToString(CultureInfo.InvariantCulture)]);
+        else if (vj.TrimDuration is { } trimDuration)
+            args.AddRange(["-t", trimDuration.TotalSeconds.ToString("F3", CultureInfo.InvariantCulture)]);
+
+        var finalCodec = RealEsrganVideoProcessor.FinalCodec(vj.EncoderId);
+        args.AddRange([
+            "-c:v", finalCodec,
             // CRF/quality is the natural rate control here; other modes fall back to CRF in this path.
             "-crf", s.Quality.ToString("0.##", CultureInfo.InvariantCulture),
             "-preset", s.Preset.ToString().ToLowerInvariant(),
-        };
+        ]);
+        // libvpx-vp9 only reaches true constant-quality mode when -crf is paired with -b:v 0.
+        if (finalCodec == "libvpx-vp9") args.AddRange(["-b:v", "0"]);
         if (s.Tune != VideoTune.None)
             args.AddRange(["-tune", s.Tune.ToString().ToLowerInvariant()]);
         // The .vpy already set the format; only force one when the user explicitly chose a depth.
@@ -74,6 +89,10 @@ public sealed partial class VapourSynthPipeProcessor : CommandLineProcessor
         Directory.CreateDirectory(dir);
         var scriptPath = Path.Combine(dir, $"{job.Id}.vpy");
         File.WriteAllText(scriptPath, vj.FilterScript!);
+        // Remove the sidecar script when the job completes (JobQueue cleans FilesToCleanup only on
+        // Completed, so a failed run keeps it for debugging — matching the pipeline's other temps).
+        if (!vj.FilesToCleanup.Contains(scriptPath))
+            vj.FilesToCleanup.Add(scriptPath);
 
         var producer = $"{ShellPipeline.Escape(_vspipePath)} --y4m {ShellPipeline.Escape(scriptPath)} -";
         var consumer = $"{ShellPipeline.Escape(_ffmpegPath)} {BuildArguments(job)}";

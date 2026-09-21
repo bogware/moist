@@ -384,16 +384,22 @@ public static class EncodeRunner
 
         if (dryRun)
         {
-            Console.WriteLine($"  input   : {input}");
-            Console.WriteLine($"  output  : {output}");
-            Console.WriteLine($"  video   : {request.VideoEncoderId} {request.Mode} q={request.Quality} bitrate={request.Bitrate}k preset={request.Preset}");
-            Console.WriteLine($"  audio   : {request.AudioEncoderId} {request.AudioBitrateMode} {request.AudioBitrate}k");
-            Console.WriteLine($"  container: {request.Container}{(request.AudioOnly ? " (audio only)" : "")}");
-            if (filterScript is not null) Console.WriteLine($"  filters : {filterScript}");
-            if (chunks is not null)
-                Console.WriteLine($"  chunks  : {chunks.Plan.Chunks.Count} ({chunks.Plan.Mode}), {chunks.RemainingCount} to encode");
-            Console.WriteLine($"  jobs    : {string.Join(", ", jobs.GroupBy(j => j.JobType).Select(g => $"{g.Count()}x {g.Key}"))}");
-            Console.WriteLine();
+            // `quiet` here is `quiet || json` (see the caller). Keeping the human-readable
+            // plan off in those cases means `--dry-run --json` emits only the serialized
+            // EncodeResult, so its stdout stays valid JSON.
+            if (!quiet)
+            {
+                Console.WriteLine($"  input   : {input}");
+                Console.WriteLine($"  output  : {output}");
+                Console.WriteLine($"  video   : {request.VideoEncoderId} {request.Mode} q={request.Quality} bitrate={request.Bitrate}k preset={request.Preset}");
+                Console.WriteLine($"  audio   : {request.AudioEncoderId} {request.AudioBitrateMode} {request.AudioBitrate}k");
+                Console.WriteLine($"  container: {request.Container}{(request.AudioOnly ? " (audio only)" : "")}");
+                if (filterScript is not null) Console.WriteLine($"  filters : {filterScript}");
+                if (chunks is not null)
+                    Console.WriteLine($"  chunks  : {chunks.Plan.Chunks.Count} ({chunks.Plan.Mode}), {chunks.RemainingCount} to encode");
+                Console.WriteLine($"  jobs    : {string.Join(", ", jobs.GroupBy(j => j.JobType).Select(g => $"{g.Count()}x {g.Key}"))}");
+                Console.WriteLine();
+            }
             return new EncodeResult { Input = input, Output = output, Success = true, Elapsed = "0s" };
         }
 

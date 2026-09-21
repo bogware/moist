@@ -299,16 +299,16 @@ public sealed class FilterPresetManager
             ]
         });
 
-        // Upscale 2x with Spline36 (balanced sharpness/ringing)
+        // Upscale to 1080p with Spline36 (balanced sharpness/ringing)
         _presets.Add(new FilterPreset
         {
-            Id = "preset-upscale-2x-spline", Name = "Upscale 2x (Spline36 — Balanced)",
-            Description = "Doubles resolution using Spline36 interpolation — mathematically optimal balance between " +
-                "sharpness and ringing. Superior to bicubic for photographic content.",
+            Id = "preset-upscale-2x-spline", Name = "Upscale to 1080p (Spline36 — Balanced)",
+            Description = "Upscale to 1080p (width follows the source aspect) using Spline36 interpolation — " +
+                "a balanced trade-off between sharpness and ringing. Superior to bicubic for photographic content.",
             Category = "Upscaling", EngineId = "ffmpeg", IsBuiltIn = true,
             Filters =
             [
-                new PresetFilter { FilterId = "resize", Parameters = new() { ["width"] = -2, ["height"] = -2, ["algorithm"] = "spline" } },
+                new PresetFilter { FilterId = "resize", Parameters = new() { ["width"] = -2, ["height"] = 1080, ["algorithm"] = "spline" } },
                 new PresetFilter { FilterId = "unsharp", Parameters = new() { ["luma_x"] = 3, ["luma_y"] = 3, ["luma_amount"] = 0.6 } },
             ]
         });

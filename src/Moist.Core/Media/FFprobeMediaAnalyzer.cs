@@ -16,12 +16,18 @@ public sealed class FFprobeMediaAnalyzer
         _ffprobePath = ffprobePath;
     }
 
+    /// <summary>The configured ffprobe path this analyzer was built with.</summary>
+    public string FfprobePath => _ffprobePath;
+
     public async Task<MediaFileInfo> AnalyzeAsync(string filePath, CancellationToken ct = default)
     {
         // Frame side data is where HDR actually lives: mastering display, content light
         // level, HDR10+ and Dolby Vision RPUs are all attached to frames, not the stream,
         // so reading only -show_streams misses every one of them.
-        var args = $"-v quiet -print_format json -show_format -show_streams " +
+        // -v error (not -v quiet): log messages go to stderr, so the stdout JSON stays
+        // clean and parseable, but a real failure reason (unsupported codec, moov atom
+        // not found, permission denied, truncated file) is captured instead of discarded.
+        var args = $"-v error -print_format json -show_format -show_streams " +
                    $"-show_frames -read_intervals \"%+#1\" -show_entries frame=side_data_list " +
                    $"\"{filePath}\"";
 
@@ -38,12 +44,20 @@ public sealed class FFprobeMediaAnalyzer
         using var process = Process.Start(psi)
             ?? throw new InvalidOperationException(
                 $"Failed to start ffprobe. Ensure '{_ffprobePath}' is installed and on PATH.");
-        var json = await process.StandardOutput.ReadToEndAsync(ct);
+        // Drain both pipes concurrently. Reading only stdout would deadlock the moment
+        // ffprobe fills the stderr buffer.
+        var stdoutTask = process.StandardOutput.ReadToEndAsync(ct);
+        var stderrTask = process.StandardError.ReadToEndAsync(ct);
+        var json = await stdoutTask;
+        var stderr = await stderrTask;
         await process.WaitForExitAsync(ct);
 
         if (process.ExitCode != 0 || string.IsNullOrWhiteSpace(json))
+        {
+            var detail = string.IsNullOrWhiteSpace(stderr) ? "" : $" {stderr.Trim()}";
             throw new InvalidOperationException(
-                $"ffprobe failed (exit code {process.ExitCode}). Check that the input file exists and is a valid media file.");
+                $"ffprobe failed (exit code {process.ExitCode}).{detail} Check that the input file exists and is a valid media file.");
+        }
 
         using var doc = JsonDocument.Parse(json);
         var root = doc.RootElement;
@@ -145,6 +159,7 @@ public sealed class FFprobeMediaAnalyzer
             Height = video.Height,
             Framerate = video.Framerate,
             TotalFrames = video.TotalFrames,
+            FrameCountIsExact = video.FrameCountIsExact,
             BitDepth = video.BitDepth,
             PixelFormat = video.PixelFormat,
             DisplayAspectRatio = video.DisplayAspectRatio,
@@ -177,10 +192,12 @@ public sealed class FFprobeMediaAnalyzer
         }
 
         var totalFrames = (long)(duration.TotalSeconds * fps);
+        var frameCountExact = false;
         if (stream.TryGetProperty("nb_frames", out var nbf) &&
             long.TryParse(nbf.GetString(), out var parsed))
         {
             totalFrames = parsed;
+            frameCountExact = true;
         }
 
         var pixFmt = stream.TryGetProperty("pix_fmt", out var pf) ? pf.GetString() ?? "" : "";
@@ -210,6 +227,7 @@ public sealed class FFprobeMediaAnalyzer
             Height = height,
             Framerate = fps,
             TotalFrames = totalFrames,
+            FrameCountIsExact = frameCountExact,
             BitDepth = bitDepth,
             PixelFormat = pixFmt,
             DisplayAspectRatio = dar,

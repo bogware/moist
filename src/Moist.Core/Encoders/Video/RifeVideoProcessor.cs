@@ -55,7 +55,6 @@ public sealed partial class RifeVideoProcessor : IJobProcessor
         Directory.CreateDirectory(framesIn);
         Directory.CreateDirectory(framesOut);
 
-        var success = false;
         try
         {
             // Extract frames (any FilterScript is applied here), interpolate to the target count,
@@ -75,12 +74,26 @@ public sealed partial class RifeVideoProcessor : IJobProcessor
 
             Report(progress, 90, "Encoding", sw);
             await RunAsync(_ffmpegPath, BuildEncodeArgs(vj, Path.Combine(framesOut, "%06d.png")), null, ct);
+
+            // RIFE's whole purpose is changing the frame count, so verify it landed on the target —
+            // a wrong count leaves the video's duration out of step with the untouched audio and the
+            // mux drifts silently out of sync. Non-fatal if ffprobe can't count (outFrames == 0).
+            if (target > 0)
+            {
+                var outFrames = await CountFramesAsync(vj.OutputFile, ct);
+                if (outFrames > 0 && Math.Abs(outFrames - target) > 1)
+                    throw new InvalidOperationException(
+                        $"RIFE output has {outFrames} frames but {target} were targeted — refusing a desynced result.");
+            }
+
             Report(progress, 100, "Done", sw);
-            success = true;
         }
         finally
         {
-            if (success) { try { Directory.Delete(work, recursive: true); } catch { /* best effort */ } }
+            // RIFE keeps no resumable state (the scratch is keyed on the per-build job id), so there
+            // is nothing to reuse on a retry — always sweep the work dir instead of leaking GBs of
+            // extracted/interpolated PNGs on failure.
+            try { Directory.Delete(work, recursive: true); } catch { /* best effort */ }
         }
     }
 
@@ -111,6 +124,10 @@ public sealed partial class RifeVideoProcessor : IJobProcessor
             "-crf", s.Quality.ToString("0.##", CultureInfo.InvariantCulture),
             "-preset", s.Preset.ToString().ToLowerInvariant(),
         };
+        // libvpx-vp9 only enters constant-quality mode when -b:v 0 accompanies -crf; without it
+        // libvpx targets its default (~256 kbps) and caps the stream regardless of the CRF.
+        if (RealEsrganVideoProcessor.FinalCodec(vj.EncoderId) == "libvpx-vp9")
+            args.AddRange(["-b:v", "0"]);
         if (s.ResolvePixelFormat(vj.SourceBitDepth) is { } pix) args.AddRange(["-pix_fmt", pix]);
         args.Add("-an");
         args.Add(vj.OutputFile);
@@ -138,9 +155,7 @@ public sealed partial class RifeVideoProcessor : IJobProcessor
             "-show_entries", "stream=r_frame_rate,nb_frames,duration",
             "-of", "default=noprint_wrappers=1", input,
         }) psi.ArgumentList.Add(a);
-        using var p = Process.Start(psi)!;
-        var outText = await p.StandardOutput.ReadToEndAsync(ct);
-        await p.WaitForExitAsync(ct);
+        var outText = await RunProbeAsync(psi, ct);
 
         var fps = ParseFraction(Match(outText, "r_frame_rate") ?? "25/1");
         long frames = 0;
@@ -148,6 +163,46 @@ public sealed partial class RifeVideoProcessor : IJobProcessor
         else if (double.TryParse(Match(outText, "duration"), NumberStyles.Float, CultureInfo.InvariantCulture, out var dur) && dur > 0)
             frames = (long)Math.Round(dur * fps);
         return (fps, frames);
+    }
+
+    /// <summary>Decode-count the frames in <paramref name="file"/> (ffprobe -count_frames), used to
+    /// confirm the interpolated output has the intended number of frames. 0 means "couldn't count".</summary>
+    private async Task<long> CountFramesAsync(string file, CancellationToken ct)
+    {
+        var psi = new ProcessStartInfo
+        {
+            FileName = _ffprobePath, UseShellExecute = false, CreateNoWindow = true,
+            RedirectStandardOutput = true, RedirectStandardError = true,
+        };
+        foreach (var a in new[]
+        {
+            "-v", "error", "-select_streams", "v:0", "-count_frames",
+            "-show_entries", "stream=nb_read_frames", "-of", "default=nokey=1:noprint_wrappers=1", file,
+        }) psi.ArgumentList.Add(a);
+        var outText = await RunProbeAsync(psi, ct);
+        return long.TryParse(outText.Trim(), out var n) ? n : 0;
+    }
+
+    /// <summary>Run a one-shot ffprobe, draining <b>both</b> stdout and stderr concurrently so a
+    /// chatty child (e.g. -count_frames spewing decode errors on a corrupt file) can't fill the
+    /// stderr pipe and deadlock us; the child is killed if we're cancelled. Returns stdout.</summary>
+    private async Task<string> RunProbeAsync(ProcessStartInfo psi, CancellationToken ct)
+    {
+        using var p = Process.Start(psi)
+            ?? throw new InvalidOperationException($"Failed to start {Path.GetFileName(_ffprobePath)}.");
+        var outTask = p.StandardOutput.ReadToEndAsync(ct);
+        var errTask = p.StandardError.ReadToEndAsync(ct);
+        try
+        {
+            await Task.WhenAll(outTask, errTask);
+            await p.WaitForExitAsync(ct);
+        }
+        catch (OperationCanceledException)
+        {
+            if (!p.HasExited) { try { p.Kill(entireProcessTree: true); } catch { /* best effort */ } }
+            throw;
+        }
+        return await outTask;
     }
 
     private static async Task RunAsync(string exe, string[] args, Action<string>? onLine, CancellationToken ct)

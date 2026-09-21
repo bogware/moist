@@ -212,12 +212,30 @@ public sealed class AviSynthFilterEngine : IFilterEngine
         }
     }
 
+    // Filters carried on a profile are serialized to JSON, so their parameter values come back
+    // as JsonElement rather than int/bool/string. Convert.ToXxx can't read a JsonElement, so
+    // unwrap it to the underlying primitive first — otherwise a profile-carried chain throws
+    // the moment its script is generated (the FFmpeg engine has the same guard).
+    private static object? Unwrap(object? v)
+    {
+        if (v is System.Text.Json.JsonElement je)
+            return je.ValueKind switch
+            {
+                System.Text.Json.JsonValueKind.Number => je.TryGetInt64(out var l) ? l : je.GetDouble(),
+                System.Text.Json.JsonValueKind.True => true,
+                System.Text.Json.JsonValueKind.False => false,
+                System.Text.Json.JsonValueKind.String => je.GetString(),
+                _ => je.ToString()
+            };
+        return v;
+    }
+
     private static int GetInt(AppliedFilter af, string key, int def = 0)
-        => af.ParameterValues.TryGetValue(key, out var v) ? Convert.ToInt32(v) : def;
+        => af.ParameterValues.TryGetValue(key, out var v) && Unwrap(v) is { } u ? Convert.ToInt32(u, CultureInfo.InvariantCulture) : def;
 
     private static string GetString(AppliedFilter af, string key, string def = "")
-        => af.ParameterValues.TryGetValue(key, out var v) ? v.ToString() ?? def : def;
+        => af.ParameterValues.TryGetValue(key, out var v) ? Unwrap(v)?.ToString() ?? def : def;
 
     private static bool GetBool(AppliedFilter af, string key, bool def = false)
-        => af.ParameterValues.TryGetValue(key, out var v) ? Convert.ToBoolean(v) : def;
+        => af.ParameterValues.TryGetValue(key, out var v) && Unwrap(v) is { } u ? Convert.ToBoolean(u, CultureInfo.InvariantCulture) : def;
 }

@@ -19,7 +19,6 @@ public sealed class MuxJob : Job
     public List<AudioTrackInput> AudioInputs { get; set; } = [];
     public List<SubtitleTrackInput> SubtitleInputs { get; set; } = [];
     public string? ChapterFile { get; set; }
-    public List<string> Attachments { get; set; } = [];
 
     /// <summary>
     /// Original source file, used to recover things that only exist in the container and
@@ -41,6 +40,19 @@ public sealed class MuxJob : Job
 
     /// <summary>Total duration in seconds, used for mux progress percentage.</summary>
     public double TotalDurationSeconds { get; set; }
+
+    /// <summary>
+    /// EXPERIMENTAL, opt-in: before muxing, attempt to carry the source's Dolby Vision RPU /
+    /// HDR10+ dynamic metadata into the encoded <see cref="VideoInput"/> via dovi_tool /
+    /// hdr10plus_tool. Guarded and best-effort — it never fails the mux. See DynamicHdrPreserver.
+    /// </summary>
+    public bool PreserveDynamicHdr { get; set; }
+
+    /// <summary>Source carries a Dolby Vision RPU (set by the builder from probe side-data).</summary>
+    public bool SourceHasDolbyVision { get; set; }
+
+    /// <summary>Source carries HDR10+ dynamic metadata (set by the builder from probe side-data).</summary>
+    public bool SourceHasHdr10Plus { get; set; }
 }
 
 public sealed class AudioTrackInput
@@ -55,6 +67,15 @@ public sealed class AudioTrackInput
 public sealed class SubtitleTrackInput
 {
     public string FilePath { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Subtitle-relative index of the stream to take from <see cref="FilePath"/> (the Nth
+    /// subtitle stream, not the Nth overall). Null means the file has a single subtitle
+    /// stream to map wholesale (an external .srt/.ass). Set for source subtitles so a subset
+    /// selection maps only the chosen streams instead of every subtitle in the file.
+    /// </summary>
+    public int? SourceStreamIndex { get; set; }
+
     public string? Language { get; set; }
     public string? TrackName { get; set; }
     public bool IsDefault { get; set; }

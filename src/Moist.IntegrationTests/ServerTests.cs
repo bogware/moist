@@ -112,15 +112,17 @@ public sealed class ServerTests(MediaFixture media) : PipelineTestBase(media), I
     }
 
     [Fact]
-    public async Task TheTokenCanAlsoBeGivenInTheQueryString()
+    public async Task TheTokenIsRejectedInTheQueryString()
     {
-        // For clients that cannot set headers easily.
+        // A token in the URL leaks into server logs, proxy logs and browser history, so the
+        // query-string fallback was removed — the credential must travel in the Authorization
+        // header only. A ?token= request is unauthenticated and must be refused.
         var (client, _) = Start();
         client.DefaultRequestHeaders.Authorization = null;
 
         var response = await client.GetAsync($"/api/health?token={Token}");
 
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
     }
 
     [Fact]

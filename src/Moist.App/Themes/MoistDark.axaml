@@ -209,6 +209,13 @@
         <Setter Property="Foreground" Value="{StaticResource MoistTextDimBrush}"/>
     </Style>
 
+    <!-- ── Error text (toggled via Classes.error) ── -->
+    <Style Selector="TextBlock.error">
+        <Setter Property="Foreground">
+            <SolidColorBrush Color="{StaticResource MoistRedBright}"/>
+        </Setter>
+    </Style>
+
     <!-- ── Status bar ── -->
     <Style Selector="Border.statusbar">
         <Setter Property="Background" Value="{StaticResource MoistStatusBarBrush}"/>
@@ -218,8 +225,33 @@
     <!-- ── Title bar ── -->
     <Style Selector="Border.titlebar">
         <Setter Property="Background" Value="{StaticResource MoistTitleBarBrush}"/>
-        <Setter Property="Padding" Value="12,0"/>
+        <!-- No right padding: caption buttons sit flush to the corner like a native title bar. -->
+        <Setter Property="Padding" Value="12,0,0,0"/>
         <Setter Property="Height" Value="36"/>
+    </Style>
+
+    <!-- ── Window caption buttons (min / max-restore / close) ── -->
+    <Style Selector="Button.caption">
+        <Setter Property="Background" Value="Transparent"/>
+        <Setter Property="Foreground" Value="{StaticResource MoistTextSecBrush}"/>
+        <Setter Property="Width" Value="44"/>
+        <Setter Property="Height" Value="36"/>
+        <Setter Property="Padding" Value="0"/>
+        <Setter Property="CornerRadius" Value="0"/>
+        <Setter Property="HorizontalContentAlignment" Value="Center"/>
+        <Setter Property="VerticalContentAlignment" Value="Center"/>
+    </Style>
+    <Style Selector="Button.caption:pointerover">
+        <Setter Property="Foreground" Value="{StaticResource MoistTextBrush}"/>
+    </Style>
+    <Style Selector="Button.caption:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+        <Setter Property="Background" Value="#22FFFFFF"/>
+    </Style>
+    <Style Selector="Button.caption.close:pointerover">
+        <Setter Property="Foreground" Value="White"/>
+    </Style>
+    <Style Selector="Button.caption.close:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+        <Setter Property="Background" Value="{StaticResource MoistRedBrush}"/>
     </Style>
 
     <!-- ── Drop zone ── -->

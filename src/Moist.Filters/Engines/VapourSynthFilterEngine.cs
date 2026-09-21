@@ -131,9 +131,14 @@ public sealed class VapourSynthFilterEngine : IFilterEngine
                     var model = GetString(applied, "model", "").Replace("\\", "\\\\").Replace("\"", "\\\"");
                     var ns = GetString(applied, "backend", "ort") switch { "trt" => "trt", "ov" => "ov", _ => "ort" };
                     // vs-mlrt models want planar RGB float; convert in, run the network, convert back.
-                    sb.AppendLine("clip = core.resize.Bicubic(clip, format=vs.RGBS, matrix_in_s=\"709\")");
+                    // Preserve the source format across the round-trip: pick BT.601 for SD (the main
+                    // use case is upscaling SD sources) vs BT.709 for HD so hues don't shift, and
+                    // convert back to the source format id so a 10-bit master isn't truncated to 8-bit.
+                    sb.AppendLine("_src = clip");
+                    sb.AppendLine("_mat = \"601\" if _src.height <= 576 else \"709\"");
+                    sb.AppendLine("clip = core.resize.Bicubic(clip, format=vs.RGBS, matrix_in_s=_mat)");
                     sb.AppendLine($"clip = core.{ns}.Model(clip, network_path=\"{model}\")");
-                    sb.AppendLine("clip = core.resize.Bicubic(clip, format=vs.YUV420P8, matrix_s=\"709\")");
+                    sb.AppendLine("clip = core.resize.Bicubic(clip, format=_src.format.id, matrix_s=_mat)");
                     break;
             }
         }
@@ -167,14 +172,32 @@ public sealed class VapourSynthFilterEngine : IFilterEngine
         }
     }
 
+    // Filters carried on a profile are serialized to JSON, so their parameter values come back
+    // as JsonElement rather than int/double/bool/string. Convert.ToXxx can't read a JsonElement,
+    // so unwrap it to the underlying primitive first — otherwise every profile-carried filter
+    // throws the moment its script is generated (the FFmpeg engine has the same guard).
+    private static object? Unwrap(object? v)
+    {
+        if (v is System.Text.Json.JsonElement je)
+            return je.ValueKind switch
+            {
+                System.Text.Json.JsonValueKind.Number => je.TryGetInt64(out var l) ? l : je.GetDouble(),
+                System.Text.Json.JsonValueKind.True => true,
+                System.Text.Json.JsonValueKind.False => false,
+                System.Text.Json.JsonValueKind.String => je.GetString(),
+                _ => je.ToString()
+            };
+        return v;
+    }
+
     private static int GetInt(AppliedFilter af, string key, int def = 0)
-        => af.ParameterValues.TryGetValue(key, out var v) ? Convert.ToInt32(v) : def;
+        => af.ParameterValues.TryGetValue(key, out var v) && Unwrap(v) is { } u ? Convert.ToInt32(u, CultureInfo.InvariantCulture) : def;
 
     private static double GetDouble(AppliedFilter af, string key, double def = 0)
-        => af.ParameterValues.TryGetValue(key, out var v) ? Convert.ToDouble(v) : def;
+        => af.ParameterValues.TryGetValue(key, out var v) && Unwrap(v) is { } u ? Convert.ToDouble(u, CultureInfo.InvariantCulture) : def;
 
     private static string GetString(AppliedFilter af, string key, string def = "")
-        => af.ParameterValues.TryGetValue(key, out var v) ? v.ToString() ?? def : def;
+        => af.ParameterValues.TryGetValue(key, out var v) ? Unwrap(v)?.ToString() ?? def : def;
 
     private static string Fmt(double v) => v.ToString("G", CultureInfo.InvariantCulture);
 }

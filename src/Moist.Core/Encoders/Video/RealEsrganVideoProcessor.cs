@@ -69,7 +69,9 @@ public sealed partial class RealEsrganVideoProcessor : IJobProcessor
             if (!Directory.EnumerateFiles(framesIn, "*.png").Any())
             {
                 Report(progress, 2, "Extracting frames", stopwatch);
-                await RunAsync(_ffmpegPath, BuildExtractArgs(vj, Path.Combine(framesIn, "%06d.png")), null, ct);
+                var extractArgs = BuildExtractArgs(vj, Path.Combine(framesIn, "%06d.png"));
+                LogCommand(vj, "extract", _ffmpegPath, extractArgs);
+                await RunAsync(_ffmpegPath, extractArgs, null, ct, vj);
             }
             var frames = Directory.GetFiles(framesIn, "*.png").OrderBy(f => f, StringComparer.Ordinal).ToList();
             if (frames.Count == 0) throw new InvalidOperationException("Frame extraction produced no frames.");
@@ -115,15 +117,29 @@ public sealed partial class RealEsrganVideoProcessor : IJobProcessor
         if (Directory.Exists(outDir)) Directory.Delete(outDir, recursive: true);
         Directory.CreateDirectory(outDir);
 
-        await RunAsync(_realesrganPath, BuildRealesrganArgs(vj, framesInDir, outDir, ModelsDir()),
+        var upscaleArgs = BuildRealesrganArgs(vj, framesInDir, outDir, ModelsDir());
+        LogCommand(vj, "upscale", _realesrganPath, upscaleArgs);
+        // realesrgan-ncnn-vulkan prints per-IMAGE tile progress (0→25→50→75, each value twice), so
+        // its percentage sawtooths and can't drive the bar directly — mapping it straight onto the
+        // window span made the bar oscillate. Count an image as done each time the value wraps back
+        // down, and report from the running count so progress is monotonic and smooth.
+        var totalFrames = Directory.EnumerateFiles(framesInDir, "*.png").Count();
+        var completed = 0;
+        var lastPct = -1.0;
+        await RunAsync(_realesrganPath, upscaleArgs,
             line =>
             {
                 var m = PercentRegex().Match(line);
-                if (m.Success && double.TryParse(m.Groups[1].Value, CultureInfo.InvariantCulture, out var pct))
-                    Report(progress, pctStart + pct / 100.0 * (pctEnd - pctStart), "Upscaling (Real-ESRGAN)", sw);
-            }, ct);
+                if (!m.Success || !double.TryParse(m.Groups[1].Value, CultureInfo.InvariantCulture, out var pct)) return;
+                if (pct < lastPct) completed = Math.Min(completed + 1, Math.Max(totalFrames, 1));
+                lastPct = pct;
+                var frac = totalFrames > 0 ? (double)completed / totalFrames : 0;
+                Report(progress, pctStart + frac * (pctEnd - pctStart), "Upscaling (Real-ESRGAN)", sw);
+            }, ct, vj);
 
-        await RunAsync(_ffmpegPath, BuildEncodeArgs(vj, Path.Combine(outDir, "%06d.jpg"), frameRate, startNumber), null, ct);
+        var encodeArgs = BuildEncodeArgs(vj, Path.Combine(outDir, "%06d.jpg"), frameRate, outFile, startNumber);
+        LogCommand(vj, "encode", _ffmpegPath, encodeArgs);
+        await RunAsync(_ffmpegPath, encodeArgs, null, ct, vj);
         Directory.Delete(outDir, recursive: true);
     }
 
@@ -164,8 +180,9 @@ public sealed partial class RealEsrganVideoProcessor : IJobProcessor
         var listPath = Path.Combine(work, "concat.txt");
         await File.WriteAllTextAsync(listPath,
             string.Join("\n", segments.Select(s => $"file '{s.Replace('\\', '/')}'")), ct);
-        await RunAsync(_ffmpegPath,
-            ["-y", "-hide_banner", "-f", "concat", "-safe", "0", "-i", listPath, "-c", "copy", vj.OutputFile], null, ct);
+        var concatArgs = new[] { "-y", "-hide_banner", "-f", "concat", "-safe", "0", "-i", listPath, "-c", "copy", vj.OutputFile };
+        LogCommand(vj, "concat", _ffmpegPath, concatArgs);
+        await RunAsync(_ffmpegPath, concatArgs, null, ct, vj);
     }
 
     /// <summary>Split <paramref name="total"/> frames into contiguous windows of at most <paramref name="size"/>.</summary>
@@ -206,7 +223,7 @@ public sealed partial class RealEsrganVideoProcessor : IJobProcessor
         return [.. args];
     }
 
-    internal static string[] BuildEncodeArgs(VideoJob vj, string framesPattern, string frameRate, long startNumber = 1)
+    internal static string[] BuildEncodeArgs(VideoJob vj, string framesPattern, string frameRate, string outFile, long startNumber = 1)
     {
         var s = vj.Settings;
         var height = vj.AiUpscaleHeight > 0 ? vj.AiUpscaleHeight : 1080;
@@ -223,6 +240,12 @@ public sealed partial class RealEsrganVideoProcessor : IJobProcessor
             "-c:v", FinalCodec(vj.EncoderId),
         };
 
+        // libvpx-vp9 only enters constant-quality mode when -b:v 0 accompanies -crf; without it
+        // libvpx runs constrained-quality against its default target (~256 kbps) and caps the
+        // stream regardless of the CRF, so an AI-upscaled VP9 comes out blocky.
+        if (FinalCodec(vj.EncoderId) == "libvpx-vp9")
+            args.AddRange(["-b:v", "0"]);
+
         // Rate control: CRF/quality is the natural fit here; anything else falls back to CRF.
         var q = s.Quality.ToString("0.##", CultureInfo.InvariantCulture);
         args.AddRange(["-crf", q]);
@@ -232,7 +255,10 @@ public sealed partial class RealEsrganVideoProcessor : IJobProcessor
             args.AddRange(["-pix_fmt", pixFmt]);
 
         args.Add("-an");
-        args.Add(vj.OutputFile);
+        // Write to the caller's target — a per-window segment in the windowed path, or the final
+        // output for a whole-clip encode. Using vj.OutputFile unconditionally made every window
+        // overwrite the final file and left segments/ empty, so the concat step failed at ~99%.
+        args.Add(outFile);
         return [.. args];
     }
 
@@ -270,9 +296,7 @@ public sealed partial class RealEsrganVideoProcessor : IJobProcessor
             "-of", "default=noprint_wrappers=1", input,
         }) psi.ArgumentList.Add(a);
 
-        using var p = Process.Start(psi)!;
-        var outText = await p.StandardOutput.ReadToEndAsync(ct);
-        await p.WaitForExitAsync(ct);
+        var outText = await RunProbeAsync(psi, ct);
 
         var rate = Match(outText, "r_frame_rate") ?? "25/1";
         var fps = ParseFraction(rate);
@@ -295,13 +319,39 @@ public sealed partial class RealEsrganVideoProcessor : IJobProcessor
             "-v", "error", "-select_streams", "v:0", "-count_frames",
             "-show_entries", "stream=nb_read_frames", "-of", "default=nokey=1:noprint_wrappers=1", file,
         }) psi.ArgumentList.Add(a);
-        using var p = Process.Start(psi)!;
-        var outText = await p.StandardOutput.ReadToEndAsync(ct);
-        await p.WaitForExitAsync(ct);
+        var outText = await RunProbeAsync(psi, ct);
         return long.TryParse(outText.Trim(), out var n) ? n : 0;
     }
 
-    private static async Task RunAsync(string exe, string[] args, Action<string>? onLine, CancellationToken ct)
+    /// <summary>Run a one-shot ffprobe, draining <b>both</b> stdout and stderr concurrently so a
+    /// chatty child (e.g. -count_frames spewing decode errors on a corrupt file) can't fill the
+    /// stderr pipe and deadlock us; the child is killed if we're cancelled. Returns stdout.</summary>
+    private async Task<string> RunProbeAsync(ProcessStartInfo psi, CancellationToken ct)
+    {
+        using var p = Process.Start(psi)
+            ?? throw new InvalidOperationException($"Failed to start {Path.GetFileName(_ffprobePath)}.");
+        var outTask = p.StandardOutput.ReadToEndAsync(ct);
+        var errTask = p.StandardError.ReadToEndAsync(ct);
+        try
+        {
+            await Task.WhenAll(outTask, errTask);
+            await p.WaitForExitAsync(ct);
+        }
+        catch (OperationCanceledException)
+        {
+            if (!p.HasExited) { try { p.Kill(entireProcessTree: true); } catch { /* best effort */ } }
+            throw;
+        }
+        return await outTask;
+    }
+
+    /// <summary>Append a line to the job's rolling log so the Queue tab's log viewer and the on-disk
+    /// session log capture what this processor is doing (its ffmpeg/realesrgan output otherwise
+    /// went nowhere, making failures invisible outside the raw exit code).</summary>
+    private static void LogCommand(Job? logJob, string label, string exe, string[] args)
+        => logJob?.AppendLog($"[{label}] {Path.GetFileName(exe)} {string.Join(' ', args)}");
+
+    private static async Task RunAsync(string exe, string[] args, Action<string>? onLine, CancellationToken ct, Job? logJob = null)
     {
         var psi = new ProcessStartInfo
         {
@@ -316,6 +366,7 @@ public sealed partial class RealEsrganVideoProcessor : IJobProcessor
         {
             if (line is null) return;
             onLine?.Invoke(line);
+            logJob?.AppendLog(line);
             tail.Enqueue(line);
             while (tail.Count > 12) tail.Dequeue();
         }

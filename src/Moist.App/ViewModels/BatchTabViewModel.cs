@@ -65,6 +65,28 @@ public partial class BatchTabViewModel : ViewModelBase
         };
     }
 
+    // Keep derived output paths in step with the suffix / target-directory controls instead of
+    // requiring a manual "Refresh Paths" click. Field initializers and the ctor assign the
+    // backing fields directly, so these don't fire (harmlessly) during construction.
+    partial void OnOutputSuffixChanged(string value) => RefreshOutputPaths();
+    partial void OnUseSourceDirectoryChanged(bool value) => RefreshOutputPaths();
+    partial void OnOutputDirectoryChanged(string value)
+    {
+        if (!UseSourceDirectory) RefreshOutputPaths();
+    }
+
+    /// <summary>
+    /// The extension the encode will actually produce, mirroring the Encode tab's own logic:
+    /// audio-only mode writes the AudioJob straight to the output with the audio codec's
+    /// extension (EncodeJobBuilder.AudioFileExtension), everything else uses the container's.
+    /// Deriving the batch filename from the container alone mislabels audio-only outputs and
+    /// (once a per-file profile overrides the container) container-mismatched ones.
+    /// </summary>
+    private string OutputExtension() =>
+        _encodeTab.AudioOnly
+            ? EncodeJobBuilder.AudioFileExtension(_encodeTab.SelectedAudioEncoder?.Id)
+            : _encodeTab.Container.GetExtension();
+
     public void HandleDroppedFiles(IEnumerable<string> filePaths)
     {
         foreach (var path in filePaths)
@@ -75,7 +97,7 @@ public partial class BatchTabViewModel : ViewModelBase
                 ? Path.GetDirectoryName(path) ?? ""
                 : OutputDirectory;
             var name = Path.GetFileNameWithoutExtension(path);
-            var ext = _encodeTab.Container.GetExtension();
+            var ext = OutputExtension();
 
             Items.Add(new BatchItemViewModel
             {
@@ -113,7 +135,16 @@ public partial class BatchTabViewModel : ViewModelBase
                     profileToRestore = _encodeTab.CaptureCurrentSettings();
                     var profile = _services.ProfileManager.Load(item.ProfileOverride);
                     if (profile is not null)
+                    {
                         _encodeTab.ApplyProfile(profile);
+                        // The profile may set a different Container or AudioOnly than the Encode
+                        // tab had when this item's path was first derived. Re-derive now, after
+                        // the profile is applied, so the filename extension matches what the
+                        // muxer will actually write.
+                        var dir = Path.GetDirectoryName(item.OutputFile) ?? "";
+                        var name = Path.GetFileNameWithoutExtension(item.InputFile);
+                        item.OutputFile = Path.Combine(dir, $"{name}{OutputSuffix}{OutputExtension()}");
+                    }
                 }
 
                 // Analyze each file — pass mediaInfo directly to avoid mutating shared EncodeTab state
@@ -143,7 +174,7 @@ public partial class BatchTabViewModel : ViewModelBase
                 ? Path.GetDirectoryName(item.InputFile) ?? ""
                 : OutputDirectory;
             var name = Path.GetFileNameWithoutExtension(item.InputFile);
-            var ext = _encodeTab.Container.GetExtension();
+            var ext = OutputExtension();
             item.OutputFile = Path.Combine(outputDir, $"{name}{OutputSuffix}{ext}");
         }
     }

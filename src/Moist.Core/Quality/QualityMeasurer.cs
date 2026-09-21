@@ -227,8 +227,14 @@ public sealed partial class QualityMeasurer(string ffmpegPath, string ffprobePat
             using var process = Process.Start(psi);
             if (process is null) return null;
 
-            var stdout = await process.StandardOutput.ReadToEndAsync(ct);
+            // Drain both pipes before waiting for exit: ffprobe on a malformed source can
+            // write enough to stderr to fill the OS pipe buffer, which would block it (and
+            // therefore its stdout, and this await) forever if stderr is left unread.
+            var stdoutTask = process.StandardOutput.ReadToEndAsync(ct);
+            var stderrTask = process.StandardError.ReadToEndAsync(ct);
             await process.WaitForExitAsync(ct);
+            var stdout = await stdoutTask;
+            await stderrTask;
 
             var parts = stdout.Trim().Split(',', StringSplitOptions.RemoveEmptyEntries);
             if (parts.Length >= 2 && int.TryParse(parts[0], out var w) && int.TryParse(parts[1], out var h))
@@ -342,7 +348,16 @@ public sealed partial class QualityMeasurer(string ffmpegPath, string ffprobePat
     }
 
     private static double ParseDouble(string raw)
-        => double.Parse(raw, CultureInfo.InvariantCulture);
+    {
+        // A frame that encoded losslessly makes FFmpeg's psnr/xpsnr/ssim filters print the
+        // literal token "inf" (and "nan" for a degenerate plane) instead of a number. Map
+        // those to the corresponding doubles rather than throwing on the parse.
+        if (string.Equals(raw, "inf", StringComparison.OrdinalIgnoreCase))
+            return double.PositiveInfinity;
+        if (string.Equals(raw, "nan", StringComparison.OrdinalIgnoreCase))
+            return double.NaN;
+        return double.Parse(raw, CultureInfo.InvariantCulture);
+    }
 
     private static double ReadDouble(JsonElement element, string name)
         => element.GetProperty(name).GetDouble();
@@ -357,12 +372,12 @@ public sealed partial class QualityMeasurer(string ffmpegPath, string ffprobePat
     [GeneratedRegex(@"VMAF score:\s*([\d.]+)")]
     private static partial Regex VmafScoreRegex();
 
-    [GeneratedRegex(@"XPSNR\s+y:\s*([\d.]+)\s+u:\s*([\d.]+)\s+v:\s*([\d.]+)")]
+    [GeneratedRegex(@"XPSNR\s+y:\s*(inf|nan|[\d.]+)\s+u:\s*(inf|nan|[\d.]+)\s+v:\s*(inf|nan|[\d.]+)")]
     private static partial Regex XpsnrRegex();
 
-    [GeneratedRegex(@"SSIM Y:([\d.]+).*?U:([\d.]+).*?V:([\d.]+).*?All:([\d.]+)")]
+    [GeneratedRegex(@"SSIM Y:(inf|nan|[\d.]+).*?U:(inf|nan|[\d.]+).*?V:(inf|nan|[\d.]+).*?All:(inf|nan|[\d.]+)")]
     private static partial Regex SsimRegex();
 
-    [GeneratedRegex(@"PSNR y:([\d.]+) u:([\d.]+) v:([\d.]+) average:([\d.]+) min:([\d.]+) max:([\d.]+)")]
+    [GeneratedRegex(@"PSNR y:(inf|nan|[\d.]+) u:(inf|nan|[\d.]+) v:(inf|nan|[\d.]+) average:(inf|nan|[\d.]+) min:(inf|nan|[\d.]+) max:(inf|nan|[\d.]+)")]
     private static partial Regex PsnrRegex();
 }

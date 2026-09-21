@@ -18,6 +18,15 @@ public sealed class VideoStreamInfo
     public int Height { get; init; }
     public double Framerate { get; init; }
     public long TotalFrames { get; init; }
+
+    /// <summary>
+    /// True only when <see cref="TotalFrames"/> is a real container measurement (nb_frames),
+    /// false when it is the duration*r_frame_rate estimate. The estimate overshoots badly for
+    /// variable-frame-rate content, so callers checking for truncation must trust it only when
+    /// this is set.
+    /// </summary>
+    public bool FrameCountIsExact { get; init; }
+
     public int BitDepth { get; init; } = 8;
     public string PixelFormat { get; init; } = string.Empty;
     public string? DisplayAspectRatio { get; init; }

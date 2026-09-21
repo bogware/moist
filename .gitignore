@@ -5,6 +5,12 @@ publish/
 dist/
 dist-cli/
 
+# Workspace-pinned .NET SDK (DOTNET_INSTALL_DIR on self-hosted runners)
+.dotnet/
+
+# Test/coverage output
+[Tt]est[Rr]esults/
+
 # User-specific IDE files
 *.user
 *.suo

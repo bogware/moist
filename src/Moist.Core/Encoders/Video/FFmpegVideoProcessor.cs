@@ -49,8 +49,12 @@ public sealed partial class FFmpegVideoProcessor : CommandLineProcessor
             args.AddRange(["-init_hw_device", "vulkan=vk:0", "-filter_hw_device", "vk"]);
 
         // Seek before -i so FFmpeg skips ahead instead of decoding and discarding.
+        // F6, not F3: chunk starts are frame boundaries (StartFrame/Framerate), and at odd
+        // rates like 23.976 fps millisecond rounding lands on the wrong frame — the accurate
+        // seek then drops the intended first frame, dropping it from this chunk and
+        // duplicating it in the next while the total frame count still checks out.
         if (vj.TrimStart is { } trimStart)
-            args.AddRange(["-ss", trimStart.TotalSeconds.ToString("F3", CultureInfo.InvariantCulture)]);
+            args.AddRange(["-ss", trimStart.TotalSeconds.ToString("F6", CultureInfo.InvariantCulture)]);
 
         args.AddRange(["-i", Quote(vj.InputFile)]);
 
@@ -77,6 +81,10 @@ public sealed partial class FFmpegVideoProcessor : CommandLineProcessor
         {
             case VideoEncodingMode.ConstantRateFactor:
                 args.AddRange(GetCrfArgs(s));
+                // libvpx-vp9 only enters true constant-quality (CQ) mode when -crf is paired with
+                // -b:v 0. Without it, it runs constrained-quality against a ~256kbps default target
+                // and largely ignores the CRF, producing badly under-bitrated video.
+                if (_codec == "vp9") args.AddRange(["-b:v", "0"]);
                 break;
             case VideoEncodingMode.ConstantQuality:
                 args.AddRange(GetQualityArgs(s));
@@ -227,8 +235,31 @@ public sealed partial class FFmpegVideoProcessor : CommandLineProcessor
             parameters.Add($"film-grain-denoise={svt.FilmGrainDenoise}");
         }
 
-        return parameters.Count == 0 ? [] : ["-svtav1-params", string.Join(":", parameters)];
+        // SVT-AV1 expresses tiling as log2 of the tile count. The settings store a plain
+        // tile count (matching the field name), so a count of 1 means "no tiling" and emits
+        // nothing — the default encode stays byte-identical to before these were wired.
+        var tileRowsLog2 = Log2TileCount(svt.TileRows);
+        if (tileRowsLog2 > 0)
+            parameters.Add($"tile-rows={tileRowsLog2}");
+
+        var tileColumnsLog2 = Log2TileCount(svt.TileColumns);
+        if (tileColumnsLog2 > 0)
+            parameters.Add($"tile-columns={tileColumnsLog2}");
+
+        var args = new List<string>();
+        if (parameters.Count > 0)
+            args.AddRange(["-svtav1-params", string.Join(":", parameters)]);
+
+        // Keyframe interval is a plain FFmpeg -g; libsvtav1 reads it as the GOP length.
+        // No other -g is emitted on this path, so there is no conflict.
+        if (svt.KeyframeInterval > 0)
+            args.AddRange(["-g", svt.KeyframeInterval.ToString(CultureInfo.InvariantCulture)]);
+
+        return args.ToArray();
     }
+
+    /// <summary>log2 of a tile count, floored; a count of 1 (or less) means no tiling.</summary>
+    private static int Log2TileCount(int tiles) => tiles <= 1 ? 0 : (int)Math.Log2(tiles);
 
     [GeneratedRegex(@"frame=\s*(\d+)")]
     private static partial Regex FrameRegex();

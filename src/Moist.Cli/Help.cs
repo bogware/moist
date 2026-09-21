@@ -94,6 +94,11 @@ public static class Help
                                     Which tunings exist depends on the SVT-AV1 your
                                     FFmpeg was built against — older builds know only
                                     vq and psnr and reject the others outright.
+              --av1-film-grain <n>  SVT-AV1 film-grain synthesis 0-50 (0 = off). Re-adds
+                                    grain to hide banding at low bitrates.
+              --av1-tile-rows <n>   SVT-AV1 tile rows (count, 1 = none). More tiles thread
+              --av1-tile-columns <n>  better at a small quality cost.
+              --av1-keyint <frames> SVT-AV1 max GOP length in frames (default 240)
               --video-args <args>   Extra arguments passed to the encoder verbatim
 
         AUDIO
@@ -108,6 +113,15 @@ public static class Help
               --normalize-target <lufs>   Default -16
               --true-peak <db>      Default -1
               --audio-args <args>   Extra arguments passed to the encoder verbatim
+              --sample-format <fmt> auto | s16 | s24 | s32 | float        (default: auto)
+              --opus-complexity <0-10>   Opus encoder complexity          (default: 10)
+              --aac-profile <name>  AAC profile, e.g. aac_low, aac_he
+              --mp3-vbr <0-9>       LAME VBR quality, lower = better       (default: 2)
+              --flac-level <0-12>   FLAC compression level                (default: 5)
+              --vorbis-quality <-1..10>  Vorbis quality                   (default: 3)
+              --dialnorm <db>       AC3 / E-AC3 dialogue normalization     (default: -31)
+                                    These are codec-specific; each takes effect only with
+                                    the matching --audio-encoder.
               --audio-only          Encode audio only; no video, no mux
 
         FILTERS / PROFILES
@@ -125,6 +139,9 @@ public static class Help
               --no-chapters         Don't carry chapter markers over
               --no-attachments      Don't carry attached fonts over (MKV only)
               --no-metadata         Don't carry container-level tags over
+              --preserve-dynamic-hdr  EXPERIMENTAL: try to carry Dolby Vision / HDR10+
+                                    dynamic metadata across the re-encode (needs dovi_tool
+                                    / hdr10plus_tool). Unverified — check the result.
 
         TARGET QUALITY
               --target-vmaf <n>     Find and use the CRF that reaches this VMAF score.

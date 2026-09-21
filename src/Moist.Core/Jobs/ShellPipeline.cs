@@ -65,9 +65,12 @@ public static class ShellPipeline
     {
         var parts = new List<string> { Escape(ffmpegPath), "-y", "-hide_banner" };
 
-        // Before -i, so FFmpeg seeks instead of decoding and discarding.
+        // Before -i, so FFmpeg seeks instead of decoding and discarding. F6, not F3: chunk
+        // starts are frame boundaries and at odd rates (23.976 fps) millisecond rounding seeks
+        // to the wrong frame, so the boundary frame is dropped from this chunk and duplicated in
+        // the next — invisible to the total frame-count check.
         if (vj.TrimStart is { } start)
-            parts.AddRange(["-ss", start.TotalSeconds.ToString("F3", CultureInfo.InvariantCulture)]);
+            parts.AddRange(["-ss", start.TotalSeconds.ToString("F6", CultureInfo.InvariantCulture)]);
 
         parts.AddRange(["-i", Escape(vj.InputFile)]);
 

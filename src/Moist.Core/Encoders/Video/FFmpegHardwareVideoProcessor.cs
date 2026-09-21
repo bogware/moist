@@ -65,8 +65,11 @@ public sealed partial class FFmpegHardwareVideoProcessor : CommandLineProcessor
         if (_vendor != HardwareVendor.Vaapi && GpuShaders.UsedInFilterScript(vj.FilterScript))
             args.AddRange(["-init_hw_device", "vulkan=vk:0", "-filter_hw_device", "vk"]);
 
+        // F6, not F3: chunk starts are frame boundaries, and at odd rates (23.976 fps)
+        // millisecond rounding seeks to the wrong frame, dropping the boundary frame from
+        // this chunk and duplicating it in the next while the total count still checks out.
         if (vj.TrimStart is { } trimStart)
-            args.AddRange(["-ss", trimStart.TotalSeconds.ToString("F3", CultureInfo.InvariantCulture)]);
+            args.AddRange(["-ss", trimStart.TotalSeconds.ToString("F6", CultureInfo.InvariantCulture)]);
 
         args.AddRange(["-i", Quote(vj.InputFile)]);
 
@@ -82,7 +85,20 @@ public sealed partial class FFmpegHardwareVideoProcessor : CommandLineProcessor
         if (!string.IsNullOrWhiteSpace(vj.FilterScript))
             filters.Add(vj.FilterScript);
         if (_vendor == HardwareVendor.Vaapi)
-            filters.Add("format=nv12,hwupload");
+        {
+            // nv12 is 8-bit 4:2:0, so hardcoding it silently downconverts a 10-bit/HDR
+            // source before upload. Pick the surface format from the effective depth so a
+            // 10-bit encode stays 10-bit; the 8-bit path is unchanged.
+            var depth = s.BitDepth switch
+            {
+                VideoBitDepth.Eight => 8,
+                VideoBitDepth.Ten => 10,
+                VideoBitDepth.Twelve => 12,
+                _ => vj.SourceBitDepth is 10 or 12 ? vj.SourceBitDepth : 8,
+            };
+            // VA-API 10-bit surfaces use p010; 8-bit use nv12. (12-bit VA-API is rare; p010 covers 10-bit.)
+            filters.Add(depth >= 10 ? "format=p010,hwupload" : "format=nv12,hwupload");
+        }
         if (filters.Count > 0)
             args.AddRange(["-vf", Quote(string.Join(",", filters))]);
 
@@ -91,9 +107,11 @@ public sealed partial class FFmpegHardwareVideoProcessor : CommandLineProcessor
         args.AddRange(BuildRateControl(s));
         args.AddRange(BuildPreset(s));
 
-        // Pixel format. VA-API already handled it in the filter chain above.
+        // Pixel format. VA-API already handled it in the filter chain above. ResolvePixelFormat
+        // returns the software (libx264/libx265) names, which the GPU encoders reject — translate
+        // to the vendor surface format first.
         if (_vendor != HardwareVendor.Vaapi && s.ResolvePixelFormat(vj.SourceBitDepth) is { } pixFmt)
-            args.AddRange(["-pix_fmt", pixFmt]);
+            args.AddRange(["-pix_fmt", ToHardwarePixelFormat(pixFmt)]);
 
         if (!string.IsNullOrWhiteSpace(s.CustomArgs))
             args.Add(s.CustomArgs);
@@ -169,6 +187,23 @@ public sealed partial class FFmpegHardwareVideoProcessor : CommandLineProcessor
     /// <summary>0-51 QP (lower is better) onto VideoToolbox's 0-100 (higher is better).</summary>
     internal static int QpToVideoToolboxQuality(int qp)
         => Math.Clamp((int)Math.Round((51 - qp) / 51.0 * 100), 1, 100);
+
+    /// <summary>
+    /// Map the software planar pixel-format name <see cref="VideoEncoderSettings.ResolvePixelFormat"/>
+    /// returns (yuv420p10le, ...) to the surface format the GPU encoders accept (nv12/p010le/...).
+    /// The 8/10-bit 4:2:0 mapping is verified on NVENC (RTX 4080); QSV, AMF and VideoToolbox take
+    /// the same documented formats but are unproven here — the same "listed is not working" stance
+    /// as the rest of the hardware path.
+    /// </summary>
+    internal static string ToHardwarePixelFormat(string pixFmt) => pixFmt switch
+    {
+        "yuv420p" => "nv12",
+        "yuv420p10le" => "p010le",
+        "yuv420p12le" => "p016le",
+        "yuv444p10le" => "yuv444p16le",
+        "yuv444p12le" => "yuv444p16le",
+        _ => pixFmt, // yuv444p (8-bit) and anything else pass through unchanged
+    };
 
     private string[] BuildPreset(VideoEncoderSettings s)
     {

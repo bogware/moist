@@ -27,13 +27,33 @@ public partial class EncodeTabViewModel : ViewModelBase, IDisposable
 
     // Video encoder
     [ObservableProperty] private EncoderInfo? _selectedVideoEncoder;
-    [ObservableProperty] private VideoEncodingMode _encodingMode = VideoEncodingMode.ConstantRateFactor;
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsQualityMode))]
+    [NotifyPropertyChangedFor(nameof(IsBitrateMode))]
+    private VideoEncodingMode _encodingMode = VideoEncodingMode.ConstantRateFactor;
     [ObservableProperty] private double _quality = 23.0;
     [ObservableProperty] private int _bitrate = 5000;
     [ObservableProperty] private VideoPreset _preset = VideoPreset.Medium;
     [ObservableProperty] private VideoTune _tune = VideoTune.None;
     [ObservableProperty] private int _svtAv1Preset = 6;
     [ObservableProperty] private string _customVideoArgs = string.Empty;
+
+    // SVT-AV1 advanced knobs (only meaningful for the svtav1 encoder; ignored otherwise).
+    [ObservableProperty] private SvtAv1Tune? _svtAv1Tune;
+    [ObservableProperty] private int _svtAv1FilmGrain;               // 0 = off
+    [ObservableProperty] private int _svtAv1TileRows = 1;
+    [ObservableProperty] private int _svtAv1TileColumns = 1;
+    [ObservableProperty] private int _svtAv1KeyframeInterval = 240;
+
+    // AI / frame-rate
+    [ObservableProperty] private bool _aiUpscaleAllowLong;
+    /// <summary>RIFE AI interpolation target fps (0 = off). Routes the job through RifeVideoProcessor.</summary>
+    [ObservableProperty] private double _rifeTargetFps;
+
+    /// <summary>True when the mode is quality-driven (CRF/CQ) — the Quality slider applies.</summary>
+    public bool IsQualityMode => EncodingMode is VideoEncodingMode.ConstantRateFactor or VideoEncodingMode.ConstantQuality;
+    /// <summary>True when the mode is bitrate-driven — the Bitrate box applies.</summary>
+    public bool IsBitrateMode => EncodingMode is VideoEncodingMode.SinglePassBitrate or VideoEncodingMode.TwoPassBitrate;
 
     // Audio encoder
     [ObservableProperty] private EncoderInfo? _selectedAudioEncoder;
@@ -74,6 +94,13 @@ public partial class EncodeTabViewModel : ViewModelBase, IDisposable
     [ObservableProperty] private string _externalSubtitleFile = string.Empty;
     [ObservableProperty] private bool _copyChapters = true;
     [ObservableProperty] private bool _copyAttachments = true;
+    [ObservableProperty] private bool _copyMetadata = true;
+
+    /// <summary>Subtitle stream indices to keep (comma-separated, blank = all). Mirrors CLI --subtitle-track.</summary>
+    [ObservableProperty] private string _subtitleTracks = string.Empty;
+
+    /// <summary>Experimental, opt-in: carry Dolby Vision / HDR10+ dynamic metadata across the re-encode.</summary>
+    [ObservableProperty] private bool _preserveDynamicHdr;
     public ObservableCollection<string> SubtitleTrackLabels { get; } = [];
 
     // Video bit depth and chroma
@@ -83,11 +110,16 @@ public partial class EncodeTabViewModel : ViewModelBase, IDisposable
     /// <summary>Real-ESRGAN AI-upscale model, or null for none. Driven by the AI profile.</summary>
     [ObservableProperty] private string? _aiUpscaleModel;
 
+    /// <summary>Target height for Real-ESRGAN upscaling. Carried from the profile so it round-trips
+    /// with the model rather than silently defaulting to 1080 (no UI field yet — profile-driven).</summary>
+    private int _aiUpscaleHeight = 1080;
+
     [ObservableProperty] private ChromaSubsampling _chroma = ChromaSubsampling.Auto;
     public static ChromaSubsampling[] ChromaOptions { get; } = Enum.GetValues<ChromaSubsampling>();
 
     /// <summary>Render subtitles into the picture rather than muxing them as a track.</summary>
     [ObservableProperty] private bool _burnInSubtitles;
+    [ObservableProperty] private int _burnInSubtitleTrack;
 
     /// <summary>Anything about this encode that will quietly lose something.</summary>
     [ObservableProperty] private string _encodeWarnings = string.Empty;
@@ -474,9 +506,13 @@ public partial class EncodeTabViewModel : ViewModelBase, IDisposable
             Profiles.Add(p);
     }
 
+    /// <summary>Suppresses <see cref="ApplyProfile"/> while re-selecting a just-saved profile,
+    /// so an in-place Save/Update doesn't tear down and rebuild the current form state.</summary>
+    private bool _suppressProfileApply;
+
     partial void OnSelectedProfileChanged(EncodingProfile? value)
     {
-        if (value is null) return;
+        if (value is null || _suppressProfileApply) return;
         ApplyProfile(value);
     }
 
@@ -493,6 +529,7 @@ public partial class EncodeTabViewModel : ViewModelBase, IDisposable
         CustomVideoArgs = profile.VideoCustomArgs;
         BitDepth = profile.BitDepth;
         AiUpscaleModel = profile.AiUpscaleModel;
+        _aiUpscaleHeight = profile.AiUpscaleHeight;
 
         SelectedAudioEncoder = AudioEncoders.FirstOrDefault(e => e.Id == profile.AudioEncoderId)
                                ?? AudioEncoders.FirstOrDefault();
@@ -509,25 +546,14 @@ public partial class EncodeTabViewModel : ViewModelBase, IDisposable
 
         Container = profile.Container;
 
-        // Restore filter chain if profile has one
-        if (_filterTab is not null && profile.Filters.Count > 0 && profile.FilterEngineId is not null)
-        {
-            var engine = _filterTab.Engines.FirstOrDefault(e => e.Id == profile.FilterEngineId);
-            if (engine is not null)
-            {
-                _filterTab.SelectedEngine = engine;
-                _filterTab.ClearFiltersCommand.Execute(null);
-                var engineFilters = engine.GetAvailableFilters();
-                foreach (var pf in profile.Filters)
-                {
-                    var filterDef = engineFilters.FirstOrDefault(f => f.Id == pf.FilterId);
-                    if (filterDef is not null)
-                    {
-                        _filterTab.Chain.Add(filterDef, new Dictionary<string, object>(pf.Parameters));
-                    }
-                }
-            }
-        }
+        // Restore filter chain if the profile carries one — into BOTH the chain model and the
+        // Filters-tab UI list (LoadChain keeps them in sync; the old code populated only the
+        // model, so profile filters were invisible and uneditable in the Filters tab). Guarded on
+        // the profile actually having filters, so applying a codec-only profile leaves any
+        // existing chain untouched.
+        if (_filterTab is not null && profile.FilterEngineId is not null && profile.Filters.Count > 0)
+            _filterTab.LoadChain(profile.FilterEngineId,
+                profile.Filters.Select(pf => (pf.FilterId, pf.Parameters)).ToList());
     }
 
     /// <summary>
@@ -536,6 +562,43 @@ public partial class EncodeTabViewModel : ViewModelBase, IDisposable
     public EncodingProfile CaptureCurrentSettings() => new()
     {
         Name = "__snapshot__",
+        VideoEncoderId = SelectedVideoEncoder?.Id ?? "ffmpeg-x265",
+        VideoMode = EncodingMode,
+        VideoQuality = Quality,
+        VideoBitrate = Bitrate,
+        VideoPreset = Preset,
+        VideoTune = Tune,
+        SvtAv1Preset = SvtAv1Preset,
+        VideoCustomArgs = CustomVideoArgs,
+        BitDepth = BitDepth,
+        AiUpscaleModel = AiUpscaleModel,
+        AiUpscaleHeight = _aiUpscaleHeight,
+        AudioEncoderId = SelectedAudioEncoder?.Id ?? "ffmpeg-audio-opus",
+        AudioBitrateMode = AudioBitrateMode,
+        AudioBitrate = AudioBitrate,
+        AudioCustomArgs = CustomAudioArgs,
+        AudioChannelMode = AudioChannelMode,
+        AudioSampleRate = AudioSampleRate,
+        AudioNormalization = AudioNormalization,
+        NormalizationTarget = NormalizationTarget,
+        TruePeakLimit = TruePeakLimit,
+        AudioSampleFormat = AudioSampleFormat,
+        AudioOnly = AudioOnly,
+        Container = Container,
+    };
+
+    /// <summary>
+    /// Build an <see cref="EncodingProfile"/> from the current UI state. When overwriting an
+    /// existing profile, pass it as <paramref name="basedOn"/> so metadata the form doesn't
+    /// expose (Description, CreatedAt) survives instead of being reset. AiUpscaleHeight is
+    /// tracked on the ViewModel (<see cref="_aiUpscaleHeight"/>) so it round-trips with the model.
+    /// </summary>
+    private EncodingProfile BuildProfile(string name, EncodingProfile? basedOn = null) => new()
+    {
+        Name = name,
+        Description = basedOn?.Description ?? string.Empty,
+        CreatedAt = basedOn?.CreatedAt ?? DateTime.UtcNow,
+        AiUpscaleHeight = _aiUpscaleHeight,
         VideoEncoderId = SelectedVideoEncoder?.Id ?? "ffmpeg-x265",
         VideoMode = EncodingMode,
         VideoQuality = Quality,
@@ -558,60 +621,101 @@ public partial class EncodeTabViewModel : ViewModelBase, IDisposable
         AudioSampleFormat = AudioSampleFormat,
         AudioOnly = AudioOnly,
         Container = Container,
+        FilterEngineId = _filterTab?.SelectedEngine?.Id,
+        Filters = _filterTab?.Chain.Filters.Select(af => new ProfileFilter
+        {
+            FilterId = af.Filter.Id,
+            Parameters = new Dictionary<string, object>(af.ParameterValues),
+        }).ToList() ?? [],
     };
+
+    /// <summary>Re-select a profile by name without re-applying it to the form.</summary>
+    private void ReselectProfile(string name)
+    {
+        _suppressProfileApply = true;
+        SelectedProfile = Profiles.FirstOrDefault(p => p.Name == name);
+        _suppressProfileApply = false;
+    }
 
     [RelayCommand]
     private void SaveProfile(string? profileName)
     {
         if (string.IsNullOrWhiteSpace(profileName)) return;
 
-        var profile = new EncodingProfile
+        // Preserve description/metadata when "Save As..." overwrites an existing name.
+        var existing = Profiles.FirstOrDefault(p => p.Name == profileName);
+        try
         {
-            Name = profileName,
-            VideoEncoderId = SelectedVideoEncoder?.Id ?? "ffmpeg-x265",
-            VideoMode = EncodingMode,
-            VideoQuality = Quality,
-            VideoBitrate = Bitrate,
-            VideoPreset = Preset,
-            VideoTune = Tune,
-            SvtAv1Preset = SvtAv1Preset,
-            VideoCustomArgs = CustomVideoArgs,
-            BitDepth = BitDepth,
-            AiUpscaleModel = AiUpscaleModel,
-            AudioEncoderId = SelectedAudioEncoder?.Id ?? "ffmpeg-audio-opus",
-            AudioBitrateMode = AudioBitrateMode,
-            AudioBitrate = AudioBitrate,
-            AudioCustomArgs = CustomAudioArgs,
-            AudioChannelMode = AudioChannelMode,
-            AudioSampleRate = AudioSampleRate,
-            AudioNormalization = AudioNormalization,
-            NormalizationTarget = NormalizationTarget,
-            TruePeakLimit = TruePeakLimit,
-            AudioSampleFormat = AudioSampleFormat,
-            AudioOnly = AudioOnly,
-            Container = Container,
-            FilterEngineId = _filterTab?.SelectedEngine?.Id,
-            Filters = _filterTab?.Chain.Filters.Select(af => new ProfileFilter
-            {
-                FilterId = af.Filter.Id,
-                Parameters = new Dictionary<string, object>(af.ParameterValues),
-            }).ToList() ?? [],
-        };
-
-        _services.ProfileManager.Save(profile);
+            _services.ProfileManager.Save(BuildProfile(profileName, existing));
+        }
+        catch (Exception ex)
+        {
+            // ProfileManager.Save writes atomically but still throws on failure (bad path,
+            // full disk). Surface it in the UI instead of letting it escape onto the UI thread.
+            HasError = true;
+            StatusMessage = $"Couldn't save profile '{profileName}': {ex.Message}";
+            return;
+        }
         RefreshProfiles();
+        ReselectProfile(profileName);
+        HasError = false;
+        StatusMessage = $"Saved profile '{profileName}'.";
+    }
+
+    /// <summary>
+    /// Write the current settings back into the selected profile — the in-place "edit" action.
+    /// Overwrites the profile's JSON (which is what wins on disk, so it persists across restarts,
+    /// including for built-ins).
+    /// </summary>
+    [RelayCommand]
+    private void UpdateProfile()
+    {
+        if (SelectedProfile is null) return;
+        var name = SelectedProfile.Name;
+        try
+        {
+            _services.ProfileManager.Save(BuildProfile(name, SelectedProfile));
+        }
+        catch (Exception ex)
+        {
+            HasError = true;
+            StatusMessage = $"Couldn't update profile '{name}': {ex.Message}";
+            return;
+        }
+        RefreshProfiles();
+        ReselectProfile(name);
+        HasError = false;
+        StatusMessage = $"Updated profile '{name}'.";
     }
 
     [RelayCommand]
     private void DeleteProfile()
     {
         if (SelectedProfile is null) return;
-        _services.ProfileManager.Delete(SelectedProfile.Name);
+        var name = SelectedProfile.Name;
+        try
+        {
+            _services.ProfileManager.Delete(name);
+        }
+        catch (Exception ex)
+        {
+            HasError = true;
+            StatusMessage = $"Couldn't delete profile '{name}': {ex.Message}";
+            return;
+        }
         SelectedProfile = null;
         RefreshProfiles();
+        StatusMessage = $"Deleted profile '{name}'.";
     }
 
     // === Add to Queue ===
+
+    /// <summary>
+    /// Raised after a successful enqueue from the Encode tab so the shell can surface the
+    /// Queue tab. Not fired from the shared <see cref="EnqueueFile"/> because batch enqueues
+    /// must not hijack navigation.
+    /// </summary>
+    public Action? JobQueued { get; set; }
 
     [RelayCommand]
     private async Task AddToQueue()
@@ -770,6 +874,10 @@ public partial class EncodeTabViewModel : ViewModelBase, IDisposable
         }
 
         EnqueueFile(InputFile, OutputFile, chunks: chunks);
+
+        // Surface the Queue tab so the freshly-added job is visible, rather than leaving the
+        // user on the Encode tab wondering whether anything happened.
+        JobQueued?.Invoke();
     }
 
     private ChunkingOptions BuildChunkingOptions() => new()
@@ -818,6 +926,16 @@ public partial class EncodeTabViewModel : ViewModelBase, IDisposable
         var info = mediaInfo ?? MediaInfo;
 
         var request = BuildRequest(inputFile, outputFile);
+
+        // Guard here — the single place that constructs the enqueued request — so both the
+        // single-file (AddToQueue) and batch (EnqueueFileWithAllIds) paths reject incompatible
+        // codec/container pairs up front instead of running every encode to completion only for
+        // the final mux to fail. AddToQueue also validates earlier for its inline HasError UX;
+        // this is the backstop that covers batch, which otherwise skipped Validate entirely.
+        var invalid = EncodeJobBuilder.Validate(request, info);
+        if (invalid is not null)
+            throw new InvalidOperationException(invalid);
+
         var plan = EncodeJobBuilder.Build(
             request, info, chunks, ffprobePath: _services.Settings.FFprobePath);
 
@@ -837,6 +955,19 @@ public partial class EncodeTabViewModel : ViewModelBase, IDisposable
 
         return plan.FinalJob.Id;
     }
+
+    /// <summary>The composition root, for views that need to open a secondary window (e.g. Preview).</summary>
+    public AppServices Services => _services;
+
+    /// <summary>
+    /// The current UI state as an <see cref="EncodeRequest"/> for previewing, or null if no input
+    /// is loaded. Uses the SAME <see cref="BuildRequest"/> the encode uses, so a preview reflects
+    /// exactly the settings that would be applied.
+    /// </summary>
+    public EncodeRequest? BuildPreviewRequest() =>
+        string.IsNullOrWhiteSpace(InputFile)
+            ? null
+            : BuildRequest(InputFile, string.IsNullOrWhiteSpace(OutputFile) ? InputFile : OutputFile);
 
     /// <summary>
     /// Snapshot the current UI state as an <see cref="EncodeRequest"/>. The GUI and the CLI
@@ -861,6 +992,11 @@ public partial class EncodeTabViewModel : ViewModelBase, IDisposable
             Preset = Preset,
             Tune = Tune,
             SvtAv1Preset = SvtAv1Preset,
+            SvtAv1Tune = SvtAv1Tune,
+            SvtAv1FilmGrain = SvtAv1FilmGrain,
+            SvtAv1TileRows = SvtAv1TileRows,
+            SvtAv1TileColumns = SvtAv1TileColumns,
+            SvtAv1KeyframeInterval = SvtAv1KeyframeInterval,
             VideoCustomArgs = CustomVideoArgs,
 
             AudioEncoderId = SelectedAudioEncoder?.Id ?? "ffmpeg-audio-opus",
@@ -887,16 +1023,38 @@ public partial class EncodeTabViewModel : ViewModelBase, IDisposable
             AudioOnly = AudioOnly,
             CopySubtitles = CopySubtitles,
             ExternalSubtitleFile = ExternalSubtitleFile,
+            SubtitleTracks = ParseSubtitleTracks(),
             CopyChapters = CopyChapters,
             CopyAttachments = CopyAttachments,
+            CopyMetadata = CopyMetadata,
             BitDepth = BitDepth,
             Chroma = Chroma,
             AiUpscaleModel = AiUpscaleModel,
+            AiUpscaleHeight = _aiUpscaleHeight,
+            AiUpscaleAllowLong = AiUpscaleAllowLong,
+            RifeTargetFps = RifeTargetFps,
             BurnInSubtitles = BurnInSubtitles,
+            BurnInSubtitleTrack = BurnInSubtitleTrack,
+            PreserveDynamicHdr = PreserveDynamicHdr,
 
             FilterScript = filterScript,
             FilterEngineId = _filterTab?.SelectedEngine?.Id,
         };
+    }
+
+    /// <summary>
+    /// Parse the comma-separated subtitle-track field into stream indices. Blank/garbage
+    /// yields an empty list, which <see cref="EncodeJobBuilder"/> treats as "keep all".
+    /// </summary>
+    private IReadOnlyList<int> ParseSubtitleTracks()
+    {
+        if (string.IsNullOrWhiteSpace(SubtitleTracks)) return [];
+        return SubtitleTracks
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(s => int.TryParse(s, out var n) ? n : -1)
+            .Where(n => n >= 0)
+            .Distinct()
+            .ToList();
     }
 
     /// <summary>

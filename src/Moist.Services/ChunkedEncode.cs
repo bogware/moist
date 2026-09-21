@@ -67,6 +67,20 @@ public sealed class ChunkedEncode(AppServices services, ILoggerFactory? loggerFa
     public async Task<ChunkPlan?> PlanAsync(
         EncodeRequest request, MediaFileInfo info, ChunkingOptions options, CancellationToken ct = default)
     {
+        // AI upscale (Real-ESRGAN) and RIFE interpolation are whole-file, frame-based passes:
+        // their processors own the entire VideoJob and extract frames with no trim range, so a
+        // chunk's slice can't be expressed and chunk jobs would silently fall back to a plain
+        // encode (dropping the upscale/interpolation). Chunking is only a CPU-recovery
+        // optimisation, whereas AI upscale/RIFE is the user's actual intent — so decline
+        // chunking and let Build take the single-job path, which sets AiUpscaleModel/RifeTargetFps
+        // and selects the correct processor.
+        if (!string.IsNullOrWhiteSpace(request.AiUpscaleModel) || request.RifeTargetFps > 0)
+        {
+            _logger.LogInformation(
+                "AI upscale (Real-ESRGAN) / RIFE are whole-file passes; encoding without chunking.");
+            return null;
+        }
+
         var video = info.Video;
         if (video is null || video.Framerate <= 0)
         {
@@ -220,6 +234,14 @@ public sealed class ChunkedEncode(AppServices services, ILoggerFactory? loggerFa
                 .Append(request.Tune).Append('|')
                 .Append(request.SvtAv1Preset).Append('|')
                 .Append(request.BitDepth).Append('|')
+                // Chroma feeds -pix_fmt and the SVT-AV1 knobs change the encode, so all of them
+                // shape a chunk's bytes and must be in the fingerprint or a resume could splice
+                // mismatched chunks.
+                .Append(request.Chroma).Append('|')
+                .Append(request.SvtAv1Tune?.ToString() ?? "").Append('|')
+                .Append(request.SvtAv1FilmGrain).Append('|')
+                .Append(request.SvtAv1TileRows).Append('x').Append(request.SvtAv1TileColumns).Append('|')
+                .Append(request.SvtAv1KeyframeInterval).Append('|')
                 .Append(request.VideoCustomArgs).Append('|')
                 .Append(request.FilterScript ?? "").Append('|')
                 .Append(options.Mode).Append('|')

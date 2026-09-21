@@ -1,0 +1,85 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="clr-namespace:Moist.App.ViewModels"
+        x:Class="Moist.App.Views.PreviewWindow"
+        x:DataType="vm:PreviewViewModel"
+        Title="Preview" Width="1040" Height="720"
+        MinWidth="560" MinHeight="420"
+        WindowStartupLocation="CenterOwner">
+
+    <DockPanel Margin="12">
+
+        <!-- ═══ Controls (top) ═══ -->
+        <Border DockPanel.Dock="Top" Classes="section" Padding="10" Margin="0,0,0,8">
+            <StackPanel Spacing="8">
+                <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="10">
+                    <TextBlock Text="Snippet start" VerticalAlignment="Center"/>
+                    <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                        <Slider Value="{Binding SnippetStart}" Minimum="0" Maximum="{Binding SourceDuration}"
+                                Width="240" VerticalAlignment="Center"/>
+                        <TextBlock Text="{Binding SnippetStart, StringFormat={}{0:F1}s}" VerticalAlignment="Center" Width="52"/>
+                    </StackPanel>
+                    <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8">
+                        <ToggleSwitch IsChecked="{Binding SideBySide}" OnContent="Side-by-side" OffContent="Output only"
+                                      VerticalAlignment="Center"/>
+                        <Button Content="Open in player" Command="{Binding OpenInPlayerCommand}"
+                                IsEnabled="{Binding HasSnippet}"
+                                ToolTip.Tip="Play the rendered snippet with motion in your system player"/>
+                        <Button Content="Generate preview" Command="{Binding GeneratePreviewCommand}"
+                                IsEnabled="{Binding !IsRendering}" Classes="accent"/>
+                    </StackPanel>
+                </Grid>
+                <ProgressBar Value="{Binding RenderProgress}" Minimum="0" Maximum="100" Height="4"
+                             IsVisible="{Binding IsRendering}"/>
+                <TextBlock Text="{Binding Status}" FontSize="11" Opacity="0.75" TextWrapping="Wrap"/>
+            </StackPanel>
+        </Border>
+
+        <!-- ═══ Scrub (bottom) ═══ -->
+        <Border DockPanel.Dock="Bottom" Classes="section" Padding="10" Margin="0,8,0,0"
+                IsEnabled="{Binding HasSnippet}">
+            <StackPanel Spacing="4">
+                <TextBlock Text="Scrub within snippet" FontSize="11" Opacity="0.7"/>
+                <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                    <Slider Value="{Binding Position}" Minimum="0" Maximum="{Binding SnippetDuration}"
+                            SmallChange="0.1" LargeChange="0.5"/>
+                    <TextBlock Grid.Column="1" VerticalAlignment="Center" Width="90"
+                               Text="{Binding Position, StringFormat={}{0:F2}s}"/>
+                </Grid>
+            </StackPanel>
+        </Border>
+
+        <!-- ═══ Images (fill) ═══ -->
+        <Border Classes="section" Padding="6">
+            <Panel>
+                <!-- Placeholder before the first render -->
+                <TextBlock Text="No preview yet — click “Generate preview”."
+                           HorizontalAlignment="Center" VerticalAlignment="Center" Opacity="0.5"
+                           IsVisible="{Binding !HasSnippet}"/>
+
+                <!-- Side-by-side: source | output -->
+                <Grid ColumnDefinitions="*,4,*" IsVisible="{Binding SideBySide}">
+                    <DockPanel Grid.Column="0">
+                        <TextBlock DockPanel.Dock="Top" Text="Source" FontSize="11" Opacity="0.6"
+                                   HorizontalAlignment="Center" Margin="0,0,0,4"/>
+                        <Image Source="{Binding SourceImage}" Stretch="Uniform"/>
+                    </DockPanel>
+                    <GridSplitter Grid.Column="1" Background="#33888888"/>
+                    <DockPanel Grid.Column="2">
+                        <TextBlock DockPanel.Dock="Top" Text="Output (full pipeline)" FontSize="11" Opacity="0.6"
+                                   HorizontalAlignment="Center" Margin="0,0,0,4"/>
+                        <Image Source="{Binding OutputImage}" Stretch="Uniform"/>
+                    </DockPanel>
+                </Grid>
+
+                <!-- Output-only: one large frame -->
+                <DockPanel IsVisible="{Binding !SideBySide}">
+                    <TextBlock DockPanel.Dock="Top" Text="Output (full pipeline)" FontSize="11" Opacity="0.6"
+                               HorizontalAlignment="Center" Margin="0,0,0,4"
+                               IsVisible="{Binding HasSnippet}"/>
+                    <Image Source="{Binding OutputImage}" Stretch="Uniform"/>
+                </DockPanel>
+            </Panel>
+        </Border>
+    </DockPanel>
+</Window>

@@ -237,6 +237,10 @@ public partial class MainWindow : Window
             }
             s.Save();
 
+            // Release the Encode tab's cancellation tokens and preview bitmap. Safe here because
+            // the window is closing for good, not on a transient DataContext change.
+            vm.EncodeTab.Dispose();
+
             // Queued encodes are recorded as they're enqueued and cleared as they finish,
             // so there is nothing to write here — whatever is still outstanding is already
             // on disk and will be offered back on the next launch.
@@ -322,7 +326,7 @@ public partial class MainWindow : Window
                         break;
 
                     case Key.Delete: // Del: Remove selected job from queue
-                        if (vm.SelectedTabIndex == 1 && vm.QueueTab.SelectedJob is not null)
+                        if (vm.SelectedTabIndex == MainWindowViewModel.QueueTabIndex && vm.QueueTab.SelectedJob is not null)
                         {
                             e.Handled = true;
                             vm.QueueTab.RemoveJobCommand.Execute(vm.QueueTab.SelectedJob);
@@ -330,7 +334,7 @@ public partial class MainWindow : Window
                         break;
 
                     case Key.Space: // Space: Toggle queue start/stop
-                        if (vm.SelectedTabIndex == 1)
+                        if (vm.SelectedTabIndex == MainWindowViewModel.QueueTabIndex)
                         {
                             e.Handled = true;
                             if (vm.QueueTab.IsRunning)
@@ -347,6 +351,44 @@ public partial class MainWindow : Window
             if (DataContext is MainWindowViewModel vm)
                 vm.StatusText = $"Error: {ex.Message}";
         }
+    }
+
+    // === Custom title bar (native chrome removed via ExtendClientAreaChromeHints=NoChrome) ===
+
+    private void TitleBar_PointerPressed(object? sender, PointerPressedEventArgs e)
+    {
+        // Only the left button drags; clicks on the About/caption Buttons are already marked
+        // handled by Button, so they never reach here and never start a drag.
+        if (!e.GetCurrentPoint(this).Properties.IsLeftButtonPressed) return;
+        if (e.ClickCount == 2) { ToggleMaximize(); e.Handled = true; return; }
+        BeginMoveDrag(e);
+    }
+
+    private void MinimizeButton_Click(object? sender, RoutedEventArgs e) => WindowState = WindowState.Minimized;
+    private void MaximizeButton_Click(object? sender, RoutedEventArgs e) => ToggleMaximize();
+    private void CloseButton_Click(object? sender, RoutedEventArgs e) => Close();
+
+    private void ToggleMaximize() =>
+        WindowState = WindowState == WindowState.Maximized ? WindowState.Normal : WindowState.Maximized;
+
+    protected override void OnPropertyChanged(AvaloniaPropertyChangedEventArgs change)
+    {
+        base.OnPropertyChanged(change);
+        if (change.Property == WindowStateProperty)
+            UpdateMaximizeGlyph();
+    }
+
+    private void UpdateMaximizeGlyph()
+    {
+        // Fully-qualified: an unqualified Path would bind to System.IO.Path here.
+        var icon = this.FindControl<Avalonia.Controls.Shapes.Path>("MaximizeIcon");
+        if (icon is not null)
+            icon.Data = WindowState == WindowState.Maximized
+                ? Geometry.Parse("M0,3 L7,3 L7,10 L0,10 Z M3,3 L3,0 L10,0 L10,7 L7,7")  // restore
+                : Geometry.Parse("M0,0 L10,0 L10,10 L0,10 Z");                            // maximize
+        var button = this.FindControl<Button>("MaximizeButton");
+        if (button is not null)
+            ToolTip.SetTip(button, WindowState == WindowState.Maximized ? "Restore" : "Maximize");
     }
 
     private void AboutButton_Click(object? sender, RoutedEventArgs e) => ShowAbout();

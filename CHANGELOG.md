@@ -7,6 +7,56 @@ minor version carries breaking changes.
 
 ---
 
+## [Unreleased]
+
+A release-hardening pass over the whole codebase (a full audit: 80 confirmed issues,
+0 critical, all addressed) plus a set of enhancements. Build is clean and the full test
+suite is green.
+
+### Added
+
+**Preview overhaul.** A resizable **Full Preview** window that renders a short snippet
+through the *entire* pipeline — filters, encoder, bit depth, chroma, AI upscale / RIFE —
+so what you see is what you'd get, not just the filter chain. Scrub within the snippet,
+compare **side-by-side** against the untouched source, resize/expand the window freely, and
+**Open in player** for motion. Reached from the Encode tab's preview panel.
+
+**SVT-AV1 controls.** Film-grain synthesis, tile rows/columns and keyframe interval are now
+exposed (`--av1-film-grain`, `--av1-tile-rows`, `--av1-tile-columns`, `--av1-keyint`, and in
+the GUI). They also feed the chunk-resume fingerprint so a resume can't mix settings.
+
+**Experimental Dolby Vision / HDR10+ passthrough.** Opt-in `--preserve-dynamic-hdr` (and a
+GUI toggle) attempts to carry the source's dynamic HDR metadata across the re-encode via
+`dovi_tool` / `hdr10plus_tool`. **Unverified** — it degrades to a warning and never corrupts
+the output; always check the result plays correctly.
+
+**Download integrity.** Auto-downloaded tools are now SHA-256 verified against pinned
+release URLs; an unverified download is loudly flagged rather than trusted silently.
+
+**GUI parity.** RIFE fps, AV1 tune, subtitle-track selection, allow-long AI upscale and
+disable-metadata are now reachable from the GUI, matching the CLI.
+
+### Fixed
+
+- **Subtitle muxing into MP4/MOV/WebM** no longer fails the whole mux — text subs transcode
+  to `mov_text`/`webvtt`; subset selection maps only the chosen streams with correct
+  language/forced/default; container-incompatible subs are dropped with an up-front warning.
+- **Preview and probe helpers** (preview extraction, ffprobe/Real-ESRGAN/RIFE/quality) no
+  longer deadlock on chatty or corrupt inputs — both output pipes are drained concurrently.
+- **VP9 CRF** now enters true constant-quality mode (`-b:v 0`); was silently ~256 kbps.
+- **Watch folders** survive an I/O error mid-scan, retry failed encodes (bounded), preserve
+  the source subtree on recursive output, and never loop output back into the watch folder.
+- **Encoder guards:** invalid tune/codec pairs (x264-only tunes on x265, non-psnr/ssim on
+  vp9), and AI-upscale/RIFE combined with chunking, are caught before the encode instead of
+  producing a wrong or failed result.
+- **`moist serve`** hardened: header-only bearer token, DNS-rebinding `Host` guard and JSON
+  content-type check on loopback, bounded request body, and bounded job retention.
+- **Quality metrics** parse `inf`/`nan`, so a lossless frame no longer crashes the measurer.
+- Audio `S24` sample format, Opus/MP3/Vorbis rate-control flags, theme toggle, cross-thread
+  queue events, atomic profile writes, and many smaller correctness and resource fixes.
+
+---
+
 ## [0.10.0] — 2026-08-08
 
 The AI restoration release. moist grew a full ladder for bringing old SD video up to

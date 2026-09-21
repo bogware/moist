@@ -34,15 +34,26 @@ public static class QualityOptions
         return null;
     }
 
-    public static TargetQualityOptions Build(CommandLine cl, QualityMetric metric, double target) => new()
+    public static TargetQualityOptions Build(CommandLine cl, QualityMetric metric, double target)
     {
-        Metric = metric,
-        Target = target,
-        Samples = cl.Int("samples") ?? 3,
-        SampleDuration = TimeSpan.FromSeconds(cl.Double("sample-duration") ?? 5),
-        MaxProbes = cl.Int("max-probes") ?? 8,
-        IgnoreCache = cl.Flag("no-cache"),
-    };
+        // Validate at the CLI boundary so a bad value is a clean usage error (exit 2), not the
+        // "Sequence contains no elements" / ArgumentOutOfRangeException the search would otherwise
+        // throw deeper in. (TargetQualitySearch keeps its own guard as defense-in-depth.)
+        var maxProbes = cl.Int("max-probes") ?? 8;
+        var sampleDuration = cl.Double("sample-duration") ?? 5;
+        if (maxProbes < 1) throw new UsageException("--max-probes must be at least 1");
+        if (sampleDuration <= 0) throw new UsageException("--sample-duration must be greater than 0");
+
+        return new()
+        {
+            Metric = metric,
+            Target = target,
+            Samples = cl.Int("samples") ?? 3,
+            SampleDuration = TimeSpan.FromSeconds(sampleDuration),
+            MaxProbes = maxProbes,
+            IgnoreCache = cl.Flag("no-cache"),
+        };
+    }
 }
 
 public static class CompareCommand

@@ -48,6 +48,27 @@ public class AudioProcessorTests
         Assert.Contains("-compression_level 5", args);
     }
 
+    [Fact]
+    public void Opus_VbrMode_EmitsVbrOn()
+    {
+        var args = BuildArgs("opus", new OpusSettings { BitrateMode = AudioBitrateMode.Vbr });
+        Assert.Contains("-vbr on", args);
+    }
+
+    [Fact]
+    public void Opus_CbrMode_EmitsVbrOff()
+    {
+        var args = BuildArgs("opus", new OpusSettings { BitrateMode = AudioBitrateMode.Cbr });
+        Assert.Contains("-vbr off", args);
+    }
+
+    [Fact]
+    public void Opus_ConstrainedVbrMode_EmitsVbrConstrained()
+    {
+        var args = BuildArgs("opus", new OpusSettings { BitrateMode = AudioBitrateMode.ConstrainedVbr });
+        Assert.Contains("-vbr constrained", args);
+    }
+
     // === AAC ===
 
     [Fact]
@@ -73,6 +94,8 @@ public class AudioProcessorTests
         var args = BuildArgs("mp3", new Mp3Settings { BitrateMode = AudioBitrateMode.Vbr, VbrScale = 2 });
         Assert.Contains("-c:a libmp3lame", args);
         Assert.Contains("-q:a 2", args);
+        // libmp3lame takes the -q:a path in VBR and ignores -b:a, so it must not be sent.
+        Assert.DoesNotContain("-b:a", args);
     }
 
     [Fact]
@@ -155,6 +178,8 @@ public class AudioProcessorTests
         var args = BuildArgs("vorbis", new VorbisSettings { BitrateMode = AudioBitrateMode.Vbr, QualityScale = 5 });
         Assert.Contains("-c:a libvorbis", args);
         Assert.Contains("-q:a 5", args);
+        // libvorbis takes the -q:a path in VBR and ignores -b:a, so it must not be sent.
+        Assert.DoesNotContain("-b:a", args);
     }
 
     // === Copy (Passthrough) ===
@@ -212,6 +237,30 @@ public class AudioProcessorTests
     {
         var args = BuildArgs("flac", new FlacSettings { SampleFormat = AudioSampleFormat.Auto });
         Assert.DoesNotContain("-sample_fmt", args);
+    }
+
+    [Fact]
+    public void SampleFormat_S24_MapsToS32_NotInvalidS24()
+    {
+        // FFmpeg has no s24 sample format; 24-bit audio lives in the s32 container.
+        var args = BuildArgs("flac", new FlacSettings { SampleFormat = AudioSampleFormat.S24 });
+        Assert.DoesNotContain("-sample_fmt s24", args);
+        Assert.Contains("-sample_fmt s32", args);
+    }
+
+    [Fact]
+    public void SampleFormat_S24_Flac_MarksTrue24BitDepth()
+    {
+        var args = BuildArgs("flac", new FlacSettings { SampleFormat = AudioSampleFormat.S24 });
+        Assert.Contains("-bits_per_raw_sample 24", args);
+    }
+
+    [Fact]
+    public void SampleFormat_S24_NonFlac_NoBitsPerRawSample()
+    {
+        var args = BuildArgs("opus", new OpusSettings { SampleFormat = AudioSampleFormat.S24 });
+        Assert.Contains("-sample_fmt s32", args);
+        Assert.DoesNotContain("-bits_per_raw_sample", args);
     }
 
     // === Normalization ===

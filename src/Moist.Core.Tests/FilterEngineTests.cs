@@ -250,7 +250,8 @@ public class FilterEngineTests
         Assert.Contains("core.trt.Model(", script);           // the vs-mlrt backend node
         Assert.Contains("realesr.onnx", script);              // with the chosen model
         Assert.Contains("format=vs.RGBS", script);            // converts to RGB float for the network
-        Assert.Contains("format=vs.YUV420P8", script);        // and back to YUV afterwards
+        Assert.Contains("format=_src.format.id", script);     // and back to the SOURCE format (not forced 8-bit)
+        Assert.Contains("_mat", script);                      // SD/HD-aware matrix (601 for <=576, else 709)
     }
 
     // === AviSynth Filter Engine ===

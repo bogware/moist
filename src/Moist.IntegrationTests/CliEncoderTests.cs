@@ -139,6 +139,20 @@ public sealed class CliEncoderTests(MediaFixture media) : PipelineTestBase(media
         Assert.Contains("--no-cabac", arguments);
     }
 
+    [X264Fact]
+    public async Task X264TwoPassProducesTheWholeClip()
+    {
+        // Standalone-CLI two-pass has its own path: TwoPassProcessor injects --pass/--stats
+        // through CustomArgs into the shell pipeline, and pass 1 writes to the null device.
+        // Only ffmpeg-x264 two-pass was ever covered, so this whole path shipped untested.
+        using var services = CreateCliServices();
+        var output = await EncodeAsync(services, "cli-x264", Media.SampleVideo, "cli_x264_2pass.mkv",
+            b => { b.Mode = VideoEncodingMode.TwoPassBitrate; b.Bitrate = 500; });
+
+        Assert.Equal("h264", Ffmpeg.VideoCodec(output));
+        Assert.Equal(Ffmpeg.FrameCount(Media.SampleVideo), Ffmpeg.FrameCount(output));
+    }
+
     // ---------------- x265 ----------------
 
     [X265Fact]
@@ -187,6 +201,21 @@ public sealed class CliEncoderTests(MediaFixture media) : PipelineTestBase(media
 
         Assert.Empty(Directory.GetFiles(Media.TempDir, "*.hevc"));
         Assert.Empty(Directory.GetFiles(Path.GetDirectoryName(output)!, "*.hevc"));
+    }
+
+    [X265Fact]
+    public async Task X265TwoPassProducesTheWholeClip()
+    {
+        // The raw-stream wrap in OnAfterSuccessAsync runs after every successful run, including
+        // pass 1, whose output is the null device. Before the fix it threw ("wrote no bitstream"
+        // / "Unable to choose an output format") and the whole two-pass job failed after the full
+        // first-pass encode. This exercises pass 1 -> null-device wrap skip -> pass 2 -> real wrap.
+        using var services = CreateCliServices();
+        var output = await EncodeAsync(services, "cli-x265", Media.SampleVideo, "cli_x265_2pass.mkv",
+            b => { b.Mode = VideoEncodingMode.TwoPassBitrate; b.Bitrate = 500; });
+
+        Assert.Equal("hevc", Ffmpeg.VideoCodec(output));
+        Assert.Equal(Ffmpeg.FrameCount(Media.SampleVideo), Ffmpeg.FrameCount(output));
     }
 
     /// <summary>Exposes the argument builder so a test can read what x264 is actually sent.</summary>

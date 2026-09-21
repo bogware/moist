@@ -90,8 +90,16 @@ public static class WatchCommand
             await watcher.RunAsync(
                 encode: async (file, token) =>
                 {
+                    // Preserve the source's subtree under the output dir. A recursive watch
+                    // over per-title (or per-season) folders otherwise flattens everything
+                    // to basename, so two 'episode.mkv' from different folders collide — and
+                    // with --overwrite the second silently clobbers the first. For a
+                    // non-recursive watch relativeDir is empty, so behaviour is unchanged.
+                    var relativeDir = Path.GetDirectoryName(Path.GetRelativePath(folder, file)) ?? "";
+                    var targetDir = Path.Combine(outputDirectory, relativeDir);
+                    Directory.CreateDirectory(targetDir);
                     var output = Cli.ResolveOutput(
-                        Path.Combine(outputDirectory, Path.GetFileNameWithoutExtension(file) + "." + container.TrimStart('.')),
+                        Path.Combine(targetDir, Path.GetFileNameWithoutExtension(file) + "." + container.TrimStart('.')),
                         overwrite: cl.Flag("overwrite", "y"));
 
                     if (!quiet && !json)
