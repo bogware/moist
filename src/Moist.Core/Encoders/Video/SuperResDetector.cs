@@ -59,11 +59,16 @@ public static class SuperResDetector
 
             using var p = Process.Start(psi);
             if (p is null) return false;
+            // Drain both pipes while waiting: they're redirected, so leaving them unread risks a
+            // deadlock if the probe writes more than the OS pipe buffer (Vulkan init can be chatty).
+            var drainOut = p.StandardOutput.ReadToEndAsync();
+            var drainErr = p.StandardError.ReadToEndAsync();
             if (!p.WaitForExit(20_000))
             {
                 try { p.Kill(entireProcessTree: true); } catch { /* best effort */ }
                 return false;
             }
+            try { Task.WaitAll([drainOut, drainErr], 2_000); } catch { /* reads race process exit */ }
             return p.ExitCode == 0;
         }
         catch

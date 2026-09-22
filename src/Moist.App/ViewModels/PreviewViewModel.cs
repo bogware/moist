@@ -68,18 +68,6 @@ public partial class PreviewViewModel : ViewModelBase, IDisposable
     [RelayCommand]
     private async Task GeneratePreview()
     {
-        var request = _requestFactory();
-        if (request is null)
-        {
-            Status = "Load a video on the Encode tab first.";
-            return;
-        }
-        if (request.AudioOnly)
-        {
-            Status = "Audio-only mode has no video to preview.";
-            return;
-        }
-
         _renderCts?.Cancel();
         _renderCts?.Dispose();
         _renderCts = new CancellationTokenSource();
@@ -88,11 +76,26 @@ public partial class PreviewViewModel : ViewModelBase, IDisposable
         IsRendering = true;
         RenderProgress = 0;
         Status = "Rendering snippet through the full pipeline… (uses the real encoder, so this takes about as long as encoding that many seconds)";
+        var start = SnippetStart;
+        var progress = new Progress<double>(p => Dispatcher.UIThread.Post(() => RenderProgress = p));
         try
         {
-            var progress = new Progress<double>(p => Dispatcher.UIThread.Post(() => RenderProgress = p));
-            var result = await _services.SnippetPreview.RenderAsync(
-                request, _info, TimeSpan.FromSeconds(SnippetStart), duration: null, progress, ct);
+            // Build the request AND render off the UI thread — BuildPreviewRequest calls
+            // GenerateScript, whose superres path runs a synchronous probe that would otherwise
+            // freeze the window. Returns null when there's nothing to preview.
+            var result = await Task.Run(async () =>
+            {
+                var request = _requestFactory();
+                if (request is null || request.AudioOnly) return (SnippetPreviewResult?)null;
+                return await _services.SnippetPreview.RenderAsync(
+                    request, _info, TimeSpan.FromSeconds(start), duration: null, progress, ct);
+            });
+
+            if (result is null)
+            {
+                Status = "Nothing to preview — load a video on the Encode tab (and turn off Audio-only).";
+                return;
+            }
 
             _snippetPath = result.SnippetPath;
             SnippetDuration = Math.Max(0.1, result.DurationSeconds);

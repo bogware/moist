@@ -522,31 +522,51 @@ public partial class EncodeTabViewModel : ViewModelBase, IDisposable
         IsRenderingOutput = true;
         OutputRenderProgress = 0;
         OutputPreviewStatus = "Rendering through the full pipeline…";
+
+        // Snapshot UI-thread state, then do ALL the work on a background thread. Building the
+        // request calls GenerateScript, whose superres path runs a synchronous libplacebo probe
+        // that can block for seconds — doing that (and the encode) here would freeze the window.
+        // Progress is created on the UI thread so its callbacks marshal back automatically.
+        var pos = PreviewPosition;
+        var info = MediaInfo;
+        var inputFile = InputFile;
+        var outputFile = string.IsNullOrWhiteSpace(OutputFile) ? InputFile : OutputFile;
+        var progress = new Progress<double>(p => OutputRenderProgress = p);
         try
         {
-            var request = BuildRequest(InputFile, string.IsNullOrWhiteSpace(OutputFile) ? InputFile : OutputFile);
-            var progress = new Progress<double>(p => OutputRenderProgress = p);
-            var result = await _services.SnippetPreview.RenderAsync(
-                request, MediaInfo, TimeSpan.FromSeconds(PreviewPosition), duration: null, progress);
-            _outputSnippetPath = result.SnippetPath;
+            var (snippetPath, stream, bitmap, duration) =
+                await Task.Run<(string?, MemoryStream?, Bitmap?, double)>(async () =>
+            {
+                var request = BuildRequest(inputFile, outputFile);
+                var result = await _services.SnippetPreview.RenderAsync(
+                    request, info, TimeSpan.FromSeconds(pos), duration: null, progress);
 
-            var framePath = await _services.PreviewService.ExtractFrameAsync(
-                result.SnippetPath, TimeSpan.Zero, maxWidth: 960);
-            if (framePath is not null)
+                var framePath = await _services.PreviewService.ExtractFrameAsync(
+                    result.SnippetPath, TimeSpan.Zero, maxWidth: 960);
+                if (framePath is null)
+                    return (result.SnippetPath, null, null, result.DurationSeconds);
+
+                var ms = new MemoryStream();
+                await using (var fs = File.OpenRead(framePath))
+                    await fs.CopyToAsync(ms);
+                ms.Seek(0, SeekOrigin.Begin);
+                var bmp = new Bitmap(ms);
+                try { File.Delete(framePath); } catch { }
+                return (result.SnippetPath, ms, bmp, result.DurationSeconds);
+            });
+
+            // Back on the UI thread here (the command was invoked on it).
+            _outputSnippetPath = snippetPath;
+            if (bitmap is not null)
             {
                 var oldImage = OutputPreviewImage;
                 var oldStream = _outputPreviewStream;
-                var memoryStream = new MemoryStream();
-                await using (var fileStream = File.OpenRead(framePath))
-                    await fileStream.CopyToAsync(memoryStream);
-                memoryStream.Seek(0, SeekOrigin.Begin);
-                OutputPreviewImage = new Bitmap(memoryStream);
-                _outputPreviewStream = memoryStream;
+                OutputPreviewImage = bitmap;
+                _outputPreviewStream = stream;
                 oldImage?.Dispose();
                 oldStream?.Dispose();
-                try { File.Delete(framePath); } catch { }
             }
-            OutputPreviewStatus = $"Output at {PreviewPosition:F1}s (rendered {result.DurationSeconds:F1}s snippet).";
+            OutputPreviewStatus = $"Output at {pos:F1}s (rendered {duration:F1}s snippet).";
         }
         catch (Exception ex)
         {
