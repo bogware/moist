@@ -264,6 +264,19 @@ public static class EncodeJobBuilder
                 "Turn one of them off.");
         }
 
+        // Cadence filters change the frame count unpredictably, so the chunk frame-count
+        // verification — the guard against silently lost footage — would reject the joined
+        // result. Excluded for the same reason burn-in is.
+        if (chunked && req.FilterScript is { } cadenceScript
+            && (cadenceScript.Contains("decimate", StringComparison.Ordinal)
+                || cadenceScript.Contains("fieldmatch", StringComparison.Ordinal)))
+        {
+            warnings.Add(
+                "Frame decimation / inverse telecine and chunked encoding don't mix: these filters " +
+                "change the frame count, so the chunk verification would reject the joined result. " +
+                "Turn one of them off.");
+        }
+
         // Subtitles that won't survive the chosen container. Text subs transcode into MP4/MOV
         // (mov_text) and WebM (webvtt); image-based subs (PGS/DVD) can't be converted to those,
         // and AVI/MPEG-TS hold no text subtitles at all. Those streams are dropped rather than

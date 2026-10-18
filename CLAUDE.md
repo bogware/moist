@@ -436,18 +436,44 @@ and escapes the drive colon. Same class of problem as libvmaf's `log_path`, solv
 differently there (working directory) because that one is a bare filename.
 
 Burn-in and chunked encoding are **mutually exclusive**, and `Warnings()` says so: each
-chunk seeks independently, so subtitle timings would drift after the first chunk.
+chunk seeks independently, so subtitle timings would drift after the first chunk. So are
+the cadence filters (`ivtc`, `mpdecimate`): they change the frame count, which the chunk
+frame-count verification would then reject.
 
-### Known gap: HDR10+ / Dolby Vision passthrough
+### Telecined film: `ivtc`, not `mpdecimate`
 
-Dynamic HDR metadata is **detected and warned about, but not preserved**. Extracting the
-RPU with `dovi_tool` / `hdr10plus_tool`, encoding, then re-injecting is not implemented:
-neither tool is installed on the development machine, so the code could be written but
-never run, and untested binary-metadata surgery is worse than none. Both tools are in
-`ToolDiscovery.KnownTools` so their absence is reported.
+`ivtc` exists because a pixel-difference decimator cannot follow a 3:2 film cadence. On
+bob-deinterlaced 60p broadcast captures (MeTV-style 1280×720p59.94 MPEG-2 of 24 fps film),
+`mpdecimate` landed anywhere between 26 and 42 fps depending on the episode's grain and
+chroma noise, and pushing the thresholds started deleting real frames before it reached the
+duplicates. Weaving each pair of 60p frames back into one 30i frame
+(`tinterlace=mode=interleave_top`, or `interleave_bottom` for BFF) and running
+`fieldmatch,decimate` reunites the real fields — `idet` reads the woven stream as pure
+TFF — and lands on 23.98 fps on every episode tried, with nothing interpolated. Prefer
+`ivtc` for telecined film; keep `mpdecimate` for genuinely duplicated frames.
 
-If you pick this up, you'll need the tools and real Dolby Vision content — do not ship
-it on the strength of it compiling.
+**Not `tinterlace=mode=merge`.** It recovers the same cadence, which is how it passed the
+first frame-count experiment — but it stacks the pair into a *double-height* frame, so a
+later height-based resize (`scale=-2:1080`) silently halves the width. The 828×1080 outputs
+it produced were caught by probing the result's dimensions, not by counting its frames:
+when a chain changes frame geometry, probe `width`×`height` on the output, not just `nb_frames`.
+
+### HDR10+ / Dolby Vision passthrough is experimental and opt-in
+
+Dynamic HDR metadata is detected and warned about, and — only when
+`EncodeRequest.PreserveDynamicHdr` is set (`--preserve-dynamic-hdr`, or the GUI toggle) —
+`DynamicHdrPreserver` (`Moist.Core/Media`) tries to carry it across the re-encode: demux
+HEVC → `dovi_tool extract-rpu` / `hdr10plus_tool extract` from the source → `inject-rpu` /
+`inject` into the encoded stream → remux. The muxer runs it in `OnBeforeStart` (after the
+video job finished, before the mux) against the temp video; `AppServices` threads the tool
+paths in late-bound like every other tool. Both tools auto-download from Settings.
+
+**It is unverified.** Neither real Dolby Vision content nor the tools were on the machine it
+was written on, so it is contracted to never throw and never to touch the encoded file unless
+the whole round-trip succeeded (temp file + atomic move); any failure logs and the plain
+encode proceeds. `Warnings()` says so whenever it's enabled. The argument builders are
+unit-tested; the round-trip is not. Verify against real DV / HDR10+ content before trusting
+the output or removing the "experimental" label.
 
 ### Theming is additive
 
@@ -492,7 +518,8 @@ All under `%AppData%/moist` (Windows) / `~/.config/moist` (Linux/macOS) — the 
 - `profiles/*.json` — one file per profile, built-ins included
 - `plugins/*.dll` — scanned recursively at startup; `IPlugin` types with a parameterless ctor are instantiated and given `Register(EncoderRegistry, JobQueue)`. Load failures are logged and skipped.
 - `tools/` — auto-downloaded tool binaries
-- `logs/moist_<timestamp>.log` — per-session; last 10 kept. Completed/failed job output is appended here via `AppServices.WriteJobLogToFile`.
+- `logs/moist_<timestamp>.log` — per-session; last 10 kept. **Everything the app logs** lands here (`FileLoggerProvider` in `Moist.Core/Diagnostics`, registered beside the console provider in `AppServices`), plus completed/failed job output via `AppServices.WriteJobLogToFile`. It used to receive only the job output, so a failure outside a queued job — a preview, a probe, a tool download — left no trace once the console scrolled (and the GUI has no console).
+- `logs/crash_<timestamp>.log` — one per unhandled exception or unobserved task fault, written by `CrashLog` (`Moist.Core/Diagnostics`), which both entry points install first thing in `Program.Main`. Deliberately independent of the logging pipeline so it still works when that has failed or isn't built yet.
 - `queue.json` — written on close, consumed once on startup (see the persistence gap above)
 - `watch-<hash>.json` — per-watched-folder record of already-handled files, so `moist watch` doesn't re-encode on restart
 

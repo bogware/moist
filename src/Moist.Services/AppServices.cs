@@ -97,15 +97,27 @@ public sealed class AppServices : IDisposable
         Directory.CreateDirectory(logDir);
         LogFilePath = Path.Combine(logDir, $"moist_{DateTime.Now:yyyyMMdd_HHmmss}.log");
 
+        // The console's verbosity and the session file's detail are deliberately separate.
+        // minimumLogLevel is a CONSOLE concern (the CLI raises it so logs don't pollute its
+        // output); the file always gets full detail, because it is what you read after
+        // something went wrong. The global minimum must therefore be the lower of the two —
+        // a global threshold filters before any provider sees the line.
+        const LogLevel fileLevel = LogLevel.Debug;
         LoggerFactory = Microsoft.Extensions.Logging.LoggerFactory.Create(builder =>
         {
             builder
-                .SetMinimumLevel(minimumLogLevel)
+                .SetMinimumLevel(fileLevel < minimumLogLevel ? fileLevel : minimumLogLevel)
+                .AddFilter<Microsoft.Extensions.Logging.Console.ConsoleLoggerProvider>(level => level >= minimumLogLevel)
                 .AddSimpleConsole(options =>
                 {
                     options.TimestampFormat = "[yyyy-MM-dd HH:mm:ss] ";
                     options.SingleLine = true;
-                });
+                })
+                // Everything the app logs also goes to the session file. Previously only job
+                // output was written there, so a failure outside a queued job — a preview, a
+                // probe, a tool download — left no trace on disk once the console scrolled
+                // (and the GUI has no console at all).
+                .AddProvider(new Core.Diagnostics.FileLoggerProvider(LogFilePath, fileLevel));
 
             if (logToStandardError)
             {
