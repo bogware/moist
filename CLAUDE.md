@@ -127,6 +127,21 @@ not a global stream number, which would shift depending on whether video is pres
 Audio-only output uses the first selected track — a single file can't hold several
 encoded tracks without a mux step.
 
+### Streams that don't start together: anchor to the first video frame
+
+A broadcast capture or a stream-copied cut starts its video and audio at *different*
+timestamps — the recording begins mid-GOP, so the first decodable video frame is typically
+~1 s after the first audio packet (MeTV `.ts` captures measured 0.6–1.2 s). Because video and
+audio are encoded in separate jobs, each temp file starts at its own first packet, and a naive
+mux plays the picture ahead of the sound by the whole stagger. `FFprobeMediaAnalyzer` reads
+every stream's `start_time`, and `EncodeJobBuilder` anchors each audio track to the first
+video frame: a lead is trimmed at encode time (`AudioJob.TrimStart` → input-side `-ss`), a lag
+is delayed in the mux (`AudioTrackInput.DelayMs` → `-itsoffset`). The synthesized fixtures
+start all streams together, which is why this went unnoticed; `AvSyncTests` now uses a
+staggered fixture. Known gap: subtitles muxed straight from the source file stay on the
+source's timeline (a negative `-itsoffset` on one mux input risks `avoid_negative_ts` shifting
+the whole output), so on a staggered source they can run early by the stagger.
+
 ### Codec ↔ container compatibility
 
 `ContainerCompatibility` (in `Moist.Core/Muxers`) holds the allow-lists for what each container can carry under `-c copy`, plus the bitstream filter some containers need. Both front-ends call `EncodeJobBuilder.Validate()` **before** enqueuing, because otherwise the video and audio encodes run to completion and only the final mux fails.
@@ -275,6 +290,23 @@ Only NVENC is verified on real hardware here (RTX 4080). QSV, AMF, VideoToolbox 
 VA-API are implemented from their documented interfaces and correctly *detected* as
 absent, but their encode paths are unproven.
 
+### Hung tools are killed, not waited on
+
+Every external tool runs under `ProcessWatchdog` (`Moist.Core/Jobs/`): if neither pipe
+produces a line for `StallTimeout` (15 min by default) the process tree is killed and the job
+fails with a `TimeoutException` that says so. `CommandLineProcessor` applies it to every
+encoder, muxer and probe; `RealEsrganVideoProcessor` and `RifeVideoProcessor` call it directly
+for each of their steps because they don't inherit from `CommandLineProcessor`. The budget is
+deliberately generous — a false positive kills real work — and a processor can override
+`StallTimeout` if its tool is legitimately quiet for long stretches.
+
+The watchdog only works because **every tool moist runs emits a heartbeat**: ffmpeg via
+`-progress pipe:1` (or its stats line), x264/x265 via their status line, Real-ESRGAN and RIFE
+via per-frame percentages. If you add a tool invocation, make sure it reports continuously —
+or that you pass `-progress`/`-stats` — otherwise the watchdog will kill it mid-work. The
+Real-ESRGAN frame *extraction* is the cautionary example: it ran ffmpeg with no progress
+output for minutes at a time, which looked identical to a hang.
+
 ### Two-pass encoding mutates the job
 
 `TwoPassProcessor` runs the inner processor twice against the *same* `VideoJob`, temporarily overwriting `OutputFile` (to `NUL`/`/dev/null` for pass 1) and `Settings.CustomArgs` (appending `-pass N -passlogfile …`, or `--pass N --stats …` for `cli-` encoders). A `finally` block restores `OutputFile`, `Name`, `CustomArgs`, and `PixelFormat`. Any new mutable field touched during a pass must be added to both the snapshot and the restore.
@@ -349,6 +381,16 @@ Things that path gets right on purpose:
   upscaled frames never all land at once and it handles full films, not just clips. The work dir is
   keyed on source+settings (`WorkKey`) and only cleaned on success, so an interrupted run **resumes**
   by reusing finished segments.
+- **The encode rate is measured, not assumed.** The pre-clean runs *before* the frames hit
+  disk, and a cadence filter in it (`ivtc`, `fps`, `decimate`) changes the rate those frames must
+  be encoded at. `MeasureOutputRateAsync` runs a dozen frames through the same chain with
+  `settb=AVTB,showinfo` appended and snaps the median frame period to an exact rational
+  (`ResolveOutputFrameRate`), so an ivtc'd 59.94 capture encodes at `24000/1001` rather than the
+  source's `60000/1001` — which played the picture at 2.5× against the audio. Don't replace this
+  with ffmpeg's `-progress` counters: `frame=` and `out_time=` lag each other under threaded PNG
+  encoding and the slope between them was off by 9%. Trims (`TrimStart`/`TrimFrames`/
+  `TrimDuration`) are applied to extraction and are part of `WorkKey`, so a snippet preview
+  neither upscales the whole film nor leaves a scratch the full encode would "resume" from.
 - **It's a tool, so it's optional.** `realesrgan-ncnn-vulkan` is in `ToolDiscovery.KnownTools`
   (auto-downloadable), and the processor refuses with a pointer to Settings when it's absent.
 

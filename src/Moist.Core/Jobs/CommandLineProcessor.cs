@@ -83,9 +83,14 @@ public abstract class CommandLineProcessor : IJobProcessor
                 outputLines.TryDequeue(out _);
         }
 
+        // Heartbeat for the stall watchdog: every line of output, on either pipe, proves the
+        // tool is alive. Read/written with Volatile — the handlers run on pool threads.
+        var lastOutputTicks = DateTime.UtcNow.Ticks;
+
         process.OutputDataReceived += (_, e) =>
         {
             if (e.Data is null) return;
+            Volatile.Write(ref lastOutputTicks, DateTime.UtcNow.Ticks);
             RecordTail(e.Data);
             job.AppendLog(e.Data);
             var p = ParseOutputLine(e.Data, job);
@@ -95,6 +100,7 @@ public abstract class CommandLineProcessor : IJobProcessor
         process.ErrorDataReceived += (_, e) =>
         {
             if (e.Data is null) return;
+            Volatile.Write(ref lastOutputTicks, DateTime.UtcNow.Ticks);
             RecordTail(e.Data);
             job.AppendLog(e.Data);
             var p = ParseOutputLine(e.Data, job);
@@ -115,7 +121,7 @@ public abstract class CommandLineProcessor : IJobProcessor
 
         try
         {
-            await process.WaitForExitAsync(ct);
+            await WaitForExitOrStallAsync(process, () => Volatile.Read(ref lastOutputTicks), ct);
         }
         catch (OperationCanceledException)
         {
@@ -158,6 +164,23 @@ public abstract class CommandLineProcessor : IJobProcessor
     /// </summary>
     protected virtual Task OnAfterSuccessAsync(Job job, CancellationToken ct) => Task.CompletedTask;
     protected virtual bool IsSuccessExitCode(int code) => code == 0;
+
+    /// <summary>
+    /// How long the tool may go without printing anything before it is declared stalled and
+    /// killed. Every tool run through here reports progress continuously (ffmpeg's
+    /// <c>-progress</c>, the x264/x265 status line, the mux's size/time counters), so prolonged
+    /// silence means a hang — a stuck read from a network share, a deadlocked filter, a wedged
+    /// GPU driver — not slow work. Without this, an unattended batch sits on a hung job forever.
+    /// Override per processor if a tool is legitimately quiet for long stretches.
+    /// </summary>
+    protected virtual TimeSpan StallTimeout => ProcessWatchdog.DefaultStallTimeout;
+
+    /// <summary>
+    /// Wait for the process to exit, but give up — killing it — if <see cref="StallTimeout"/>
+    /// passes with no output on either pipe. Shared with the AI processors via <see cref="ProcessWatchdog"/>.
+    /// </summary>
+    private Task WaitForExitOrStallAsync(Process process, Func<long> lastOutputTicks, CancellationToken ct)
+        => ProcessWatchdog.WaitForExitOrStallAsync(process, lastOutputTicks, StallTimeout, DisplayName, Logger, ct);
 
     /// <summary>Wraps a string in double quotes for CLI argument use.</summary>
     protected static string Quote(string s) => $"\"{s}\"";

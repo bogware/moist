@@ -313,11 +313,11 @@ public sealed class AppServices : IDisposable
         // real encoder (x265, …), so FFmpegVideoProcessor.CanProcess would also claim it — this must
         // be registered first so it wins via CanProcess (AiUpscaleModel set). Factory: per-job state.
         JobQueue.RegisterProcessorFactory(() => new RealEsrganVideoProcessor(
-            Settings.FFmpegPath, Settings.FFprobePath, Settings.RealEsrganPath, Settings.TempDirectory));
+            Settings.FFmpegPath, Settings.FFprobePath, Settings.RealEsrganPath, Settings.TempDirectory, LoggerFactory));
 
         // RIFE AI frame interpolation, likewise before the normal encoders (CanProcess: RifeTargetFps set).
         JobQueue.RegisterProcessorFactory(() => new RifeVideoProcessor(
-            Settings.FFmpegPath, Settings.FFprobePath, Settings.RifePath, Settings.TempDirectory));
+            Settings.FFmpegPath, Settings.FFprobePath, Settings.RifePath, Settings.TempDirectory, LoggerFactory));
 
         // VapourSynth jobs (FilterEngineId == "vapoursynth") are piped vspipe -> ffmpeg. This is the
         // seam that lets a .vpy (incl. vs-mlrt ML nodes) reach the encoder; the FFmpeg engine's -vf

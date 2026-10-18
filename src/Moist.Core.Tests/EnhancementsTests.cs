@@ -120,4 +120,53 @@ public class EnhancementsTests
         var result = await preserver.PreserveAsync("src.mkv", "enc.mkv", hasDolbyVision: true, hasHdr10Plus: false);
         Assert.True(result.Outcome is DynamicHdrOutcome.ToolMissing or DynamicHdrOutcome.Failed);
     }
+
+    // ---- A/V alignment for staggered stream starts (broadcast captures, stream-copied cuts) ----
+
+    [Fact]
+    public void Build_TrimsLeadingAudio_WhenAudioStartsBeforeFirstVideoFrame()
+    {
+        // A MeTV-style capture: audio packets begin 0.78s before the first video keyframe.
+        var info = new MediaFileInfo
+        {
+            Duration = TimeSpan.FromSeconds(60),
+            Video = new VideoStreamInfo { Codec = "mpeg2video", Width = 1280, Height = 720, Framerate = 59.94, StartTime = TimeSpan.FromSeconds(2.18) },
+            AudioStreams = { new AudioStreamInfo { Index = 1, Codec = "ac3", StartTime = TimeSpan.FromSeconds(1.40) } },
+        };
+        var plan = EncodeJobBuilder.Build(Req(), info);
+
+        var audio = Assert.Single(plan.AudioJobs);
+        Assert.NotNull(audio.TrimStart);
+        Assert.InRange(audio.TrimStart!.Value.TotalMilliseconds, 779, 781);   // the lead is dropped at encode time
+        Assert.Equal(0, plan.Mux!.AudioInputs[0].DelayMs);
+    }
+
+    [Fact]
+    public void Build_DelaysAudioInMux_WhenAudioStartsAfterFirstVideoFrame()
+    {
+        var info = new MediaFileInfo
+        {
+            Duration = TimeSpan.FromSeconds(60),
+            Video = new VideoStreamInfo { Codec = "h264", Width = 1920, Height = 1080, Framerate = 24, StartTime = TimeSpan.Zero },
+            AudioStreams = { new AudioStreamInfo { Index = 1, Codec = "aac", StartTime = TimeSpan.FromSeconds(0.5) } },
+        };
+        var plan = EncodeJobBuilder.Build(Req(), info);
+
+        Assert.Null(plan.AudioJobs[0].TrimStart);
+        Assert.Equal(500, plan.Mux!.AudioInputs[0].DelayMs);                 // delayed in the mux, not trimmed
+    }
+
+    [Fact]
+    public void Build_LeavesAudioAlone_WhenStreamsStartTogether()
+    {
+        var info = new MediaFileInfo
+        {
+            Duration = TimeSpan.FromSeconds(60),
+            Video = new VideoStreamInfo { Codec = "h264", Width = 1920, Height = 1080, Framerate = 24 },
+            AudioStreams = { new AudioStreamInfo { Index = 1, Codec = "aac" } },
+        };
+        var plan = EncodeJobBuilder.Build(Req(), info);
+        Assert.Null(plan.AudioJobs[0].TrimStart);
+        Assert.Equal(0, plan.Mux!.AudioInputs[0].DelayMs);
+    }
 }

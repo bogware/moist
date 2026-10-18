@@ -20,6 +20,10 @@
                                     Command="{Binding ScanToolsCommand}"
                                     IsEnabled="{Binding !IsScanning}"
                                     Padding="12,4"/>
+                            <Button Content="Open Log Folder"
+                                    Command="{Binding OpenLogFolderCommand}"
+                                    ToolTip.Tip="Session logs and crash reports (crash_*.log) — attach these when reporting a problem"
+                                    Padding="12,4"/>
                         </StackPanel>
                     </DockPanel>
                     <TextBlock Text="{Binding ToolScanStatus}" Opacity="0.6" FontSize="12"

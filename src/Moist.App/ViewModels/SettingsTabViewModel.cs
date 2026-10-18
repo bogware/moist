@@ -67,6 +67,26 @@ public partial class SettingsTabViewModel : ViewModelBase
         _ = ScanToolsAsync();
     }
 
+    /// <summary>
+    /// Open the folder holding the session logs and any crash_*.log files — the first thing to
+    /// grab when reporting a problem, now that everything the app logs actually lands there.
+    /// </summary>
+    [RelayCommand]
+    private void OpenLogFolder()
+    {
+        var dir = Path.GetDirectoryName(_services.LogFilePath);
+        if (string.IsNullOrEmpty(dir)) dir = Core.Diagnostics.CrashLog.LogDirectory;
+        try
+        {
+            Directory.CreateDirectory(dir);
+            Process.Start(new ProcessStartInfo { FileName = dir, UseShellExecute = true });
+        }
+        catch (Exception ex)
+        {
+            ToolScanStatus = $"Couldn't open the log folder: {ex.Message}";
+        }
+    }
+
     [RelayCommand]
     private async Task ScanToolsAsync()
     {

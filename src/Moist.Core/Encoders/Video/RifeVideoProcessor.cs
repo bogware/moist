@@ -1,6 +1,8 @@
 using System.Diagnostics;
 using System.Globalization;
 using System.Text.RegularExpressions;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Moist.Core.Jobs;
 
 namespace Moist.Core.Encoders.Video;
@@ -21,14 +23,17 @@ public sealed partial class RifeVideoProcessor : IJobProcessor
     private readonly string _ffprobePath;
     private readonly string _rifePath;
     private readonly string _tempDir;
+    private readonly ILogger _logger;
     private const string Model = "rife-v4.6"; // best quality; ships with the tool
 
-    public RifeVideoProcessor(string ffmpegPath, string ffprobePath, string rifePath, string tempDir)
+    public RifeVideoProcessor(string ffmpegPath, string ffprobePath, string rifePath, string tempDir,
+        ILoggerFactory? loggerFactory = null)
     {
         _ffmpegPath = ffmpegPath;
         _ffprobePath = ffprobePath;
         _rifePath = rifePath;
         _tempDir = tempDir;
+        _logger = loggerFactory?.CreateLogger<RifeVideoProcessor>() ?? NullLogger<RifeVideoProcessor>.Instance;
     }
 
     public string Id => "rife";
@@ -46,8 +51,10 @@ public sealed partial class RifeVideoProcessor : IJobProcessor
                 "(or run 'moist tools'), then try again.");
 
         var sw = Stopwatch.StartNew();
-        var (srcFps, srcFrames) = await ProbeAsync(vj.InputFile, ct);
-        var target = TargetFrameCount(srcFrames, srcFps, vj.RifeTargetFps);
+        var (srcRate, srcFps, srcFrames) = await ProbeAsync(vj.InputFile, ct);
+        srcFrames = RealEsrganVideoProcessor.EstimateTrimmedFrames(vj, srcRate, srcFrames);
+        _logger.LogInformation("{Processor} starting job {JobId}: ~{SrcFrames} frames at {SrcFps} fps -> {TargetFps} fps, encoder {Encoder}",
+            DisplayName, vj.Id, srcFrames, srcFps, vj.RifeTargetFps, vj.EncoderId);
 
         var work = Path.Combine(_tempDir, $"rife_{vj.Id}");
         var framesIn = Path.Combine(work, "in");
@@ -59,21 +66,38 @@ public sealed partial class RifeVideoProcessor : IJobProcessor
         {
             // Extract frames (any FilterScript is applied here), interpolate to the target count,
             // then encode at the requested rate. Reuses Real-ESRGAN's extract/codec builders.
-            Report(progress, 3, "Extracting frames", sw);
-            await RunAsync(_ffmpegPath, RealEsrganVideoProcessor.BuildExtractArgs(vj, Path.Combine(framesIn, "%06d.png")), null, ct);
-            if (!Directory.EnumerateFiles(framesIn, "*.png").Any())
-                throw new InvalidOperationException("Frame extraction produced no frames.");
+            // The target count is computed from what is actually extracted, at the rate it actually
+            // has: a cadence-changing pre-filter (ivtc, fps) or a trim would otherwise make RIFE
+            // synthesize the wrong number of frames and the output would run at the wrong speed.
+            var postRate = await RealEsrganVideoProcessor.MeasureOutputRateAsync(_ffmpegPath, vj, srcRate, _logger, ct);
+            var postFps = ParseFraction(postRate);
 
-            await RunAsync(_rifePath, BuildRifeArgs(framesIn, framesOut, ModelDir(), target),
+            Report(progress, 1, "Extracting frames", sw);
+            var extractArgs = RealEsrganVideoProcessor.BuildExtractArgs(vj, Path.Combine(framesIn, "%06d.png"));
+            LogCommand(vj, "extract", _ffmpegPath, extractArgs);
+            await RunAsync(_ffmpegPath, extractArgs,
+                line => RealEsrganVideoProcessor.ReportExtractProgress(line, srcFrames, progress, sw, 1, 7), ct, vj);
+            var extracted = Directory.EnumerateFiles(framesIn, "*.png").Count();
+            if (extracted == 0)
+                throw new InvalidOperationException("Frame extraction produced no frames.");
+            var target = TargetFrameCount(extracted, postFps, vj.RifeTargetFps);
+            _logger.LogInformation("{Processor} job {JobId}: extracted {Frames} frames at {Rate} fps -> {Target} frames at {TargetFps} fps",
+                DisplayName, vj.Id, extracted, postRate, target, vj.RifeTargetFps);
+
+            var rifeArgs = BuildRifeArgs(framesIn, framesOut, ModelDir(), target);
+            LogCommand(vj, "interpolate", _rifePath, rifeArgs);
+            await RunAsync(_rifePath, rifeArgs,
                 line =>
                 {
                     var m = PercentRegex().Match(line);
                     if (m.Success && double.TryParse(m.Groups[1].Value, CultureInfo.InvariantCulture, out var pct))
                         Report(progress, 8 + pct / 100.0 * 80, "Interpolating (RIFE)", sw);
-                }, ct);
+                }, ct, vj);
 
             Report(progress, 90, "Encoding", sw);
-            await RunAsync(_ffmpegPath, BuildEncodeArgs(vj, Path.Combine(framesOut, "%06d.png")), null, ct);
+            var encodeArgs = BuildEncodeArgs(vj, Path.Combine(framesOut, "%06d.png"));
+            LogCommand(vj, "encode", _ffmpegPath, encodeArgs);
+            await RunAsync(_ffmpegPath, encodeArgs, null, ct, vj);
 
             // RIFE's whole purpose is changing the frame count, so verify it landed on the target —
             // a wrong count leaves the video's duration out of step with the untouched audio and the
@@ -82,10 +106,14 @@ public sealed partial class RifeVideoProcessor : IJobProcessor
             {
                 var outFrames = await CountFramesAsync(vj.OutputFile, ct);
                 if (outFrames > 0 && Math.Abs(outFrames - target) > 1)
+                {
+                    _logger.LogError("{Processor} job {JobId}: output has {Out} frames but {Target} were targeted", DisplayName, vj.Id, outFrames, target);
                     throw new InvalidOperationException(
                         $"RIFE output has {outFrames} frames but {target} were targeted — refusing a desynced result.");
+                }
             }
 
+            _logger.LogInformation("{Processor} job {JobId} finished in {Elapsed:g}", DisplayName, vj.Id, sw.Elapsed);
             Report(progress, 100, "Done", sw);
         }
         finally
@@ -142,7 +170,7 @@ public sealed partial class RifeVideoProcessor : IJobProcessor
         return Directory.Exists(m) ? m : null;
     }
 
-    private async Task<(double Fps, long Frames)> ProbeAsync(string input, CancellationToken ct)
+    private async Task<(string Rate, double Fps, long Frames)> ProbeAsync(string input, CancellationToken ct)
     {
         var psi = new ProcessStartInfo
         {
@@ -157,12 +185,13 @@ public sealed partial class RifeVideoProcessor : IJobProcessor
         }) psi.ArgumentList.Add(a);
         var outText = await RunProbeAsync(psi, ct);
 
-        var fps = ParseFraction(Match(outText, "r_frame_rate") ?? "25/1");
+        var rate = Match(outText, "r_frame_rate") ?? "25/1";
+        var fps = ParseFraction(rate);
         long frames = 0;
         if (long.TryParse(Match(outText, "nb_frames"), out var nb) && nb > 0) frames = nb;
         else if (double.TryParse(Match(outText, "duration"), NumberStyles.Float, CultureInfo.InvariantCulture, out var dur) && dur > 0)
             frames = (long)Math.Round(dur * fps);
-        return (fps, frames);
+        return (rate, fps, frames);
     }
 
     /// <summary>Decode-count the frames in <paramref name="file"/> (ffprobe -count_frames), used to
@@ -205,7 +234,15 @@ public sealed partial class RifeVideoProcessor : IJobProcessor
         return await outTask;
     }
 
-    private static async Task RunAsync(string exe, string[] args, Action<string>? onLine, CancellationToken ct)
+    private void LogCommand(Job? logJob, string label, string exe, string[] args)
+    {
+        logJob?.AppendLog($"[{label}] {Path.GetFileName(exe)} {string.Join(' ', args)}");
+        _logger.LogInformation("{Processor} [{Step}] {Exe} {Args}", DisplayName, label, Path.GetFileName(exe), string.Join(' ', args));
+    }
+
+    /// <summary>Same contract as Real-ESRGAN's runner: every output line is a heartbeat for the
+    /// stall watchdog and lands in the job log; a silent tool is killed, not waited on forever.</summary>
+    private async Task RunAsync(string exe, string[] args, Action<string>? onLine, CancellationToken ct, Job? logJob = null)
     {
         var psi = new ProcessStartInfo
         {
@@ -215,16 +252,43 @@ public sealed partial class RifeVideoProcessor : IJobProcessor
         foreach (var a in args) psi.ArgumentList.Add(a);
         using var p = new Process { StartInfo = psi };
         var tail = new Queue<string>();
-        void Sink(string? line) { if (line is null) return; onLine?.Invoke(line); tail.Enqueue(line); while (tail.Count > 12) tail.Dequeue(); }
+        var lastOutputTicks = DateTime.UtcNow.Ticks;
+        void Sink(string? line)
+        {
+            if (line is null) return;
+            Volatile.Write(ref lastOutputTicks, DateTime.UtcNow.Ticks);
+            onLine?.Invoke(line);
+            logJob?.AppendLog(line);
+            lock (tail) { tail.Enqueue(line); while (tail.Count > 12) tail.Dequeue(); }
+        }
         p.OutputDataReceived += (_, e) => Sink(e.Data);
         p.ErrorDataReceived += (_, e) => Sink(e.Data);
-        if (!p.Start()) throw new InvalidOperationException($"Failed to start {Path.GetFileName(exe)}.");
+        if (!p.Start())
+        {
+            _logger.LogError("{Processor}: failed to start {Exe}", DisplayName, exe);
+            throw new InvalidOperationException($"Failed to start {Path.GetFileName(exe)}.");
+        }
+        _logger.LogDebug("{Processor}: {Exe} started (PID {Pid})", DisplayName, Path.GetFileName(exe), p.Id);
         p.BeginOutputReadLine();
         p.BeginErrorReadLine();
-        try { await p.WaitForExitAsync(ct); }
-        catch (OperationCanceledException) { if (!p.HasExited) p.Kill(entireProcessTree: true); throw; }
+        try
+        {
+            await ProcessWatchdog.WaitForExitOrStallAsync(p, () => Volatile.Read(ref lastOutputTicks),
+                ProcessWatchdog.DefaultStallTimeout, $"{DisplayName} ({Path.GetFileName(exe)})", _logger, ct);
+        }
+        catch (OperationCanceledException)
+        {
+            _logger.LogWarning("{Processor}: cancelled, killing {Exe}", DisplayName, Path.GetFileName(exe));
+            try { if (!p.HasExited) p.Kill(entireProcessTree: true); } catch { /* best effort */ }
+            throw;
+        }
         if (p.ExitCode != 0)
-            throw new InvalidOperationException($"{Path.GetFileName(exe)} exited with code {p.ExitCode}.\n{string.Join("\n", tail)}");
+        {
+            string tailText;
+            lock (tail) tailText = string.Join("\n", tail);
+            _logger.LogError("{Processor}: {Exe} exited with code {Code}\n{Tail}", DisplayName, Path.GetFileName(exe), p.ExitCode, tailText);
+            throw new InvalidOperationException($"{Path.GetFileName(exe)} exited with code {p.ExitCode}.\n{tailText}");
+        }
     }
 
     private static void Report(IProgress<JobProgress> progress, double percent, string status, Stopwatch sw)

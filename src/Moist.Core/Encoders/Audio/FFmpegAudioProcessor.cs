@@ -33,15 +33,22 @@ public partial class FFmpegAudioProcessor : CommandLineProcessor
         _stopwatch.Reset();
         var aj = (AudioJob)job;
         var s = aj.Settings;
-        var args = new List<string>
-        {
-            "-y", "-hide_banner", "-progress", "pipe:1",
+        var args = new List<string> { "-y", "-hide_banner", "-progress", "pipe:1" };
+
+        // A/V alignment: when the audio stream began before the first video frame, drop that
+        // lead so this track starts at the same instant the video encode does. Input-side -ss
+        // is sample-accurate for audio and costs nothing.
+        if (aj.TrimStart is { } trimStart && trimStart > TimeSpan.Zero)
+            args.AddRange(["-ss", trimStart.TotalSeconds.ToString("F3", System.Globalization.CultureInfo.InvariantCulture)]);
+
+        args.AddRange(
+        [
             "-i", Quote(aj.InputFile),
             "-vn",
             // Select specific audio stream
             "-map", $"0:a:{aj.AudioStreamIndex}",
-            "-c:a", GetFfmpegCodecName()
-        };
+            "-c:a", GetFfmpegCodecName(),
+        ]);
 
         // Passthrough mode: skip all encoding options
         if (_codec == "copy")

@@ -500,6 +500,14 @@ public static class EncodeJobBuilder
             var source = info?.AudioStreams.ElementAtOrDefault(sourceIndex);
             var label = source?.Language is { } lang ? $" [{lang}]" : $" #{sourceIndex}";
 
+            // A/V alignment. The video and audio are encoded separately and the video encode
+            // starts at the first video frame — but in a broadcast capture or a stream-copied
+            // cut the audio typically begins ~1 s earlier (the recording starts mid-GOP), and
+            // some sources have it begin later. Muxing the two temps naively plays the picture
+            // out of lip-sync by that whole stagger. Anchor every track to the first video
+            // frame: trim a lead at encode time, delay a lag in the mux.
+            var lead = AudioLead(info, source);
+
             audioJobs.Add(new AudioJob
             {
                 Name = $"Audio{label}: {Path.GetFileName(req.InputFile)}",
@@ -509,6 +517,7 @@ public static class EncodeJobBuilder
                 Settings = CreateAudioSettings(req),
                 TotalDurationSeconds = info?.Duration.TotalSeconds ?? 0,
                 AudioStreamIndex = sourceIndex,
+                TrimStart = lead > TimeSpan.Zero ? lead : null,
             });
 
             audioInputs.Add(new AudioTrackInput
@@ -517,6 +526,7 @@ public static class EncodeJobBuilder
                 Language = source?.Language,
                 TrackName = source?.Title,
                 IsDefault = position == 0,
+                DelayMs = lead < TimeSpan.Zero ? (int)Math.Round(-lead.TotalMilliseconds) : 0,
             });
         }
 
@@ -748,6 +758,16 @@ public static class EncodeJobBuilder
         s.SampleFormat = req.AudioSampleFormat;
         return s;
     }
+
+    /// <summary>
+    /// How far an audio stream's first packet precedes the first video frame. Positive: the
+    /// audio leads, and that lead is trimmed at encode time; negative: the audio starts late,
+    /// and it is delayed in the mux. Everything anchors to the first video frame because that
+    /// is where the video encode — and therefore the output — begins. Zero when nothing is
+    /// known (no probe, or a clean source whose streams start together).
+    /// </summary>
+    internal static TimeSpan AudioLead(MediaFileInfo? info, AudioStreamInfo? audio)
+        => info?.Video is null || audio is null ? TimeSpan.Zero : info.Video.StartTime - audio.StartTime;
 
     /// <summary>
     /// Whether a container can carry a subtitle of the given source codec. Matroska carries

@@ -1,6 +1,8 @@
 using System.Diagnostics;
 using System.Globalization;
 using System.Text.RegularExpressions;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Moist.Core.Jobs;
 
 namespace Moist.Core.Encoders.Video;
@@ -23,13 +25,16 @@ public sealed partial class RealEsrganVideoProcessor : IJobProcessor
     private readonly string _ffprobePath;
     private readonly string _realesrganPath;
     private readonly string _tempDir;
+    private readonly ILogger _logger;
 
-    public RealEsrganVideoProcessor(string ffmpegPath, string ffprobePath, string realesrganPath, string tempDir)
+    public RealEsrganVideoProcessor(string ffmpegPath, string ffprobePath, string realesrganPath, string tempDir,
+        ILoggerFactory? loggerFactory = null)
     {
         _ffmpegPath = ffmpegPath;
         _ffprobePath = ffprobePath;
         _realesrganPath = realesrganPath;
         _tempDir = tempDir;
+        _logger = loggerFactory?.CreateLogger<RealEsrganVideoProcessor>() ?? NullLogger<RealEsrganVideoProcessor>.Instance;
     }
 
     public string Id => "realesrgan";
@@ -54,24 +59,40 @@ public sealed partial class RealEsrganVideoProcessor : IJobProcessor
                 "(or run 'moist tools'), or set its path, then try again.");
 
         var stopwatch = Stopwatch.StartNew();
-        var (frameRate, _) = await ProbeAsync(vj.InputFile, ct);
+        var (sourceRate, estimatedFrames) = await ProbeAsync(vj.InputFile, ct);
+        estimatedFrames = EstimateTrimmedFrames(vj, sourceRate, estimatedFrames);
+        _logger.LogInformation("{Processor} starting job {JobId}: model {Model}, ~{Frames} frames at {Fps} fps, encoder {Encoder}",
+            DisplayName, vj.Id, ResolveModel(vj.AiUpscaleModel), estimatedFrames, sourceRate, vj.EncoderId);
 
         // Deterministic work dir keyed on source + settings, so an interrupted run resumes (finished
         // segments are reused) rather than starting the whole slog over.
         var work = Path.Combine(_tempDir, $"realesrgan_{WorkKey(vj)}");
         var framesIn = Path.Combine(work, "in");
+        // The output frame rate is *measured* during extraction (the pre-clean may change the
+        // cadence — ivtc, fps, decimate) and recorded here so a resume that skips extraction
+        // still encodes at the right rate.
         Directory.CreateDirectory(framesIn);
 
         var success = false;
         try
         {
+            // The pre-clean may change the cadence (ivtc 59.94 → 23.976, fps=, decimate), so the
+            // rate the frames are encoded at is measured through that same chain — encoding ivtc'd
+            // frames at the *source* rate played them at 2.5× speed against the untouched audio.
+            var frameRate = await MeasureOutputRateAsync(_ffmpegPath, vj, sourceRate, _logger, ct);
+
             // 1) Extract cleaned frames once (FilterScript = the pre-clean). Skipped on resume.
             if (!Directory.EnumerateFiles(framesIn, "*.png").Any())
             {
-                Report(progress, 2, "Extracting frames", stopwatch);
+                Report(progress, 1, "Extracting frames", stopwatch);
                 var extractArgs = BuildExtractArgs(vj, Path.Combine(framesIn, "%06d.png"));
                 LogCommand(vj, "extract", _ffmpegPath, extractArgs);
-                await RunAsync(_ffmpegPath, extractArgs, null, ct, vj);
+                await RunAsync(_ffmpegPath, extractArgs,
+                    line => ReportExtractProgress(line, estimatedFrames, progress, stopwatch), ct, vj);
+            }
+            else
+            {
+                _logger.LogInformation("{Processor} resuming job {JobId}: reusing extracted frames in {Dir}", DisplayName, vj.Id, framesIn);
             }
             var frames = Directory.GetFiles(framesIn, "*.png").OrderBy(f => f, StringComparer.Ordinal).ToList();
             if (frames.Count == 0) throw new InvalidOperationException("Frame extraction produced no frames.");
@@ -86,9 +107,13 @@ public sealed partial class RealEsrganVideoProcessor : IJobProcessor
             // 4) Verify nothing was lost — a re-encode that silently drops frames desyncs the audio.
             var outFrames = await CountFramesAsync(vj.OutputFile, ct);
             if (outFrames > 0 && Math.Abs(outFrames - frames.Count) > 1)
+            {
+                _logger.LogError("{Processor} job {JobId}: output has {Out} frames but {In} were upscaled", DisplayName, vj.Id, outFrames, frames.Count);
                 throw new InvalidOperationException(
                     $"Real-ESRGAN output has {outFrames} frames but {frames.Count} were upscaled — refusing a desynced result.");
+            }
 
+            _logger.LogInformation("{Processor} job {JobId} finished: {Frames} frames in {Elapsed:g}", DisplayName, vj.Id, frames.Count, stopwatch.Elapsed);
             Report(progress, 100, "Done", stopwatch);
             success = true;
         }
@@ -102,9 +127,10 @@ public sealed partial class RealEsrganVideoProcessor : IJobProcessor
     private const int WindowFrames = 900;
 
     /// <summary>Stable key for the work dir: the same source + settings resume the same scratch.</summary>
-    private static string WorkKey(VideoJob vj)
+    internal static string WorkKey(VideoJob vj)
     {
-        var raw = $"{vj.InputFile}|{vj.AiUpscaleModel}|{vj.AiUpscaleHeight}|{vj.EncoderId}|{vj.Settings.Quality}|{vj.FilterScript}";
+        var raw = $"{vj.InputFile}|{vj.AiUpscaleModel}|{vj.AiUpscaleHeight}|{vj.EncoderId}|{vj.Settings.Quality}|{vj.FilterScript}"
+                + $"|{vj.TrimStart?.Ticks}|{vj.TrimDuration?.Ticks}|{vj.TrimFrames}";
         return Convert.ToHexString(System.Security.Cryptography.SHA1.HashData(System.Text.Encoding.UTF8.GetBytes(raw)))[..12];
     }
 
@@ -159,7 +185,13 @@ public sealed partial class RealEsrganVideoProcessor : IJobProcessor
             var seg = Path.Combine(segDir, $"seg_{i:D5}.mkv");
 
             // Resume: reuse a segment already fully encoded to the right length.
-            if (File.Exists(seg) && await CountFramesAsync(seg, ct) == count) { segments.Add(seg); continue; }
+            if (File.Exists(seg) && await CountFramesAsync(seg, ct) == count)
+            {
+                _logger.LogInformation("{Processor} job {JobId}: window {Window}/{Windows} already encoded, reusing {Segment}",
+                    DisplayName, vj.Id, i + 1, windows.Count, Path.GetFileName(seg));
+                segments.Add(seg);
+                continue;
+            }
 
             var winIn = Path.Combine(work, "win");
             if (Directory.Exists(winIn)) Directory.Delete(winIn, recursive: true);
@@ -168,6 +200,8 @@ public sealed partial class RealEsrganVideoProcessor : IJobProcessor
             for (var f = start; f < start + count; f++)
                 File.Copy(frames[f], Path.Combine(winIn, Path.GetFileName(frames[f])), overwrite: true);
 
+            _logger.LogInformation("{Processor} job {JobId}: window {Window}/{Windows} (frames {Start}-{End})",
+                DisplayName, vj.Id, i + 1, windows.Count, start, start + count - 1);
             var baseP = 5 + (double)i / windows.Count * 92;
             var spanP = 92.0 / windows.Count;
             await UpscaleSegmentAsync(vj, work, winIn, FrameNumber(frames[start]), frameRate, seg, progress, sw, baseP, baseP + spanP * 0.9, ct);
@@ -201,11 +235,22 @@ public sealed partial class RealEsrganVideoProcessor : IJobProcessor
 
     internal static string[] BuildExtractArgs(VideoJob vj, string framesPattern)
     {
-        var args = new List<string> { "-y", "-hide_banner", "-i", vj.InputFile };
+        // -progress on stdout gives the stall watchdog a heartbeat and the bar a frame count; the
+        // human stats line is suppressed so the two don't interleave in the job log.
+        var args = new List<string> { "-y", "-hide_banner", "-nostats", "-progress", "pipe:1" };
+        // Trims are not optional: snippet previews and quality probes encode a piece of the source,
+        // and ignoring them here would upscale the whole film for a 3-second preview.
+        if (vj.TrimStart is { } trimStart)
+            args.AddRange(["-ss", trimStart.TotalSeconds.ToString("F6", CultureInfo.InvariantCulture)]);
+        args.AddRange(["-i", vj.InputFile]);
         // Pre-clean before the AI upscale — an AI model sharpens block noise as happily as detail.
         if (!string.IsNullOrWhiteSpace(vj.FilterScript))
             args.AddRange(["-vf", vj.FilterScript]);
-        // Passthrough: exactly one PNG per source frame, so the count can be verified later.
+        if (vj.TrimFrames is { } trimFrames)
+            args.AddRange(["-frames:v", trimFrames.ToString(CultureInfo.InvariantCulture)]);
+        else if (vj.TrimDuration is { } trimDuration)
+            args.AddRange(["-t", trimDuration.TotalSeconds.ToString("F3", CultureInfo.InvariantCulture)]);
+        // Passthrough: exactly one PNG per (filtered) frame, so the count can be verified later.
         args.AddRange(["-vsync", "0", framesPattern]);
         return [.. args];
     }
@@ -231,7 +276,7 @@ public sealed partial class RealEsrganVideoProcessor : IJobProcessor
         var args = new List<string>
         {
             "-y", "-hide_banner", "-progress", "pipe:1",
-            "-framerate", frameRate,          // the source rate, so playback speed is preserved
+            "-framerate", frameRate,          // the rate measured after the pre-clean, so playback speed is preserved
             "-start_number", startNumber.ToString(CultureInfo.InvariantCulture),
             "-i", framesPattern,
             // Scale the AI-upscaled frames to the exact target height (aspect preserved), then a light
@@ -260,6 +305,157 @@ public sealed partial class RealEsrganVideoProcessor : IJobProcessor
         // overwrite the final file and left segments/ empty, so the concat step failed at ~99%.
         args.Add(outFile);
         return [.. args];
+    }
+
+    /// <summary>
+    /// Measure the frame rate coming <i>out of</i> the pre-clean chain by running a dozen frames
+    /// through it with <c>settb=AVTB,showinfo</c> appended: showinfo then prints each output
+    /// frame's pts in microseconds, and the median spacing is the frame period. Exact for any
+    /// constant-rate output (ivtc, fps=, decimate, doubling), version-independent, sub-second.
+    /// Falls back to the source rate — with a warning — if ffmpeg fails or prints too little.
+    /// Shared with <see cref="RifeVideoProcessor"/>.
+    /// </summary>
+    internal static async Task<string> MeasureOutputRateAsync(string ffmpegPath, VideoJob vj, string sourceRate, ILogger logger, CancellationToken ct)
+    {
+        var psi = new ProcessStartInfo
+        {
+            FileName = ffmpegPath, UseShellExecute = false, CreateNoWindow = true,
+            RedirectStandardOutput = true, RedirectStandardError = true,
+        };
+        foreach (var a in BuildRateProbeArgs(vj)) psi.ArgumentList.Add(a);
+
+        string stderr;
+        try
+        {
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            timeout.CancelAfter(TimeSpan.FromSeconds(90));
+            using var p = Process.Start(psi) ?? throw new InvalidOperationException($"Failed to start {Path.GetFileName(ffmpegPath)}.");
+            var outTask = p.StandardOutput.ReadToEndAsync(timeout.Token);
+            var errTask = p.StandardError.ReadToEndAsync(timeout.Token);
+            try
+            {
+                await Task.WhenAll(outTask, errTask);
+                await p.WaitForExitAsync(timeout.Token);
+            }
+            catch (OperationCanceledException)
+            {
+                try { if (!p.HasExited) p.Kill(entireProcessTree: true); } catch { /* best effort */ }
+                if (ct.IsCancellationRequested) throw;
+                throw new TimeoutException("frame-rate probe produced no result within 90s");
+            }
+            stderr = await errTask;
+            if (p.ExitCode != 0)
+                throw new InvalidOperationException($"ffmpeg exited with code {p.ExitCode}: {stderr[^Math.Min(stderr.Length, 400)..]}");
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            logger.LogWarning(ex, "Could not measure the post-filter frame rate for {Input}; using the source rate {Rate}", vj.InputFile, sourceRate);
+            return sourceRate;
+        }
+
+        var measured = RateFromShowinfo(stderr.Split('\n'));
+        var rate = ResolveOutputFrameRate(sourceRate, measured);
+        if (measured is null)
+            logger.LogWarning("Frame-rate probe for {Input} printed too few frames; using the source rate {Rate}", vj.InputFile, sourceRate);
+        else
+            logger.LogInformation("Post-filter frame rate for {Input}: {Rate} (source {Source}, measured {Measured:F4} fps)",
+                Path.GetFileName(vj.InputFile), rate, sourceRate, measured.Value);
+        return rate;
+    }
+
+    /// <summary>The probe command: the same seek and pre-clean as the extract step, a dozen output
+    /// frames into the null muxer, with pts rescaled to microseconds and printed per frame.</summary>
+    internal static string[] BuildRateProbeArgs(VideoJob vj)
+    {
+        var args = new List<string> { "-hide_banner", "-nostats", "-loglevel", "info" };
+        if (vj.TrimStart is { } trimStart)
+            args.AddRange(["-ss", trimStart.TotalSeconds.ToString("F6", CultureInfo.InvariantCulture)]);
+        args.AddRange(["-i", vj.InputFile]);
+        var chain = string.IsNullOrWhiteSpace(vj.FilterScript) ? "" : vj.FilterScript + ",";
+        args.AddRange(["-vf", chain + "settb=AVTB,showinfo", "-vsync", "0", "-frames:v", "12", "-f", "null", "-"]);
+        return [.. args];
+    }
+
+    /// <summary>Frame rate from showinfo's per-frame <c>pts:</c> values (microseconds, courtesy of
+    /// <c>settb=AVTB</c>): one million over the median spacing. Null with fewer than three frames.</summary>
+    internal static double? RateFromShowinfo(IEnumerable<string> lines)
+    {
+        var pts = new List<long>();
+        foreach (var line in lines)
+        {
+            var m = ShowinfoPtsRegex().Match(line);
+            if (m.Success && long.TryParse(m.Groups[1].Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var v))
+                pts.Add(v);
+        }
+        if (pts.Count < 3) return null;
+        var deltas = new List<long>();
+        for (var i = 1; i < pts.Count; i++)
+            if (pts[i] > pts[i - 1]) deltas.Add(pts[i] - pts[i - 1]);
+        if (deltas.Count < 2) return null;
+        deltas.Sort();
+        return 1_000_000.0 / deltas[deltas.Count / 2];
+    }
+
+    [GeneratedRegex(@"showinfo.*\bpts:\s*(-?\d+)")]
+    private static partial Regex ShowinfoPtsRegex();
+
+    /// <summary>
+    /// The frame rate to encode the extracted frames at: the measured rate snapped to an exact
+    /// rational when it is one — a simple multiple of the source rate (ivtc's 2/5, decimate's 4/5,
+    /// a doubling) or a broadcast standard — so 23.976 comes out as 24000/1001, not 23.976 rounded.
+    /// 24 and 24000/1001 are 0.1% apart, enough to drift seconds over a film, so the snap tolerance
+    /// is far tighter than that; a rate that snaps to nothing is used as measured, to 0.001 fps.
+    /// Without a measurement (the probe failed or produced too few frames) the source rate stands.
+    /// </summary>
+    internal static string ResolveOutputFrameRate(string sourceRate, double? measuredFps)
+    {
+        if (measuredFps is not { } fps || !double.IsFinite(fps) || fps <= 0) return sourceRate;
+        var (num, den) = ParseRational(sourceRate);
+
+        var candidates = new List<(long Num, long Den)>();
+        if (num > 0 && den > 0)
+            for (var k = 1; k <= 6; k++)
+                for (var m = 1; m <= 6; m++)
+                    candidates.Add((num * k, den * m));
+        candidates.AddRange([(24000, 1001), (24, 1), (25, 1), (30000, 1001), (30, 1), (48, 1), (50, 1),
+                             (60000, 1001), (60, 1), (100, 1), (120000, 1001), (120, 1)]);
+
+        (long Num, long Den) best = default;
+        var bestErr = double.MaxValue;
+        foreach (var c in candidates)
+        {
+            var err = Math.Abs((double)c.Num / c.Den - fps) / fps;
+            if (err < bestErr) { bestErr = err; best = c; }
+        }
+        if (bestErr < 1e-4)
+        {
+            var g = Gcd(best.Num, best.Den);
+            return $"{best.Num / g}/{best.Den / g}";
+        }
+        return $"{(long)Math.Round(fps * 1000)}/1000";
+    }
+
+    private static (long Num, long Den) ParseRational(string rate)
+    {
+        var parts = rate.Split('/');
+        if (parts.Length == 2
+            && long.TryParse(parts[0], NumberStyles.Integer, CultureInfo.InvariantCulture, out var n)
+            && long.TryParse(parts[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out var d) && d > 0)
+            return (n, d);
+        if (double.TryParse(rate, NumberStyles.Float, CultureInfo.InvariantCulture, out var f) && f > 0)
+            return ((long)Math.Round(f * 1000), 1000);
+        return (0, 0);
+    }
+
+    private static long Gcd(long a, long b) { while (b != 0) (a, b) = (b, a % b); return Math.Max(a, 1); }
+
+    /// <summary>The frame estimate the extract progress bar is measured against, honouring trims.</summary>
+    internal static long EstimateTrimmedFrames(VideoJob vj, string sourceRate, long sourceFrames)
+    {
+        if (vj.TrimFrames is { } frames && frames > 0) return frames;
+        if (vj.TrimDuration is { } duration && duration > TimeSpan.Zero)
+            return (long)Math.Round(duration.TotalSeconds * ParseFraction(sourceRate));
+        return sourceFrames;
     }
 
     /// <summary>Final-encode codec for the AI-upscale path. Hardware ids map to their software
@@ -348,10 +544,33 @@ public sealed partial class RealEsrganVideoProcessor : IJobProcessor
     /// <summary>Append a line to the job's rolling log so the Queue tab's log viewer and the on-disk
     /// session log capture what this processor is doing (its ffmpeg/realesrgan output otherwise
     /// went nowhere, making failures invisible outside the raw exit code).</summary>
-    private static void LogCommand(Job? logJob, string label, string exe, string[] args)
-        => logJob?.AppendLog($"[{label}] {Path.GetFileName(exe)} {string.Join(' ', args)}");
+    private void LogCommand(Job? logJob, string label, string exe, string[] args)
+    {
+        logJob?.AppendLog($"[{label}] {Path.GetFileName(exe)} {string.Join(' ', args)}");
+        _logger.LogInformation("{Processor} [{Step}] {Exe} {Args}", DisplayName, label, Path.GetFileName(exe), string.Join(' ', args));
+    }
 
-    private static async Task RunAsync(string exe, string[] args, Action<string>? onLine, CancellationToken ct, Job? logJob = null)
+    /// <summary>Progress from ffmpeg's <c>-progress</c> stream during frame extraction: the probe's
+    /// frame estimate maps <c>frame=N</c> onto the extract step's slice of the bar (1–5%).</summary>
+    internal static void ReportExtractProgress(string line, long estimatedFrames, IProgress<JobProgress> progress, Stopwatch sw,
+        double pctStart = 1, double pctEnd = 5)
+    {
+        if (estimatedFrames <= 0 || !line.StartsWith("frame=", StringComparison.Ordinal)) return;
+        if (!long.TryParse(line.AsSpan(6).Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var frame)) return;
+        var frac = Math.Clamp((double)frame / estimatedFrames, 0, 1);
+        Report(progress, pctStart + frac * (pctEnd - pctStart), $"Extracting frames ({frame}/{estimatedFrames})", sw);
+    }
+
+    /// <summary>Silence budget per tool run. The model is quiet while it loads onto the GPU and
+    /// ffmpeg is quiet while it seeks a large source, but neither for anything like this long.</summary>
+    private static readonly TimeSpan StallTimeout = ProcessWatchdog.DefaultStallTimeout;
+
+    /// <summary>
+    /// Run one tool to completion. Every line (both pipes) feeds <paramref name="onLine"/>, the job
+    /// log, a 12-line tail for the failure message, and the stall watchdog's heartbeat — a tool that
+    /// goes silent is killed and reported rather than waited on forever.
+    /// </summary>
+    private async Task RunAsync(string exe, string[] args, Action<string>? onLine, CancellationToken ct, Job? logJob = null)
     {
         var psi = new ProcessStartInfo
         {
@@ -362,28 +581,50 @@ public sealed partial class RealEsrganVideoProcessor : IJobProcessor
 
         using var p = new Process { StartInfo = psi };
         var tail = new System.Collections.Generic.Queue<string>();
+        var lastOutputTicks = DateTime.UtcNow.Ticks;
         void Sink(string? line)
         {
             if (line is null) return;
+            Volatile.Write(ref lastOutputTicks, DateTime.UtcNow.Ticks);
             onLine?.Invoke(line);
             logJob?.AppendLog(line);
-            tail.Enqueue(line);
-            while (tail.Count > 12) tail.Dequeue();
+            lock (tail)
+            {
+                tail.Enqueue(line);
+                while (tail.Count > 12) tail.Dequeue();
+            }
         }
         p.OutputDataReceived += (_, e) => Sink(e.Data);
         p.ErrorDataReceived += (_, e) => Sink(e.Data);
 
         if (!p.Start())
+        {
+            _logger.LogError("{Processor}: failed to start {Exe}", DisplayName, exe);
             throw new InvalidOperationException($"Failed to start {Path.GetFileName(exe)}.");
+        }
+        _logger.LogDebug("{Processor}: {Exe} started (PID {Pid})", DisplayName, Path.GetFileName(exe), p.Id);
         p.BeginOutputReadLine();
         p.BeginErrorReadLine();
 
-        try { await p.WaitForExitAsync(ct); }
-        catch (OperationCanceledException) { if (!p.HasExited) p.Kill(entireProcessTree: true); throw; }
+        try
+        {
+            await ProcessWatchdog.WaitForExitOrStallAsync(p, () => Volatile.Read(ref lastOutputTicks), StallTimeout,
+                $"{DisplayName} ({Path.GetFileName(exe)})", _logger, ct);
+        }
+        catch (OperationCanceledException)
+        {
+            _logger.LogWarning("{Processor}: cancelled, killing {Exe}", DisplayName, Path.GetFileName(exe));
+            try { if (!p.HasExited) p.Kill(entireProcessTree: true); } catch { /* best effort */ }
+            throw;
+        }
 
         if (p.ExitCode != 0)
-            throw new InvalidOperationException(
-                $"{Path.GetFileName(exe)} exited with code {p.ExitCode}.\n{string.Join("\n", tail)}");
+        {
+            string tailText;
+            lock (tail) tailText = string.Join("\n", tail);
+            _logger.LogError("{Processor}: {Exe} exited with code {Code}\n{Tail}", DisplayName, Path.GetFileName(exe), p.ExitCode, tailText);
+            throw new InvalidOperationException($"{Path.GetFileName(exe)} exited with code {p.ExitCode}.\n{tailText}");
+        }
     }
 
     private static void Report(IProgress<JobProgress> progress, double percent, string status, Stopwatch sw)

@@ -139,4 +139,151 @@ public class RealEsrganProcessorTests
         // Only the pre-clean filters live on the profile; the processor does the upscale + finish.
         Assert.Equal(new[] { "deblock", "hqdn3d" }, p.Filters.Select(f => f.FilterId));
     }
+
+    [Fact]
+    public void BuildExtractArgs_EmitsProgressHeartbeat()
+    {
+        // The extract step runs for minutes on a long source; -progress gives the stall watchdog a
+        // heartbeat and the progress bar a frame count, and -nostats keeps the human stats line out.
+        var args = RealEsrganVideoProcessor.BuildExtractArgs(Job(), "frames/%06d.png");
+        var progress = Array.IndexOf(args, "-progress");
+        Assert.True(progress >= 0 && args[progress + 1] == "pipe:1");
+        Assert.Contains("-nostats", args);
+        Assert.True(progress < Array.IndexOf(args, "-i"), "-progress must be a global option, before -i");
+    }
+
+    private sealed class CaptureProgress : IProgress<JobProgress>
+    {
+        public readonly List<JobProgress> Reports = new();
+        public void Report(JobProgress value) => Reports.Add(value);
+    }
+
+    [Fact]
+    public void ReportExtractProgress_MapsFrameCountOntoTheExtractSlice()
+    {
+        var progress = new CaptureProgress();
+        var sw = new System.Diagnostics.Stopwatch();
+
+        RealEsrganVideoProcessor.ReportExtractProgress("frame=500", 1000, progress, sw);
+        var p = Assert.Single(progress.Reports);
+        Assert.Equal(3.0, p.Percentage, 3);                       // 1% + 0.5 x 4%
+        Assert.Equal("Extracting frames (500/1000)", p.StatusLine);
+
+        // Other -progress keys, a missing estimate and garbage are all ignored rather than reported.
+        RealEsrganVideoProcessor.ReportExtractProgress("fps=59.9", 1000, progress, sw);
+        RealEsrganVideoProcessor.ReportExtractProgress("frame=500", 0, progress, sw);
+        RealEsrganVideoProcessor.ReportExtractProgress("frame=abc", 1000, progress, sw);
+        Assert.Single(progress.Reports);
+
+        // Never runs past the slice even when the estimate was low.
+        RealEsrganVideoProcessor.ReportExtractProgress("frame=5000", 1000, progress, sw);
+        Assert.Equal(5.0, progress.Reports[^1].Percentage, 3);
+    }
+
+    // ---- Post-filter frame rate + trims (the ivtc'd Real-ESRGAN output used to play at 59.94) ----
+
+    [Fact]
+    public void BuildExtractArgs_AppliesTrims_SoAPreviewDoesNotUpscaleTheWholeFilm()
+    {
+        var job = Job();
+        job.TrimStart = TimeSpan.FromSeconds(12.5);
+        job.TrimFrames = 72;
+        var args = RealEsrganVideoProcessor.BuildExtractArgs(job, "frames/%06d.png");
+
+        var ss = Array.IndexOf(args, "-ss");
+        Assert.True(ss >= 0 && ss < Array.IndexOf(args, "-i"), "-ss must precede -i (input seek)");
+        Assert.Equal("12.500000", args[ss + 1]);
+        Assert.Equal("72", args[Array.IndexOf(args, "-frames:v") + 1]);
+        Assert.DoesNotContain("-t", args);
+
+        var byDuration = Job();
+        byDuration.TrimDuration = TimeSpan.FromSeconds(3);
+        var a2 = RealEsrganVideoProcessor.BuildExtractArgs(byDuration, "f/%06d.png");
+        Assert.Equal("3.000", a2[Array.IndexOf(a2, "-t") + 1]);
+        Assert.DoesNotContain("-frames:v", a2);
+        Assert.DoesNotContain("-ss", RealEsrganVideoProcessor.BuildExtractArgs(Job(), "f/%06d.png"));
+    }
+
+    [Fact]
+    public void WorkKey_DiffersWhenOnlyTheTrimDiffers()
+    {
+        // A snippet preview and the full encode of the same source must never share a scratch dir,
+        // or the full encode "resumes" from the preview's 72 frames.
+        var full = Job();
+        var preview = Job();
+        preview.TrimStart = TimeSpan.FromSeconds(5);
+        preview.TrimFrames = 72;
+        Assert.NotEqual(RealEsrganVideoProcessor.WorkKey(full), RealEsrganVideoProcessor.WorkKey(preview));
+        Assert.Equal(RealEsrganVideoProcessor.WorkKey(full), RealEsrganVideoProcessor.WorkKey(Job()));
+    }
+
+    [Fact]
+    public void RateFromShowinfo_UsesTheMedianMicrosecondSpacing()
+    {
+        // 59.94 source through ivtc -> 23.976: pts in microseconds (settb=AVTB) alternate 41708/41709.
+        var lines = new[]
+        {
+            "Input #0, mpegts, from 'S04E16.ts':",
+            "[Parsed_showinfo_3 @ 000001] n:   0 pts:      0 pts_time:0        duration:  41708",
+            "[Parsed_showinfo_3 @ 000001] n:   1 pts:  41708 pts_time:0.041708 duration:  41709",
+            "[Parsed_showinfo_3 @ 000001] n:   2 pts:  83417 pts_time:0.083417 duration:  41708",
+            "[Parsed_showinfo_3 @ 000001] n:   3 pts: 125125 pts_time:0.125125 duration:  41708",
+            "[Parsed_showinfo_3 @ 000001] n:   4 pts: 166833 pts_time:0.166833 duration:  41709",
+            "frame=    5 fps=0.0 q=-0.0 Lsize=N/A time=00:00:00.16 bitrate=N/A speed=4.5x",
+        };
+        var fps = RealEsrganVideoProcessor.RateFromShowinfo(lines);
+        Assert.NotNull(fps);
+        Assert.Equal(24000.0 / 1001, fps!.Value, 2);
+        Assert.Equal("24000/1001", RealEsrganVideoProcessor.ResolveOutputFrameRate("60000/1001", fps));
+    }
+
+    [Fact]
+    public void RateFromShowinfo_NeedsThreeFrames_OtherwiseTheSourceRateStands()
+    {
+        var two = new[] { "[Parsed_showinfo_0 @ 1] n: 0 pts: 0 pts_time:0", "[Parsed_showinfo_0 @ 1] n: 1 pts: 40000 pts_time:0.04" };
+        Assert.Null(RealEsrganVideoProcessor.RateFromShowinfo(two));
+        Assert.Equal("60000/1001", RealEsrganVideoProcessor.ResolveOutputFrameRate("60000/1001", RealEsrganVideoProcessor.RateFromShowinfo(two)));
+        Assert.Equal("25/1", RealEsrganVideoProcessor.ResolveOutputFrameRate("25/1", null));
+    }
+
+    [Fact]
+    public void BuildRateProbeArgs_RunsTheSamePreCleanThenPrintsMicrosecondPts()
+    {
+        var job = Job();
+        job.TrimStart = TimeSpan.FromSeconds(7);
+        var args = RealEsrganVideoProcessor.BuildRateProbeArgs(job);
+
+        Assert.Equal("7.000000", args[Array.IndexOf(args, "-ss") + 1]);
+        Assert.True(Array.IndexOf(args, "-ss") < Array.IndexOf(args, "-i"));
+        Assert.Equal("spp=quality=3:qp=4,hqdn3d=2:1.5:3,settb=AVTB,showinfo", args[Array.IndexOf(args, "-vf") + 1]);
+        Assert.Equal("12", args[Array.IndexOf(args, "-frames:v") + 1]);
+        Assert.Equal("null", args[Array.IndexOf(args, "-f") + 1]);
+
+        var bare = Job(); bare.FilterScript = "";
+        Assert.Equal("settb=AVTB,showinfo", RealEsrganVideoProcessor.BuildRateProbeArgs(bare)[Array.IndexOf(RealEsrganVideoProcessor.BuildRateProbeArgs(bare), "-vf") + 1]);
+    }
+
+    [Theory]
+    [InlineData("60000/1001", 59.94005994, "60000/1001")]   // unchanged source
+    [InlineData("60000/1001", 23.97602398, "24000/1001")]   // ivtc: x 2/5
+    [InlineData("60000/1001", 29.97002997, "30000/1001")]   // interleave: x 1/2
+    [InlineData("30000/1001", 24.0,        "24/1")]         // fps=24 on NTSC: 24, NOT 24000/1001 (0.1% apart)
+    [InlineData("30000/1001", 23.97602398, "24000/1001")]
+    [InlineData("25/1",       50.0,        "50/1")]         // doubled
+    [InlineData("25/1",       20.0,        "20/1")]         // decimate x 4/5 of PAL
+    [InlineData("24/1",       17.3,        "17300/1000")]   // nothing to snap to: used as measured
+    [InlineData("29.97",      23.97602398, "24000/1001")]   // a decimal source rate still parses
+    public void ResolveOutputFrameRate_SnapsToExactRationals(string source, double measured, string expected)
+        => Assert.Equal(expected, RealEsrganVideoProcessor.ResolveOutputFrameRate(source, measured));
+
+    [Fact]
+    public void EstimateTrimmedFrames_HonoursTrims()
+    {
+        var job = Job();
+        Assert.Equal(4440, RealEsrganVideoProcessor.EstimateTrimmedFrames(job, "60000/1001", 4440));
+        job.TrimDuration = TimeSpan.FromSeconds(3);
+        Assert.Equal(180, RealEsrganVideoProcessor.EstimateTrimmedFrames(job, "60000/1001", 4440));
+        job.TrimFrames = 72;
+        Assert.Equal(72, RealEsrganVideoProcessor.EstimateTrimmedFrames(job, "60000/1001", 4440));
+    }
 }

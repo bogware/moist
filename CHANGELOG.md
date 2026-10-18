@@ -45,8 +45,44 @@ release URLs; an unverified download is loudly flagged rather than trusted silen
 **GUI parity.** RIFE fps, AV1 tune, subtitle-track selection, allow-long AI upscale and
 disable-metadata are now reachable from the GUI, matching the CLI.
 
+**Telecine-aware filters.** `ivtc` recovers the original ~24 fps film frames from telecined
+video — including broadcasts that were bob-deinterlaced to 60p (it weaves frame pairs back
+to 30i first, then `fieldmatch,decimate`), reuniting the real fields with nothing interpolated:
+judder-free and 2.5× fewer frames to encode. Also `mpdecimate` (generic duplicate-frame
+dropping) and `grayscale` (strips broadcast chroma noise from B&W sources). The cadence
+filters are flagged as incompatible with chunked encoding.
+
+**Observability.** Everything the app logs now reaches the session log file (it used to get
+only queued-job output, so a failing preview or probe left no trace), console verbosity no
+longer throttles it, and any unhandled exception or unobserved task fault writes a
+`crash_*.log`. Settings gained an **Open Log Folder** button.
+
+**Resiliency.** A stall watchdog kills an encode tool that goes silent (15 min, per
+processor) and fails the job with a clear reason instead of hanging an unattended batch
+forever. It covers every tool moist launches, including the frame-based Real-ESRGAN and RIFE
+steps, which previously had no timeout at all; `ffprobe` analysis and the hardware-encoder
+listing are bounded by timeouts; the chunk frame-counter drains stderr (a corrupt chunk
+could deadlock it). The AI processors also log each step (extract/upscale/encode/concat,
+window progress, resume reuse, tool failures with the output tail) to the session log, and
+frame extraction — minutes on a long source — now reports a frame count instead of sitting
+at 2%.
+
 ### Fixed
 
+- **Real-ESRGAN / RIFE output speed after a cadence filter.** The frame-based AI processors
+  encoded the extracted frames at the *source* frame rate, so an ivtc'd 59.94 broadcast capture
+  came out as 23.976 frames played at 59.94 — 2.5× speed, 30 s of picture against 75 s of sound.
+  The rate is now measured through the pre-clean chain (`settb=AVTB,showinfo` on a dozen frames)
+  and snapped to the exact rational, so 23.976 is `24000/1001`, not a rounded decimal. The same
+  processors also ignored trims, so a 3-second snippet preview upscaled the entire file and left a
+  scratch the full encode would have "resumed" from; trims are now applied to extraction and are
+  part of the scratch key.
+- **Audio/video sync on broadcast captures and stream-copied cuts.** When a source's video
+  starts later than its audio (the norm for DVR/OTA recordings — the first keyframe lands ~1 s
+  after the first audio packet), the separately-encoded streams were muxed from 0 and the
+  picture ran ahead of the sound by the whole stagger. Each stream's `start_time` is now read
+  and every audio track is anchored to the first video frame (a lead is trimmed, a lag is
+  delayed in the mux). Covered by a staggered-fixture integration test.
 - **Subtitle muxing into MP4/MOV/WebM** no longer fails the whole mux — text subs transcode
   to `mov_text`/`webvtt`; subset selection maps only the chosen streams with correct
   language/forced/default; container-incompatible subs are dropped with an up-front warning.

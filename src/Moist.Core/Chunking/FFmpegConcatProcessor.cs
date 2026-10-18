@@ -125,8 +125,12 @@ public sealed partial class FFmpegConcatProcessor(string ffmpegPath) : CommandLi
         using var process = Process.Start(psi)
             ?? throw new InvalidOperationException($"could not start {ffprobePath}");
 
+        // stderr is redirected, so it must be drained too: a corrupt chunk makes ffprobe spew
+        // decode errors, and once they fill the pipe buffer the wait below never returns.
+        var stderrTask = process.StandardError.ReadToEndAsync(ct);
         var stdout = await process.StandardOutput.ReadToEndAsync(ct);
         await process.WaitForExitAsync(ct);
+        _ = await stderrTask;
 
         var text = stdout.Trim().Trim(',');
         return long.TryParse(text, out var frames) ? frames : -1;
