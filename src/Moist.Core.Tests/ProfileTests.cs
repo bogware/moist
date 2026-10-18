@@ -54,4 +54,57 @@ public class ProfileTests
         Assert.Equal(new[] { "deblock", "hqdn3d", "superres", "cas", "deband" },
             ai.Filters.Select(f => f.FilterId));
     }
+
+    [Theory]
+    [InlineData("Broadcast 720p60 Film - B&W to 1080p",    null,     new[] { "crop", "ivtc", "grayscale", "deblock", "hqdn3d", "superres", "cas", "deband" })]
+    [InlineData("Broadcast 720p60 Film - Colour to 1080p", null,     new[] { "crop", "ivtc", "deblock", "hqdn3d", "superres", "cas", "deband" })]
+    [InlineData("Broadcast 720p60 Film - B&W to 1080p (Premium Real-ESRGAN)",    "x4plus", new[] { "crop", "ivtc", "grayscale", "deblock", "hqdn3d" })]
+    [InlineData("Broadcast 720p60 Film - Colour to 1080p (Premium Real-ESRGAN)", "x4plus", new[] { "crop", "ivtc", "deblock", "hqdn3d" })]
+    public void BroadcastProfiles_CadenceAndCropComeFirst_ThenCleanBeforeUpscale(string name, string? aiModel, string[] chain)
+    {
+        var p = ProfileManager.GetBuiltInProfiles().Single(x => x.Name == name);
+
+        Assert.Equal("ffmpeg-x265", p.VideoEncoderId);
+        Assert.Equal(VideoBitDepth.Ten, p.BitDepth);
+        Assert.Equal(18, p.VideoQuality);
+        Assert.Equal("ffmpeg", p.FilterEngineId);
+        Assert.Equal(aiModel, p.AiUpscaleModel);
+        if (aiModel is not null) Assert.Equal(1080, p.AiUpscaleHeight);
+        // ivtc must see the bobbed 60p before anything touches it, and the crop must precede the
+        // upscale so the 1080p frame is all picture; grayscale only on the B&W era. The premium
+        // variants stop at the pre-clean: the Real-ESRGAN processor adds the upscale + finish.
+        Assert.Equal(chain, p.Filters.Select(f => f.FilterId));
+        Assert.Equal(88, p.Filters[0].Parameters["left"]);
+        Assert.Equal(88, p.Filters[0].Parameters["right"]);
+        Assert.Equal(true, p.Filters[1].Parameters["bobbed"]);
+    }
+
+    [Fact]
+    public void BroadcastProfile_SurvivesTheJsonRoundTrip_AndGeneratesTheExpectedChain()
+    {
+        // Built-ins are materialized to JSON and read back (params become JsonElement) before the
+        // CLI or GUI ever build a chain from them, so assert on the script of the round-tripped copy.
+        var built = ProfileManager.GetBuiltInProfiles().Single(x => x.Name == "Broadcast 720p60 Film - B&W to 1080p");
+        var options = new System.Text.Json.JsonSerializerOptions
+        {
+            WriteIndented = true,
+            Converters = { new System.Text.Json.Serialization.JsonStringEnumConverter() },
+        };
+        var loaded = System.Text.Json.JsonSerializer.Deserialize<EncodingProfile>(
+            System.Text.Json.JsonSerializer.Serialize(built, options), options)!;
+
+        // No GPU probe in unit tests: pin the superres fallback so the tail is deterministic.
+        var engine = new Moist.Filters.Engines.FFmpegFilterEngine { IsSuperResAvailable = () => false };
+        var available = engine.GetAvailableFilters();
+        var chain = new Moist.Filters.FilterChain();
+        foreach (var pf in loaded.Filters)
+            chain.Add(available.Single(f => f.Id == pf.FilterId), new Dictionary<string, object>(pf.Parameters));
+        var script = engine.GenerateScript(chain, "in.ts");
+
+        Assert.StartsWith(
+            "crop=iw-176:ih-0:88:0,tinterlace=mode=interleave_top,fieldmatch=order=tff:combmatch=full,decimate,hue=s=0,spp=quality=3:qp=4,hqdn3d=2:1.5:3,",
+            script);
+        // superres falls back to a spline scale where no Vulkan GPU is available.
+        Assert.EndsWith("scale=-2:1080:flags=spline,cas=strength=0.4,deband=range=16:blur=1", script);
+    }
 }

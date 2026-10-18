@@ -57,6 +57,15 @@ only queued-job output, so a failing preview or probe left no trace), console ve
 longer throttles it, and any unhandled exception or unobserved task fault writes a
 `crash_*.log`. Settings gained an **Open Log Folder** button.
 
+**Built-in profiles for over-the-air captures of film-sourced TV.** *Broadcast 720p60 Film -
+B&W to 1080p* and *- Colour to 1080p* turn a MeTV-style MPEG-2 1280×720p59.94 recording (24 fps film
+bob-upconverted to 60p, 4:3 picture pillarboxed with 88 px black bars) into 1080p23.976 HEVC 10-bit:
+crop the bars, `ivtc` the bobbed fields back to an exact film cadence, strip the chroma noise on the
+B&W era, de-block, denoise, GPU neural upscale (FSRCNNX via libplacebo; spline without a Vulkan GPU),
+CAS and deband. *Premium Real-ESRGAN* variants of both swap in the deep-model upscale — the sharpest
+result of the three upscalers compared, at roughly thirty times the encode time. Tuned on Gunsmoke
+captures from four seasons and judged frame-by-frame against spline; the recipe is in the README.
+
 **Resiliency.** A stall watchdog kills an encode tool that goes silent (15 min, per
 processor) and fails the job with a clear reason instead of hanging an unattended batch
 forever. It covers every tool moist launches, including the frame-based Real-ESRGAN and RIFE

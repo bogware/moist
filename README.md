@@ -323,6 +323,9 @@ Ten built-in presets ready to ride, plus save your own:
 | **Restore SD to HD (vintage)** | x265 CRF 19, Medium, **10-bit** + restoration filter chain | Opus 192k | MKV |
 | **AI Upscale SD to HD (GPU)** | x265 CRF 19, Medium, **10-bit** + restore chain with a **GPU neural upscale** (needs Vulkan) | Opus 192k | MKV |
 | **AI Upscale SD to HD (Real-ESRGAN)** | x265 CRF 19, Medium, **10-bit** + **deep-model upscale** (needs the realesrgan tool; slow, for short/precious clips) | Opus 192k | MKV |
+| **Broadcast 720p60 Film - B&W to 1080p** | x265 CRF 18, Medium, **10-bit**: crop 88 px pillarbars → **inverse telecine** (bobbed 60p → 23.976) → grayscale → de-block → denoise → GPU neural upscale → CAS → deband. For MeTV-style over-the-air captures of film-sourced TV | Opus 160k | MKV |
+| **Broadcast 720p60 Film - Colour to 1080p** | Same chain without the grayscale step | Opus 160k | MKV |
+| **Broadcast 720p60 Film - … (Premium Real-ESRGAN)** | B&W and Colour variants with the **Real-ESRGAN deep-model upscale** in place of the GPU shader: sharpest texture, ~30× slower — for favourite episodes, not a whole library | Opus 160k | MKV |
 | Web - H.265 High Quality | x265 CRF 22, Slow | Opus 128k | MKV |
 | Web - H.264 Compatible | x264 CRF 20, Medium | AAC 192k | MP4 |
 | Archive - Lossless | FFV1 | FLAC | MKV |
@@ -361,6 +364,12 @@ moist encode input.mkv --profile "Web - H.265 High Quality"
 
 # one-click: restore an old SD tape to sharp 10-bit 1080p (filters + upscale from the profile)
 moist encode "UFC 01.avi" -o "UFC 01 - Restored.mkv" --profile "Restore SD to HD"
+
+# over-the-air captures of film-sourced TV (MeTV-style 720p59.94, bob-upconverted film, pillarboxed):
+# crop the bars, inverse-telecine back to 23.976, clean, upscale to 1080p. B&W seasons lose the chroma noise.
+moist batch "Gunsmoke/Season 10/*.ts" --output-dir restored --suffix "" --profile "Broadcast 720p60 Film - B&W to 1080p"
+moist batch "Gunsmoke/Season 12/*.ts" --output-dir restored --suffix "" --profile "Broadcast 720p60 Film - Colour to 1080p"
+moist encode "S12E01.ts" -o "S12E01 - premium.mkv" --profile "Broadcast 720p60 Film - Colour to 1080p (Premium Real-ESRGAN)"
 moist encode input.mkv --audio-only --audio-encoder ffmpeg-audio-flac
 moist encode input.mkv --mode twopass --bitrate 8000 --container mp4
 moist encode input.mkv --filter resize:width=1920,height=1080 --filter unsharp:luma_amount=1.2

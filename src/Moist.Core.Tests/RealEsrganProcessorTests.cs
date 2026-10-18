@@ -132,7 +132,7 @@ public class RealEsrganProcessorTests
     public void RealEsrganProfile_IsPreCleanPlusModel()
     {
         var p = ProfileManager.GetBuiltInProfiles()
-            .Single(x => x.Name.Contains("Real-ESRGAN", StringComparison.OrdinalIgnoreCase));
+            .Single(x => x.Name == "AI Upscale SD to HD (Real-ESRGAN)");
 
         Assert.Equal("x4plus", p.AiUpscaleModel);
         Assert.Equal(VideoBitDepth.Ten, p.BitDepth);

@@ -283,6 +283,113 @@ public sealed class ProfileManager
         },
         new()
         {
+            // Over-the-air / DVR captures of film-sourced TV as broadcast by MeTV and similar
+            // channels: MPEG-2 1280x720p59.94, the 24 fps film bob-upconverted to 60p, the 4:3 frame
+            // pillarboxed with 88 px black bars. ivtc (bobbed) weaves the fields back and decimates
+            // to an exact 23.976; the crop drops the bars BEFORE the upscale so the 1080p output is
+            // all picture. Order is load-bearing: cadence and crop first (so every later filter sees
+            // 4 frames in 5 and no black), clean before enlarging, sharpen and deband after. B&W
+            // seasons strip the chroma, which on these captures is only MPEG-2 colour noise.
+            // Adjust or remove the crop for a channel with different bars. Tuned on Gunsmoke.
+            Name = "Broadcast 720p60 Film - B&W to 1080p",
+            Description = "MeTV-style 720p59.94 broadcast capture of black-and-white film-sourced TV to 1080p23.976 HEVC 10-bit: crop 88 px pillarbars, inverse telecine, strip chroma noise, de-block, denoise, GPU neural upscale (falls back to spline without a Vulkan GPU), sharpen, deband.",
+            VideoEncoderId = "ffmpeg-x265",
+            VideoMode = VideoEncodingMode.ConstantRateFactor,
+            VideoQuality = 18,
+            VideoPreset = VideoPreset.Medium,
+            BitDepth = VideoBitDepth.Ten,
+            AudioEncoderId = "ffmpeg-audio-opus",
+            AudioBitrate = 160,
+            Container = ContainerFormat.Mkv,
+            FilterEngineId = "ffmpeg",
+            Filters =
+            [
+                new() { FilterId = "crop",      Parameters = new() { ["left"] = 88, ["right"] = 88 } },
+                new() { FilterId = "ivtc",      Parameters = new() { ["bobbed"] = true, ["order"] = "tff" } },
+                new() { FilterId = "grayscale", Parameters = new() },
+                new() { FilterId = "deblock",   Parameters = new() { ["quality"] = 3, ["strength"] = 4 } },
+                new() { FilterId = "hqdn3d",    Parameters = new() { ["luma_spatial"] = 2.0, ["chroma_spatial"] = 1.5, ["luma_temporal"] = 3.0 } },
+                new() { FilterId = "superres",  Parameters = new() { ["model"] = "fsrcnnx", ["height"] = 1080 } },
+                new() { FilterId = "cas",       Parameters = new() { ["strength"] = 0.4 } },
+                new() { FilterId = "deband",    Parameters = new() { ["range"] = 16 } },
+            ],
+        },
+        new()
+        {
+            Name = "Broadcast 720p60 Film - Colour to 1080p",
+            Description = "MeTV-style 720p59.94 broadcast capture of colour film-sourced TV to 1080p23.976 HEVC 10-bit: crop 88 px pillarbars, inverse telecine, de-block, denoise, GPU neural upscale (falls back to spline without a Vulkan GPU), sharpen, deband.",
+            VideoEncoderId = "ffmpeg-x265",
+            VideoMode = VideoEncodingMode.ConstantRateFactor,
+            VideoQuality = 18,
+            VideoPreset = VideoPreset.Medium,
+            BitDepth = VideoBitDepth.Ten,
+            AudioEncoderId = "ffmpeg-audio-opus",
+            AudioBitrate = 160,
+            Container = ContainerFormat.Mkv,
+            FilterEngineId = "ffmpeg",
+            Filters =
+            [
+                new() { FilterId = "crop",      Parameters = new() { ["left"] = 88, ["right"] = 88 } },
+                new() { FilterId = "ivtc",      Parameters = new() { ["bobbed"] = true, ["order"] = "tff" } },
+                new() { FilterId = "deblock",   Parameters = new() { ["quality"] = 3, ["strength"] = 4 } },
+                new() { FilterId = "hqdn3d",    Parameters = new() { ["luma_spatial"] = 2.0, ["chroma_spatial"] = 1.5, ["luma_temporal"] = 3.0 } },
+                new() { FilterId = "superres",  Parameters = new() { ["model"] = "fsrcnnx", ["height"] = 1080 } },
+                new() { FilterId = "cas",       Parameters = new() { ["strength"] = 0.4 } },
+                new() { FilterId = "deband",    Parameters = new() { ["range"] = 16 } },
+            ],
+        },
+        new()
+        {
+            // Premium variant: Real-ESRGAN instead of the GPU shader. The Filters are only the
+            // pre-upscale chain; RealEsrganVideoProcessor adds the scale/CAS/deband finish. About
+            // 30x slower than the GPU profile - for favourite episodes, not a 400-episode batch.
+            Name = "Broadcast 720p60 Film - B&W to 1080p (Premium Real-ESRGAN)",
+            Description = "MeTV-style 720p59.94 broadcast capture of black-and-white film-sourced TV to 1080p23.976 HEVC 10-bit: crop 88 px pillarbars, inverse telecine, strip chroma noise, de-block, denoise, Real-ESRGAN deep-model upscale (needs the realesrgan tool; slow, for favourite episodes), sharpen, deband.",
+            VideoEncoderId = "ffmpeg-x265",
+            VideoMode = VideoEncodingMode.ConstantRateFactor,
+            VideoQuality = 18,
+            VideoPreset = VideoPreset.Medium,
+            BitDepth = VideoBitDepth.Ten,
+            AudioEncoderId = "ffmpeg-audio-opus",
+            AudioBitrate = 160,
+            Container = ContainerFormat.Mkv,
+            FilterEngineId = "ffmpeg",
+            AiUpscaleModel = "x4plus",
+            AiUpscaleHeight = 1080,
+            Filters =
+            [
+                new() { FilterId = "crop",      Parameters = new() { ["left"] = 88, ["right"] = 88 } },
+                new() { FilterId = "ivtc",      Parameters = new() { ["bobbed"] = true, ["order"] = "tff" } },
+                new() { FilterId = "grayscale", Parameters = new() },
+                new() { FilterId = "deblock",   Parameters = new() { ["quality"] = 3, ["strength"] = 4 } },
+                new() { FilterId = "hqdn3d",    Parameters = new() { ["luma_spatial"] = 2.0, ["chroma_spatial"] = 1.5, ["luma_temporal"] = 3.0 } },
+            ],
+        },
+        new()
+        {
+            Name = "Broadcast 720p60 Film - Colour to 1080p (Premium Real-ESRGAN)",
+            Description = "MeTV-style 720p59.94 broadcast capture of colour film-sourced TV to 1080p23.976 HEVC 10-bit: crop 88 px pillarbars, inverse telecine, de-block, denoise, Real-ESRGAN deep-model upscale (needs the realesrgan tool; slow, for favourite episodes), sharpen, deband.",
+            VideoEncoderId = "ffmpeg-x265",
+            VideoMode = VideoEncodingMode.ConstantRateFactor,
+            VideoQuality = 18,
+            VideoPreset = VideoPreset.Medium,
+            BitDepth = VideoBitDepth.Ten,
+            AudioEncoderId = "ffmpeg-audio-opus",
+            AudioBitrate = 160,
+            Container = ContainerFormat.Mkv,
+            FilterEngineId = "ffmpeg",
+            AiUpscaleModel = "x4plus",
+            AiUpscaleHeight = 1080,
+            Filters =
+            [
+                new() { FilterId = "crop",      Parameters = new() { ["left"] = 88, ["right"] = 88 } },
+                new() { FilterId = "ivtc",      Parameters = new() { ["bobbed"] = true, ["order"] = "tff" } },
+                new() { FilterId = "deblock",   Parameters = new() { ["quality"] = 3, ["strength"] = 4 } },
+                new() { FilterId = "hqdn3d",    Parameters = new() { ["luma_spatial"] = 2.0, ["chroma_spatial"] = 1.5, ["luma_temporal"] = 3.0 } },
+            ],
+        },
+        new()
+        {
             Name = "Web - H.265 High Quality",
             Description = "High quality H.265 for web streaming. Opus audio.",
             VideoEncoderId = "ffmpeg-x265",
