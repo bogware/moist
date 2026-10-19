@@ -57,6 +57,8 @@ only queued-job output, so a failing preview or probe left no trace), console ve
 longer throttles it, and any unhandled exception or unobserved task fault writes a
 `crash_*.log`. Settings gained an **Open Log Folder** button.
 
+**Faithful native-720p60 profiles for the same captures.** *Broadcast 720p60 Film - Faithful 720p (B&W)* and *(Colour)* keep the broadcast's own frame rate, size and grain: crop the bars, strip chroma on B&W, CAS 0.3, a gentle contrast curve (1.04×, -0.01 brightness, +5% saturation on colour), x265 CRF 17 10-bit with `tune=grain`, and the original AC3 passed through. Built after side-by-side review showed the upscale/denoise chain trading the film's texture and motion for smoothness.
+
 **Built-in profiles for over-the-air captures of film-sourced TV.** *Broadcast 720p60 Film -
 B&W to 1080p* and *- Colour to 1080p* turn a MeTV-style MPEG-2 1280×720p59.94 recording (24 fps film
 bob-upconverted to 60p, 4:3 picture pillarboxed with 88 px black bars) into 1080p23.976 HEVC 10-bit:

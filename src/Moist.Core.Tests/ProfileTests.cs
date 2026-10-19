@@ -107,4 +107,28 @@ public class ProfileTests
         // superres falls back to a spline scale where no Vulkan GPU is available.
         Assert.EndsWith("scale=-2:1080:flags=spline,cas=strength=0.4,deband=range=16:blur=1", script);
     }
+
+    [Theory]
+    [InlineData("Broadcast 720p60 Film - Faithful 720p (B&W)",  new[] { "crop", "grayscale", "cas", "eq" })]
+    [InlineData("Broadcast 720p60 Film - Faithful 720p (Colour)", new[] { "crop", "cas", "eq" })]
+    public void FaithfulBroadcastProfiles_KeepNativeRateAndSize_AndPreserveGrain(string name, string[] chain)
+    {
+        var p = ProfileManager.GetBuiltInProfiles().Single(x => x.Name == name);
+
+        // Nothing that resamples time or space, nothing that denoises: the source look is the point.
+        Assert.Equal(chain, p.Filters.Select(f => f.FilterId));
+        Assert.DoesNotContain(p.Filters, f => f.FilterId is "ivtc" or "resize" or "superres" or "hqdn3d" or "nlmeans" or "fps");
+        Assert.Null(p.AiUpscaleModel);
+
+        Assert.Equal("ffmpeg-x265", p.VideoEncoderId);
+        Assert.Equal(VideoTune.Grain, p.VideoTune);                  // x265 must not smooth or strobe the grain
+        Assert.Equal(VideoBitDepth.Ten, p.BitDepth);
+        Assert.Equal(17, p.VideoQuality);
+        Assert.Equal("ffmpeg-audio-copy", p.AudioEncoderId);       // the broadcast AC3, untouched
+        Assert.Equal(ContainerFormat.Mkv, p.Container);
+
+        var eq = p.Filters.Single(f => f.FilterId == "eq").Parameters;
+        Assert.Equal(1.04, eq["contrast"]);
+        Assert.Equal(name.Contains("B&W"), !eq.ContainsKey("saturation"));   // no saturation push on a monochrome picture
+    }
 }

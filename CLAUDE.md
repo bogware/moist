@@ -401,7 +401,7 @@ filters (`fps` / `minterpolate`) added to the `-vf` in `EncodeOptions.BuildFilte
 
 ### Profiles: built-ins are materialized to disk
 
-`ProfileManager` writes each of the 14 `GetBuiltInProfiles()` entries to `profiles/*.json` on first run if the file is absent. Editing `GetBuiltInProfiles()` therefore has **no effect on an existing install** — the on-disk copy wins. Delete the JSON to pick up changes.
+`ProfileManager` writes each of the 16 `GetBuiltInProfiles()` entries to `profiles/*.json` on first run if the file is absent. Editing `GetBuiltInProfiles()` therefore has **no effect on an existing install** — the on-disk copy wins. Delete the JSON to pick up changes.
 
 ### Settings must never fail loudly
 

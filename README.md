@@ -323,6 +323,7 @@ Ten built-in presets ready to ride, plus save your own:
 | **Restore SD to HD (vintage)** | x265 CRF 19, Medium, **10-bit** + restoration filter chain | Opus 192k | MKV |
 | **AI Upscale SD to HD (GPU)** | x265 CRF 19, Medium, **10-bit** + restore chain with a **GPU neural upscale** (needs Vulkan) | Opus 192k | MKV |
 | **AI Upscale SD to HD (Real-ESRGAN)** | x265 CRF 19, Medium, **10-bit** + **deep-model upscale** (needs the realesrgan tool; slow, for short/precious clips) | Opus 192k | MKV |
+| **Broadcast 720p60 Film - Faithful 720p (B&W / Colour)** | x265 CRF 17, Medium, **10-bit, tune=grain**: native 59.94p and size kept, crop 88 px pillarbars, grayscale on B&W, CAS 0.3, gentle contrast curve, +5% saturation on colour. No upscale, no denoise — the broadcast look, tightened | **AC3 passthrough** | MKV |
 | **Broadcast 720p60 Film - B&W to 1080p** | x265 CRF 18, Medium, **10-bit**: crop 88 px pillarbars → **inverse telecine** (bobbed 60p → 23.976) → grayscale → de-block → denoise → GPU neural upscale → CAS → deband. For MeTV-style over-the-air captures of film-sourced TV | Opus 160k | MKV |
 | **Broadcast 720p60 Film - Colour to 1080p** | Same chain without the grayscale step | Opus 160k | MKV |
 | **Broadcast 720p60 Film - … (Premium Real-ESRGAN)** | B&W and Colour variants with the **Real-ESRGAN deep-model upscale** in place of the GPU shader: sharpest texture, ~30× slower — for favourite episodes, not a whole library | Opus 160k | MKV |
@@ -369,6 +370,8 @@ moist encode "UFC 01.avi" -o "UFC 01 - Restored.mkv" --profile "Restore SD to HD
 # crop the bars, inverse-telecine back to 23.976, clean, upscale to 1080p. B&W seasons lose the chroma noise.
 moist batch "Gunsmoke/Season 10/*.ts" --output-dir restored --suffix "" --profile "Broadcast 720p60 Film - B&W to 1080p"
 moist batch "Gunsmoke/Season 12/*.ts" --output-dir restored --suffix "" --profile "Broadcast 720p60 Film - Colour to 1080p"
+# ...or keep the broadcast exactly as it moves and looks, just tightened (native 720p60, grain kept, AC3 untouched)
+moist batch "Gunsmoke/Season 12/*.ts" --output-dir faithful --suffix "" --profile "Broadcast 720p60 Film - Faithful 720p (Colour)"
 moist encode "S12E01.ts" -o "S12E01 - premium.mkv" --profile "Broadcast 720p60 Film - Colour to 1080p (Premium Real-ESRGAN)"
 moist encode input.mkv --audio-only --audio-encoder ffmpeg-audio-flac
 moist encode input.mkv --mode twopass --bitrate 8000 --container mp4

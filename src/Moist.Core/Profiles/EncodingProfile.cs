@@ -283,6 +283,53 @@ public sealed class ProfileManager
         },
         new()
         {
+            // The faithful counterpart of the 1080p restore profiles below: no upscale, no denoise, no
+            // cadence change. The source is 24 fps film bob-upconverted to 59.94p and that motion is
+            // kept as broadcast; measured black levels already reach legal black (median darkest pixel
+            // 4-8 of 255), so "depth" is a gentle contrast curve, not a black-point fix. tune=grain stops
+            // x265 smoothing or strobing the film grain, which is the whole point of this profile.
+            // Adjust or remove the crop for a channel with different bars. Tuned on Gunsmoke.
+            Name = "Broadcast 720p60 Film - Faithful 720p (B&W)",
+            Description = "MeTV-style 720p59.94 broadcast capture of black-and-white film-sourced TV, kept at its native frame rate and size: crop the 88 px pillarbars, strip chroma noise, a touch of CAS sharpening and a gentle contrast curve; x265 10-bit tune=grain so the film grain survives; the original AC3 passed through untouched.",
+            VideoEncoderId = "ffmpeg-x265",
+            VideoMode = VideoEncodingMode.ConstantRateFactor,
+            VideoQuality = 17,
+            VideoPreset = VideoPreset.Medium,
+            VideoTune = VideoTune.Grain,
+            BitDepth = VideoBitDepth.Ten,
+            AudioEncoderId = "ffmpeg-audio-copy",
+            Container = ContainerFormat.Mkv,
+            FilterEngineId = "ffmpeg",
+            Filters =
+            [
+                new() { FilterId = "crop",      Parameters = new() { ["left"] = 88, ["right"] = 88 } },
+                new() { FilterId = "grayscale", Parameters = new() },
+                new() { FilterId = "cas",       Parameters = new() { ["strength"] = 0.3 } },
+                new() { FilterId = "eq",        Parameters = new() { ["contrast"] = 1.04, ["brightness"] = -0.01 } },
+            ],
+        },
+        new()
+        {
+            Name = "Broadcast 720p60 Film - Faithful 720p (Colour)",
+            Description = "MeTV-style 720p59.94 broadcast capture of colour film-sourced TV, kept at its native frame rate and size: crop the 88 px pillarbars, a touch of CAS sharpening and a gentle contrast curve, +5% saturation; x265 10-bit tune=grain so the film grain survives; the original AC3 passed through untouched.",
+            VideoEncoderId = "ffmpeg-x265",
+            VideoMode = VideoEncodingMode.ConstantRateFactor,
+            VideoQuality = 17,
+            VideoPreset = VideoPreset.Medium,
+            VideoTune = VideoTune.Grain,
+            BitDepth = VideoBitDepth.Ten,
+            AudioEncoderId = "ffmpeg-audio-copy",
+            Container = ContainerFormat.Mkv,
+            FilterEngineId = "ffmpeg",
+            Filters =
+            [
+                new() { FilterId = "crop",      Parameters = new() { ["left"] = 88, ["right"] = 88 } },
+                new() { FilterId = "cas",       Parameters = new() { ["strength"] = 0.3 } },
+                new() { FilterId = "eq",        Parameters = new() { ["contrast"] = 1.04, ["brightness"] = -0.01, ["saturation"] = 1.05 } },
+            ],
+        },
+        new()
+        {
             // Over-the-air / DVR captures of film-sourced TV as broadcast by MeTV and similar
             // channels: MPEG-2 1280x720p59.94, the 24 fps film bob-upconverted to 60p, the 4:3 frame
             // pillarboxed with 88 px black bars. ivtc (bobbed) weaves the fields back and decimates
