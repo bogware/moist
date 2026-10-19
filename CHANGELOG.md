@@ -78,6 +78,12 @@ at 2%.
 
 ### Fixed
 
+- **Audio/video drift after reception dropouts with `ivtc`.** A broadcast capture with signal
+  dropouts carries timestamp gaps in both streams. `decimate` rewrote the video timestamps as if
+  the input were continuous, so every gap vanished from the picture while the audio kept it; the
+  picture led the sound by 1.8 s by the end of a one-hour episode. The `ivtc` filter now opens with
+  `fps=source_fps`, which fills each gap with duplicate frames so a dropout is a brief freeze over
+  silent audio, in sync, rather than a growing lead.
 - **Real-ESRGAN / RIFE output speed after a cadence filter.** The frame-based AI processors
   encoded the extracted frames at the *source* frame rate, so an ivtc'd 59.94 broadcast capture
   came out as 23.976 frames played at 59.94 — 2.5× speed, 30 s of picture against 75 s of sound.

@@ -483,7 +483,13 @@ public sealed class FFmpegFilterEngine : IFilterEngine
     private static string BuildIvtcFilter(AppliedFilter af)
     {
         var order = GetString(af, "order", "tff");
-        var ivtc = $"fieldmatch=order={order}:combmatch=full,decimate";
+        // fps=source_fps first: decimate rewrites timestamps assuming a constant input rate, so a
+        // reception dropout in a broadcast capture (a pts gap with no frames) silently vanishes from
+        // the video while the separately encoded audio keeps the gap - the picture then runs ahead
+        // of the sound by the cumulative gap (1.8 s by minute 55 on one Gunsmoke capture). Filling
+        // the gap with duplicate frames keeps the timeline: a dropout becomes a short freeze with
+        // silent audio, in sync, instead of a growing lead.
+        var ivtc = $"fps=source_fps,fieldmatch=order={order}:combmatch=full,decimate";
         if (!GetBool(af, "bobbed", true)) return ivtc;
 
         // A bob-deinterlaced 60p stream still carries the 3:2 field structure; weaving each pair
@@ -494,7 +500,7 @@ public sealed class FFmpegFilterEngine : IFilterEngine
         // stream as pure TFF/BFF, the frame stays 1104x720, and decimate lands on 23.98 fps where a
         // pixel-difference decimator (mpdecimate) could not find a threshold that held across episodes.
         var weave = order == "bff" ? "interleave_bottom" : "interleave_top";
-        return $"tinterlace=mode={weave},{ivtc}";
+        return $"fps=source_fps,tinterlace=mode={weave},{ivtc.Replace("fps=source_fps,", "")}";
     }
 
     // Values arrive as bool from the UI, JsonElement from a saved profile/preset, or a string

@@ -102,7 +102,7 @@ public class ProfileTests
         var script = engine.GenerateScript(chain, "in.ts");
 
         Assert.StartsWith(
-            "crop=iw-176:ih-0:88:0,tinterlace=mode=interleave_top,fieldmatch=order=tff:combmatch=full,decimate,hue=s=0,spp=quality=3:qp=4,hqdn3d=2:1.5:3,",
+            "crop=iw-176:ih-0:88:0,fps=source_fps,tinterlace=mode=interleave_top,fieldmatch=order=tff:combmatch=full,decimate,hue=s=0,spp=quality=3:qp=4,hqdn3d=2:1.5:3,",
             script);
         // superres falls back to a spline scale where no Vulkan GPU is available.
         Assert.EndsWith("scale=-2:1080:flags=spline,cas=strength=0.4,deband=range=16:blur=1", script);

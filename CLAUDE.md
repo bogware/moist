@@ -494,6 +494,16 @@ duplicates. Weaving each pair of 60p frames back into one 30i frame
 TFF — and lands on 23.98 fps on every episode tried, with nothing interpolated. Prefer
 `ivtc` for telecined film; keep `mpdecimate` for genuinely duplicated frames.
 
+**Dropouts collapse under `decimate`.** Over-the-air captures have reception gaps: one
+Gunsmoke episode had 16 video pts jumps totalling 2.2 s, with matching audio gaps. `decimate`
+rewrites timestamps assuming a constant input rate, so the gaps vanished from the video while
+the separately encoded audio kept them — the picture led the sound by 1.8 s at minute 55. The
+`ivtc` chain therefore starts with `fps=source_fps`, which duplicates frames across a gap so
+the timeline survives: a dropout becomes a short freeze over silent audio, in sync. The 75 s
+test clips had no dropouts, which is why only a full-length capture caught it — verify sync by
+matching a late-episode output frame back to its source frame (PSNR peak over a ±10 s window),
+not by comparing durations: decimate's fixed 4:5 ratio keeps the total length plausible.
+
 **Not `tinterlace=mode=merge`.** It recovers the same cadence, which is how it passed the
 first frame-count experiment — but it stacks the pair into a *double-height* frame, so a
 later height-based resize (`scale=-2:1080`) silently halves the width. The 828×1080 outputs

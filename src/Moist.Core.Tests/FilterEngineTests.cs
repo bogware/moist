@@ -141,18 +141,20 @@ public class FilterEngineTests
         // height-based resize then halves the width).
         var bobbed = new FilterChain();
         bobbed.Add(ivtc, new Dictionary<string, object> { ["bobbed"] = true, ["order"] = "tff" });
-        Assert.Equal("tinterlace=mode=interleave_top,fieldmatch=order=tff:combmatch=full,decimate",
+        // fps=source_fps leads: it fills reception-dropout pts gaps with duplicate frames BEFORE
+        // decimate rewrites the timestamps, or the video loses the gap and runs ahead of the audio.
+        Assert.Equal("fps=source_fps,tinterlace=mode=interleave_top,fieldmatch=order=tff:combmatch=full,decimate",
             engine.GenerateScript(bobbed, "in.mkv"));
 
         // BFF material weaves the other way round.
         var bff = new FilterChain();
         bff.Add(ivtc, new Dictionary<string, object> { ["bobbed"] = true, ["order"] = "bff" });
-        Assert.StartsWith("tinterlace=mode=interleave_bottom,fieldmatch=order=bff", engine.GenerateScript(bff, "in.mkv"));
+        Assert.StartsWith("fps=source_fps,tinterlace=mode=interleave_bottom,fieldmatch=order=bff", engine.GenerateScript(bff, "in.mkv"));
 
         // Native interlaced telecine: straight to fieldmatch.
         var native = new FilterChain();
         native.Add(ivtc, new Dictionary<string, object> { ["bobbed"] = false, ["order"] = "auto" });
-        Assert.Equal("fieldmatch=order=auto:combmatch=full,decimate",
+        Assert.Equal("fps=source_fps,fieldmatch=order=auto:combmatch=full,decimate",
             engine.GenerateScript(native, "in.mkv"));
     }
 

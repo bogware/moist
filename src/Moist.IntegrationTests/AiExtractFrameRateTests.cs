@@ -53,7 +53,7 @@ public class AiExtractFrameRateTests : IDisposable
     };
 
     /// <summary>The ivtc chain exactly as the FFmpeg filter engine emits it for a bobbed 59.94 source.</summary>
-    private const string Ivtc = "tinterlace=mode=interleave_top,fieldmatch=order=tff:combmatch=full,decimate";
+    private const string Ivtc = "fps=source_fps,tinterlace=mode=interleave_top,fieldmatch=order=tff:combmatch=full,decimate";
 
     [FfmpegFact]
     public async Task IvtcPreClean_MeasuresTheExactFilmRate()
@@ -107,5 +107,39 @@ public class AiExtractFrameRateTests : IDisposable
 
         Assert.Equal(24, Directory.GetFiles(framesDir, "*.png").Length);
         Assert.Contains("frame=", await stdout);                        // the -progress heartbeat the watchdog relies on
+    }
+
+    /// <summary>A broadcast capture with a reception dropout has a pts gap and no frames. decimate
+    /// would collapse it and the video would run ahead of the audio; the ivtc chain's leading
+    /// fps=source_fps duplicates frames across the gap so the frame count — and the timeline — hold.</summary>
+    [FfmpegFact]
+    public async Task IvtcFillsTimestampGaps_SoTheTimelineSurvivesADropout()
+    {
+        // Drop frames 50-58 of the 60p fixture (a 150 ms hole) ahead of the ivtc chain.
+        var holed = "select='not(between(n,50,58))'," + Ivtc;
+        var (pngs, _) = await ExtractAsync(Job(_source, holed), Path.Combine(_root, "holed"));
+        var (full, _) = await ExtractAsync(Job(_source, Ivtc), Path.Combine(_root, "full"));
+        Assert.InRange(full, 95, 97);
+        Assert.Equal(full, pngs);                                        // the hole was filled, not collapsed
+    }
+
+    private static async Task<(int Pngs, string Stderr)> ExtractAsync(VideoJob job, string framesDir)
+    {
+        Directory.CreateDirectory(framesDir);
+        var psi = new ProcessStartInfo
+        {
+            FileName = "ffmpeg", UseShellExecute = false, CreateNoWindow = true,
+            RedirectStandardOutput = true, RedirectStandardError = true,
+        };
+        foreach (var a in RealEsrganVideoProcessor.BuildExtractArgs(job, Path.Combine(framesDir, "%06d.png")))
+            psi.ArgumentList.Add(a);
+        using var p = Process.Start(psi)!;
+        var stdout = p.StandardOutput.ReadToEndAsync();
+        var stderr = p.StandardError.ReadToEndAsync();
+        await p.WaitForExitAsync();
+        await stdout;
+        var err = await stderr;
+        Assert.True(p.ExitCode == 0, $"extract failed ({p.ExitCode}):\n{err}");
+        return (Directory.GetFiles(framesDir, "*.png").Length, err);
     }
 }
