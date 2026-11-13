@@ -43,7 +43,15 @@ internal static class ProcessWatchdog
 
             logger.LogError("{Processor} produced no output for {Silent:g}; treating it as stalled and killing it",
                 displayName, silent);
-            try { if (!process.HasExited) process.Kill(entireProcessTree: true); } catch { /* best effort */ }
+            try
+            {
+                if (!process.HasExited) process.Kill(entireProcessTree: true);
+                // Kill only *signals* on Unix (SIGKILL) and returns before the process is reaped.
+                // Wait briefly so the caller's cleanup (scratch deletion, retry) never races a
+                // tool that is still alive and still holding its files.
+                process.WaitForExit(TimeSpan.FromSeconds(10));
+            }
+            catch { /* best effort */ }
             throw new TimeoutException(
                 $"{displayName} produced no output for {silent:hh\\:mm\\:ss} and was killed as stalled. " +
                 "This usually means a hung read (network share?), a stuck filter, or a wedged GPU driver.");

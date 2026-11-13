@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Moist.Core.Settings;
 
 namespace Moist.Services;
 
@@ -33,9 +34,7 @@ public sealed class QualityCache
 
     public static string GetCachePath()
     {
-        var dir = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "moist");
-        Directory.CreateDirectory(dir);
+        var dir = MoistPaths.EnsureRoot();
         return Path.Combine(dir, "quality-cache.json");
     }
 

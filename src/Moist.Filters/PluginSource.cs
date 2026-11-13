@@ -1,6 +1,7 @@
 using System.IO.Compression;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Moist.Core.Settings;
 
 namespace Moist.Filters;
 
@@ -82,9 +83,7 @@ public sealed class PluginSourceManager
 
     public PluginSourceManager()
     {
-        _configDir = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-            "moist");
+        _configDir = MoistPaths.ConfigRoot;
         _pluginsDir = Path.Combine(_configDir, "plugins");
         Directory.CreateDirectory(_pluginsDir);
 

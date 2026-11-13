@@ -353,8 +353,9 @@ public sealed partial class RealEsrganVideoProcessor : IJobProcessor
             return sourceRate;
         }
 
-        var measured = RateFromShowinfo(stderr.Split('\n'));
-        var rate = ResolveOutputFrameRate(sourceRate, measured);
+        var sample = MeasureFromShowinfo(stderr.Split('\n'));
+        var measured = sample?.Fps;
+        var rate = ResolveOutputFrameRate(sourceRate, measured, sample?.Uniform ?? true);
         if (measured is null)
             logger.LogWarning("Frame-rate probe for {Input} printed too few frames; using the source rate {Rate}", vj.InputFile, sourceRate);
         else
@@ -372,13 +373,27 @@ public sealed partial class RealEsrganVideoProcessor : IJobProcessor
             args.AddRange(["-ss", trimStart.TotalSeconds.ToString("F6", CultureInfo.InvariantCulture)]);
         args.AddRange(["-i", vj.InputFile]);
         var chain = string.IsNullOrWhiteSpace(vj.FilterScript) ? "" : vj.FilterScript + ",";
-        args.AddRange(["-vf", chain + "settb=AVTB,showinfo", "-vsync", "0", "-frames:v", "12", "-f", "null", "-"]);
+        args.AddRange(["-vf", chain + "settb=AVTB,showinfo", "-vsync", "0", "-frames:v", RateProbeFrames, "-f", "null", "-"]);
         return [.. args];
     }
 
+    /// <summary>Frames the rate probe pushes through the chain. Enough to span several 5-frame
+    /// telecine cycles, so an uneven timestamp pattern still averages out (see <see cref="MeasureFromShowinfo"/>).</summary>
+    internal const string RateProbeFrames = "48";
+
+    /// <summary>Frame rate from showinfo's per-frame <c>pts:</c> values; see <see cref="MeasureFromShowinfo"/>.</summary>
+    internal static double? RateFromShowinfo(IEnumerable<string> lines) => MeasureFromShowinfo(lines)?.Fps;
+
     /// <summary>Frame rate from showinfo's per-frame <c>pts:</c> values (microseconds, courtesy of
-    /// <c>settb=AVTB</c>): one million over the median spacing. Null with fewer than three frames.</summary>
-    internal static double? RateFromShowinfo(IEnumerable<string> lines)
+    /// <c>settb=AVTB</c>). Null with fewer than three frames.
+    /// <para>When the frames are evenly spaced (FFmpeg 6+ <c>decimate</c> retimes its output) the
+    /// rate is one million over the median spacing, which is exact. FFmpeg 5.1's <c>decimate</c> —
+    /// what Debian and the Docker image ship — drops one frame in five but leaves the survivors on
+    /// the 30i grid (33/33/33/67 ms), so the median reads 29.97 instead of 23.976. Uneven spacing is
+    /// therefore reported as <c>Uniform = false</c> with the average over the whole span, and
+    /// <see cref="ResolveOutputFrameRate"/> snaps that looser figure to a simple multiple of the
+    /// source rate.</para></summary>
+    internal static (double Fps, bool Uniform)? MeasureFromShowinfo(IEnumerable<string> lines)
     {
         var pts = new List<long>();
         foreach (var line in lines)
@@ -393,7 +408,13 @@ public sealed partial class RealEsrganVideoProcessor : IJobProcessor
             if (pts[i] > pts[i - 1]) deltas.Add(pts[i] - pts[i - 1]);
         if (deltas.Count < 2) return null;
         deltas.Sort();
-        return 1_000_000.0 / deltas[deltas.Count / 2];
+        var median = deltas[deltas.Count / 2];
+        // Spacing within ±10% of the median everywhere = constant rate; anything else is a cadence
+        // pattern in the timestamps (or a dropout), where only the long-run average is meaningful.
+        var uniform = deltas[0] >= median * 0.9 && deltas[^1] <= median * 1.1;
+        if (uniform) return (1_000_000.0 / median, true);
+        var span = pts.Max() - pts.Min();
+        return span > 0 ? ((pts.Count - 1) * 1_000_000.0 / span, false) : null;
     }
 
     [GeneratedRegex(@"showinfo.*\bpts:\s*(-?\d+)")]
@@ -407,7 +428,7 @@ public sealed partial class RealEsrganVideoProcessor : IJobProcessor
     /// is far tighter than that; a rate that snaps to nothing is used as measured, to 0.001 fps.
     /// Without a measurement (the probe failed or produced too few frames) the source rate stands.
     /// </summary>
-    internal static string ResolveOutputFrameRate(string sourceRate, double? measuredFps)
+    internal static string ResolveOutputFrameRate(string sourceRate, double? measuredFps, bool uniform = true)
     {
         if (measuredFps is not { } fps || !double.IsFinite(fps) || fps <= 0) return sourceRate;
         var (num, den) = ParseRational(sourceRate);
@@ -431,6 +452,27 @@ public sealed partial class RealEsrganVideoProcessor : IJobProcessor
         {
             var g = Gcd(best.Num, best.Den);
             return $"{best.Num / g}/{best.Den / g}";
+        }
+
+        // An average over uneven timestamps is only good to a percent or two, so it can't tell 24
+        // from 24000/1001 — but the filters that produce uneven spacing (decimate on old FFmpeg)
+        // only ever drop a fixed share of the source frames, so the true rate is a simple multiple
+        // of the source. Take the nearest one within 3%.
+        if (!uniform && num > 0 && den > 0)
+        {
+            (long Num, long Den) near = default;
+            var nearErr = double.MaxValue;
+            for (var k = 1; k <= 6; k++)
+                for (var m = 1; m <= 6; m++)
+                {
+                    var err = Math.Abs((double)(num * k) / (den * m) - fps) / fps;
+                    if (err < nearErr) { nearErr = err; near = (num * k, den * m); }
+                }
+            if (nearErr < 0.03)
+            {
+                var g = Gcd(near.Num, near.Den);
+                return $"{near.Num / g}/{near.Den / g}";
+            }
         }
         return $"{(long)Math.Round(fps * 1000)}/1000";
     }

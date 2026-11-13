@@ -175,7 +175,15 @@ public sealed class CliEncoderTests(MediaFixture media) : PipelineTestBase(media
         var output = await EncodeAsync(services, "cli-x265", Media.NtscVideo, "cli_x265_ntsc.mkv");
 
         Assert.Equal("24000/1001", Ffmpeg.FrameRate(output));
-        Assert.Equal(Ffmpeg.FrameCount(Media.NtscVideo), Ffmpeg.FrameCount(output));
+
+        // FFmpeg before 7 (Debian 12's 5.1, Ubuntu 24.04's 6.1) duplicates the final frame when
+        // it converts to the constant rate a y4m pipe requires: one repeated 42 ms frame at the very
+        // end. CFR conversion is still right — it is what keeps a variable-rate source in sync once
+        // x265's untimed stream is wrapped at the nominal rate — and chunks/trims are capped by
+        // -frames:v, so only a whole-file encode on an old FFmpeg sees it. Exact on 7+.
+        var expected = Ffmpeg.FrameCount(Media.NtscVideo);
+        if (Ffmpeg.MajorVersion >= 7) Assert.Equal(expected, Ffmpeg.FrameCount(output));
+        else Assert.InRange(Ffmpeg.FrameCount(output), expected, expected + 1);
 
         // One decimal is loose enough to ignore how containers round their own duration,
         // and tight enough to catch the failure this guards: the same frames timed at an

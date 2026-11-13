@@ -3,6 +3,7 @@ using System.Text.Json.Serialization;
 using Moist.Core.Encoders.Audio;
 using Moist.Core.Encoders.Video;
 using Moist.Core.Muxers;
+using Moist.Core.Settings;
 
 namespace Moist.Core.Profiles;
 
@@ -77,10 +78,7 @@ public sealed class ProfileManager
 
     public ProfileManager()
     {
-        _profilesDir = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-            "moist", "profiles");
-        Directory.CreateDirectory(_profilesDir);
+        _profilesDir = MoistPaths.Sub("profiles");
 
         // Ensure built-in profiles exist
         EnsureBuiltInProfiles();

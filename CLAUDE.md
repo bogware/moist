@@ -322,6 +322,10 @@ Things that path gets wrong if you touch it carelessly:
 - **`cmd.exe` strips the first and last quote after `/c`.** A pipeline begins with a quoted tool path, so it needs an *extra* enclosing pair — `/s /c "…"` — or the command arrives mangled and fails with no usable error. Use `ShellPipeline.Apply`, which also uses `ArgumentList` on Unix so the command is never re-parsed.
 - **Trims are not optional.** Chunked encoding, target-quality search and per-scene optimisation encode *pieces* of the source via `TrimStart`/`TrimFrames`/`TrimDuration`. An encoder ignoring them encodes the whole file for every chunk and every probe, silently.
 - **Both encoders default to 8-bit output** regardless of what the pipe carries, so `--output-depth` has to be sent explicitly for 10/12-bit. It's only sent when it differs from 8, since single-depth builds reject the option outright.
+- **FFmpeg before 7 adds one trailing frame** when converting to the constant rate a y4m pipe
+  requires (Debian 12's 5.1, Ubuntu 24.04's 6.1). Don't "fix" it with `-fps_mode passthrough` — CFR conversion
+  is what keeps a VFR source in sync once the untimed x265 stream is wrapped at the nominal rate. Chunks and
+  trims are capped by `-frames:v`, so only a whole-file encode on an old FFmpeg sees the extra 42 ms.
 - **x265 has no muxer** — it writes a raw HEVC elementary stream with no timing at all, so `OnAfterSuccessAsync` wraps it while the source frame rate is still known. On FFmpeg 8 the raw demuxer emits packets with no timestamps and Matroska refuses them, so they're synthesised with `-bsf:v setts=ts=N*den/num/TB`. Don't "simplify" this to an MP4 remux: that exits 0 while dropping frames.
 - **`BuildArguments` is what actually runs**, composed into the pipeline by `OnBeforeStart`. Don't build a second copy of the arguments there — that's how the x264-specific settings got silently dropped for a year.
 
@@ -388,7 +392,9 @@ Things that path gets right on purpose:
   (`ResolveOutputFrameRate`), so an ivtc'd 59.94 capture encodes at `24000/1001` rather than the
   source's `60000/1001` — which played the picture at 2.5× against the audio. Don't replace this
   with ffmpeg's `-progress` counters: `frame=` and `out_time=` lag each other under threaded PNG
-  encoding and the slope between them was off by 9%. Trims (`TrimStart`/`TrimFrames`/
+  encoding and the slope between them was off by 9%. **FFmpeg before 7 retimes differently:** its `decimate` leaves the
+  survivors on the 30i grid (33/33/33/67 ms), so `MeasureFromShowinfo` flags uneven spacing and the
+  resolver snaps the span average to a simple multiple of the source rate instead of the median. Trims (`TrimStart`/`TrimFrames`/
   `TrimDuration`) are applied to extraction and are part of `WorkKey`, so a snippet preview
   neither upscales the whole film nor leaves a scratch the full encode would "resume" from.
 - **It's a tool, so it's optional.** `realesrgan-ncnn-vulkan` is in `ToolDiscovery.KnownTools`
@@ -564,7 +570,7 @@ the output or removing the "experimental" label.
 
 ## Data & Runtime Paths
 
-All under `%AppData%/moist` (Windows) / `~/.config/moist` (Linux/macOS) — the code uses `SpecialFolder.ApplicationData` uniformly:
+All under `%AppData%/moist` (Windows) / `~/.config/moist` (Linux/macOS), resolved **only** through `MoistPaths` (`Moist.Core/Settings`) — never call `GetFolderPath(ApplicationData)` directly. On Unix that returns `""` when `~/.config` doesn't exist yet (fresh account, CI runner, service user), and `Path.Combine("", "moist")` is the *relative* path `moist` — beside the published CLI, that's the executable itself, so every write failed with "The file '…/moist' already exists". `MoistPaths` creates the folder, falls back through `$XDG_CONFIG_HOME` → `$HOME/.config` → local app data → temp, always returns an absolute path, and honours a `MOIST_CONFIG_DIR` override:
 
 - `settings.json` — app settings. Corrupt settings are deleted and defaults reloaded on startup failure.
 - `profiles/*.json` — one file per profile, built-ins included

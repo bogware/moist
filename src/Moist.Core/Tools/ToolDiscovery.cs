@@ -5,6 +5,7 @@ using System.Security.Cryptography;
 using System.Text;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using Moist.Core.Settings;
 
 namespace Moist.Core.Tools;
 
@@ -15,9 +16,7 @@ namespace Moist.Core.Tools;
 public sealed class ToolDiscovery
 {
     private readonly ILogger<ToolDiscovery> _logger;
-    private static readonly string ToolsDir = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-        "moist", "tools");
+    private static readonly string ToolsDir = Path.Combine(MoistPaths.ConfigRoot, "tools");
 
     public ToolDiscovery(ILoggerFactory? loggerFactory = null)
     {

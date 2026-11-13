@@ -246,6 +246,29 @@ public class RealEsrganProcessorTests
         Assert.Equal("25/1", RealEsrganVideoProcessor.ResolveOutputFrameRate("25/1", null));
     }
 
+    /// <summary>FFmpeg 5.1 (Debian, the Docker image) leaves decimate's survivors on the 30i grid:
+    /// three 33 ms gaps then a 67 ms one. The median of that is 29.97; the truth is 23.976.</summary>
+    [Fact]
+    public void UnevenDecimateTimestamps_AreAveraged_AndSnappedToAMultipleOfTheSource()
+    {
+        var lines = new List<string>();
+        long pts = 33367;
+        for (var i = 0; i < 48; i++)
+        {
+            lines.Add($"[Parsed_showinfo_5 @ 0x1] n: {i} pts: {pts} pts_time:{pts / 1e6}");
+            pts += (i % 4 == 1) ? 66733 : 33367;     // one 30i slot in five was dropped
+        }
+        var sample = RealEsrganVideoProcessor.MeasureFromShowinfo(lines);
+        Assert.NotNull(sample);
+        Assert.False(sample!.Value.Uniform);
+        Assert.InRange(sample.Value.Fps, 23.4, 24.6);
+        Assert.Equal("24000/1001", RealEsrganVideoProcessor.ResolveOutputFrameRate("60000/1001", sample.Value.Fps, sample.Value.Uniform));
+
+        // Evenly spaced frames still take the exact path.
+        var even = Enumerable.Range(0, 12).Select(i => $"showinfo n: {i} pts: {i * 41708}").ToList();
+        Assert.True(RealEsrganVideoProcessor.MeasureFromShowinfo(even)!.Value.Uniform);
+    }
+
     [Fact]
     public void BuildRateProbeArgs_RunsTheSamePreCleanThenPrintsMicrosecondPts()
     {
@@ -256,7 +279,7 @@ public class RealEsrganProcessorTests
         Assert.Equal("7.000000", args[Array.IndexOf(args, "-ss") + 1]);
         Assert.True(Array.IndexOf(args, "-ss") < Array.IndexOf(args, "-i"));
         Assert.Equal("spp=quality=3:qp=4,hqdn3d=2:1.5:3,settb=AVTB,showinfo", args[Array.IndexOf(args, "-vf") + 1]);
-        Assert.Equal("12", args[Array.IndexOf(args, "-frames:v") + 1]);
+        Assert.Equal(RealEsrganVideoProcessor.RateProbeFrames, args[Array.IndexOf(args, "-frames:v") + 1]);
         Assert.Equal("null", args[Array.IndexOf(args, "-f") + 1]);
 
         var bare = Job(); bare.FilterScript = "";

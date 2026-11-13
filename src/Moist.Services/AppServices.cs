@@ -91,10 +91,7 @@ public sealed class AppServices : IDisposable
     public AppServices(LogLevel minimumLogLevel = LogLevel.Debug, bool logToStandardError = false)
     {
         // Set up logging to both console and file
-        var logDir = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-            "moist", "logs");
-        Directory.CreateDirectory(logDir);
+        var logDir = MoistPaths.Sub("logs");
         LogFilePath = Path.Combine(logDir, $"moist_{DateTime.Now:yyyyMMdd_HHmmss}.log");
 
         // The console's verbosity and the session file's detail are deliberately separate.

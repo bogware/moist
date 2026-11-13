@@ -3,6 +3,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moist.Core.Encoders;
 using Moist.Core.Jobs;
+using Moist.Core.Settings;
 
 namespace Moist.Core.Plugins;
 
@@ -19,11 +20,7 @@ public sealed class PluginLoader
 
     public static string GetPluginsDirectory()
     {
-        var dir = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-            "moist", "plugins");
-        Directory.CreateDirectory(dir);
-        return dir;
+        return MoistPaths.Sub("plugins");
     }
 
     public PluginLoader(ILoggerFactory? loggerFactory = null)

@@ -42,6 +42,27 @@ public static class Ffmpeg
         }
     }
 
+    /// <summary>The FFmpeg release's major version ("ffmpeg version 6.1.1-3ubuntu5" → 6). A git
+    /// snapshot ("N-12345-g…") is newer than any release and reports <see cref="int.MaxValue"/>.</summary>
+    public static int MajorVersion => _major.Value;
+    private static readonly Lazy<int> _major = new(() =>
+    {
+        try
+        {
+            using var p = Process.Start(new ProcessStartInfo("ffmpeg", "-hide_banner -version")
+            {
+                RedirectStandardOutput = true, RedirectStandardError = true,
+                UseShellExecute = false, CreateNoWindow = true,
+            });
+            if (p is null) return 0;
+            var first = p.StandardOutput.ReadLine() ?? "";
+            p.WaitForExit(15_000);
+            var m = System.Text.RegularExpressions.Regex.Match(first, @"version\s+n?(\d+)\.");
+            return m.Success ? int.Parse(m.Groups[1].Value) : int.MaxValue;
+        }
+        catch { return 0; }
+    });
+
     // FFmpeg is not one program. Which encoders and filters a build contains depends on
     // how it was compiled, and the ones these tests lean on — libsvtav1, libvmaf — are
     // absent from most distribution packages. Assuming they're there made the suite pass

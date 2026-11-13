@@ -1,3 +1,4 @@
+using Moist.Core.Settings;
 namespace Moist.Core.Diagnostics;
 
 /// <summary>
@@ -11,8 +12,7 @@ public static class CrashLog
 {
     private static int _installed;
 
-    public static string LogDirectory => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "moist", "logs");
+    public static string LogDirectory => Path.Combine(MoistPaths.ConfigRoot, "logs");
 
     /// <summary>
     /// Hook the process-wide escape hatches. Idempotent. <paramref name="host"/> names the

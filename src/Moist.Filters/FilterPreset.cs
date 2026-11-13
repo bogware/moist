@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Moist.Core.Settings;
 
 namespace Moist.Filters;
 
@@ -89,10 +90,7 @@ public sealed class FilterPresetManager
 
     public FilterPresetManager()
     {
-        _configDir = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-            "moist", "filter-presets");
-        Directory.CreateDirectory(_configDir);
+        _configDir = MoistPaths.Sub("filter-presets");
 
         AddBuiltInPresets();
         LoadUserPresets();

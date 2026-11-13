@@ -96,10 +96,7 @@ public sealed class MoistSettings
 
     public static string GetSettingsPath()
     {
-        var configDir = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-            "moist");
-        Directory.CreateDirectory(configDir);
+        var configDir = MoistPaths.EnsureRoot();
         return Path.Combine(configDir, "settings.json");
     }
 

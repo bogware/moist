@@ -80,6 +80,9 @@ at 2%.
 
 ### Fixed
 
+- **Real-ESRGAN / RIFE frame rate after `ivtc` on FFmpeg 5.x/6.x.** Older FFmpeg's `decimate` drops one frame in five but leaves the survivors on the 30i timestamp grid, so the rate probe read 29.97 instead of 23.976 — on Debian 12 and the Docker image that would have played AI-upscaled film fast. The probe now detects uneven spacing, averages over 48 frames and snaps to a simple multiple of the source rate.
+- **Stall watchdog on Linux/macOS.** A killed tool is now waited for (bounded) before the job fails, since `Kill` only signals on Unix; cleanup could otherwise race a tool that was still alive.
+- **Configuration written to the working directory on Linux/macOS.** On an account without `~/.config` (fresh installs, CI runners, service users) the platform config folder resolved to an empty string and settings, logs and profiles went to a relative `moist/` folder — which collides with the `moist` executable and failed every write. All config paths now go through one resolver that creates the folder, falls back through `$XDG_CONFIG_HOME` and `$HOME/.config`, and accepts a `MOIST_CONFIG_DIR` override.
 - **Audio/video drift after reception dropouts with `ivtc`.** A broadcast capture with signal
   dropouts carries timestamp gaps in both streams. `decimate` rewrote the video timestamps as if
   the input were continuous, so every gap vanished from the picture while the audio kept it; the

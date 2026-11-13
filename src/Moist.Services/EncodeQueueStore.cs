@@ -3,6 +3,7 @@ using System.Text.Json.Serialization;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moist.Core.Chunking;
+using Moist.Core.Settings;
 
 namespace Moist.Services;
 
@@ -53,9 +54,7 @@ public sealed class EncodeQueueStore(ILoggerFactory? loggerFactory = null)
 
     public static string GetQueueFilePath()
     {
-        var dir = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "moist");
-        Directory.CreateDirectory(dir);
+        var dir = MoistPaths.EnsureRoot();
         return Path.Combine(dir, "queue.json");
     }
 
