@@ -92,6 +92,37 @@ public sealed class ChunkedEncode(AppServices services, ILoggerFactory? loggerFa
             ? video.TotalFrames
             : (long)Math.Round(info.Duration.TotalSeconds * video.Framerate);
 
+        // A plan must tile the source exactly, and the join verifies it by decoding. When the
+        // container records no frame count (MPEG-TS, most broadcast captures) TotalFrames is only
+        // duration × rate — and the container duration includes the audio's head start, so a MeTV
+        // capture "had" 4509 frames that decoded to 4462 and every chunked encode failed its join.
+        // Count by decoding instead: the same measure the verification uses, so the two agree.
+        if (!video.FrameCountIsExact && ChunkPlanner.IsWorthwhile(totalFrames, video.Framerate, options))
+        {
+            _logger.LogInformation(
+                "The container records no frame count; counting frames by decoding so the chunks tile exactly");
+            try
+            {
+                var counted = await FFmpegConcatProcessor.CountFramesAsync(services.Settings.FFprobePath, request.InputFile, ct);
+                if (counted <= 0)
+                {
+                    // Keeping the estimate would only fail the join at the very end, after all the work.
+                    _logger.LogWarning("Could not count frames exactly; encoding without chunking");
+                    return null;
+                }
+                if (counted != totalFrames)
+                    _logger.LogInformation("Frame count: {Counted} decoded (the duration estimate said {Estimate})",
+                        counted, totalFrames);
+                totalFrames = counted;
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                // Without an exact count the join could only fail at the end, after all the work.
+                _logger.LogWarning(ex, "Could not count frames exactly; encoding without chunking");
+                return null;
+            }
+        }
+
         if (!ChunkPlanner.IsWorthwhile(totalFrames, video.Framerate, options))
         {
             _logger.LogInformation(

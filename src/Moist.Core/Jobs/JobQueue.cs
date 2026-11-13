@@ -438,10 +438,15 @@ public sealed class JobQueue : IDisposable
                 // Remove any parent directory the cleanup just emptied — otherwise a per-run
                 // chunk directory (chunks/<hash>/) is left behind empty after every chunked
                 // encode and they accumulate under the temp tree. Only delete it when actually
-                // empty, so nothing shared is ever removed.
+                // empty, and only a chunks/<hash>/ run directory: the temp directory itself is
+                // also the parent of ordinary temp files, and deleting it when it happened to be
+                // empty broke a batch — the later jobs, already built, wrote into a folder that
+                // no longer existed.
                 foreach (var dir in job.FilesToCleanup
                              .Select(Path.GetDirectoryName)
-                             .Where(d => !string.IsNullOrEmpty(d))
+                             .Where(d => !string.IsNullOrEmpty(d)
+                                         && string.Equals(Path.GetFileName(Path.GetDirectoryName(d)), "chunks",
+                                                          StringComparison.OrdinalIgnoreCase))
                              .Distinct(StringComparer.OrdinalIgnoreCase))
                 {
                     try

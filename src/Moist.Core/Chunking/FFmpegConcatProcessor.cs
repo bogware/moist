@@ -132,8 +132,24 @@ public sealed partial class FFmpegConcatProcessor(string ffmpegPath) : CommandLi
         await process.WaitForExitAsync(ct);
         _ = await stderrTask;
 
-        var text = stdout.Trim().Trim(',');
-        return long.TryParse(text, out var frames) ? frames : -1;
+        return ParseFrameCount(stdout);
+    }
+
+    /// <summary>
+    /// The first number in ffprobe's csv output, or -1. Not a plain parse of the whole output: an
+    /// MPEG-TS lists each stream again under its program, so a broadcast capture prints the count
+    /// twice with trailing commas ("4462," blank line "4462,") - which a whole-string parse
+    /// rejected, and chunk planning silently fell back to a duration estimate 47 frames too high.
+    /// </summary>
+    public static long ParseFrameCount(string ffprobeOutput)
+    {
+        foreach (var line in ffprobeOutput.Split((char)10))
+        {
+            var token = line.Trim().Trim(',').Trim();
+            if (long.TryParse(token, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var frames))
+                return frames;
+        }
+        return -1;
     }
 
     protected override JobProgress? ParseOutputLine(string line, Job job)

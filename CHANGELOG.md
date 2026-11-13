@@ -121,6 +121,25 @@ at 2%.
 
 ### Fixed
 
+- **Dolby Vision / HDR10+ passthrough never actually worked.** The metadata was extracted and
+  re-injected correctly, but the enriched raw HEVC couldn't be put back in a container: FFmpeg 8
+  refuses untimed packets, and libx265's B-frames rule out numbering them. The step failed safely
+  every time, keeping the plain encode. It now remuxes with mkvmerge, timed from the encoded
+  file's own frame duration, and is verified end-to-end on synthetic DV 8.1 and HDR10+ clips
+  (every frame's metadata preserved). Its scratch files also moved from the system temp folder
+  to moist's temp directory.
+- **Chunked encoding failed on every broadcast capture.** MPEG-TS records no frame count, so the
+  plan used duration × rate, and the container duration includes the audio's head start. A MeTV
+  clip was planned as 4509 frames, decoded to 4462, and the join's verification refused the
+  result. The frame count is now decoded when the container has none.
+- **Frame counts of MPEG-TS files read as unknown.** ffprobe lists a TS stream twice (once under
+  its program) with trailing commas. The parse rejected that, which silently disabled the
+  decoded count above and made `health --deep` report 0 frames for every `.ts` file.
+- **A batch could lose its temp folder mid-run.** Cleanup removed any directory it left empty,
+  including the temp directory itself. The jobs a batch had already built then wrote into a
+  folder that no longer existed. Only per-run `chunks/<hash>/` folders are removed now.
+- `moist serve` help: the `queue/start` example now sends `-d ""`, since a bodiless POST gets
+  *411 Length Required* from Windows' HTTP stack.
 - **Standalone x265 output had scrambled timestamps.** x265 writes an untimed HEVC stream, and
   the FFmpeg wrap numbered its packets in decode order. With B-frames that put presentation
   timestamps out of order (0, .042, .167, .125, …). The frames decoded correctly, but players and

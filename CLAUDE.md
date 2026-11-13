@@ -550,12 +550,19 @@ HEVC → `dovi_tool extract-rpu` / `hdr10plus_tool extract` from the source → 
 video job finished, before the mux) against the temp video; `AppServices` threads the tool
 paths in late-bound like every other tool. Both tools auto-download from Settings.
 
-**It is unverified.** Neither real Dolby Vision content nor the tools were on the machine it
-was written on, so it is contracted to never throw and never to touch the encoded file unless
-the whole round-trip succeeded (temp file + atomic move); any failure logs and the plain
-encode proceeds. `Warnings()` says so whenever it's enabled. The argument builders are
-unit-tested; the round-trip is not. Verify against real DV / HDR10+ content before trusting
-the output or removing the "experimental" label.
+**The remux needs mkvmerge.** The enriched stream is raw HEVC — untimed, and libx265 encodes
+with B-frames — so FFmpeg can't put it back in a container (FFmpeg 8 refuses untimed packets,
+exit -22). `TryRemuxWithMkvmergeAsync` reads the encoded file's frame duration (`mkvmerge -J`)
+and remuxes with `--default-duration`, carrying every non-video track over with `-D`. Without
+MKVToolNix the FFmpeg remux is still attempted and the failure message says to install it.
+The scratch area lives beside the encoded file (moist's temp dir), not `Path.GetTempPath()`.
+
+**Verified on synthetic content only.** End-to-end runs built HDR10 PQ clips with
+DV profile 8.1 RPUs (`dovi_tool generate` + `inject-rpu`) and per-frame HDR10+ (`hdr10plus_tool
+inject`); with the flag every frame's metadata survived (1137/1137 for each), without it none.
+It stays contracted to never throw and never to touch the encoded file unless the whole
+round-trip succeeded (temp file + atomic move). Keep the "experimental" label until it has been
+checked against commercial DV / HDR10+ masters.
 
 ### Theming is additive
 

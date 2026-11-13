@@ -295,10 +295,16 @@ Detection doesn't trust the container's colour tags — Matroska often reports
 data too, which is where mastering display, content light level, HDR10+ and Dolby Vision
 actually live.
 
-**Honest limitation:** HDR10+ and Dolby Vision dynamic metadata are *detected and warned
-about* but not yet preserved through a re-encode. The static HDR10 base layer survives, so
-the result stays HDR; the per-scene tone mapping doesn't. Remux instead of re-encoding to
-keep it.
+**Dynamic HDR passthrough (experimental, opt-in).** By default HDR10+ and Dolby Vision
+dynamic metadata are *detected and warned about*: the static HDR10 base layer survives a
+re-encode, so the result stays HDR, but the per-scene tone mapping doesn't. With
+`--preserve-dynamic-hdr` (or the GUI toggle) moist extracts the metadata from the source with
+`hdr10plus_tool` / `dovi_tool`, re-injects it into the encode and remuxes with mkvmerge. It has
+been verified on synthetic Dolby Vision (profile 8.1) and HDR10+ test clips: every frame's
+metadata survived (1137/1137). It still carries the experimental label until it's been
+checked against commercial DV/HDR10+ masters. It needs both tools and MKVToolNix (all three
+install from Settings on Windows), and it never touches the encode unless the whole round-trip
+succeeds.
 
 ### Queue Survives a Crash
 

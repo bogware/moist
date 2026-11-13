@@ -245,7 +245,9 @@ public sealed class LibraryHealthChecker(
             await stderr;
 
             var output = await stdout;
-            return long.TryParse(output.Trim().Trim(',').Split('\n')[0].Trim(), out var frames) ? frames : 0;
+            // Shared parser: an MPEG-TS prints "N," twice (once per program) and the old first-line
+            // parse choked on the trailing comma, reporting 0 frames for every broadcast capture.
+            return Math.Max(0, Moist.Core.Chunking.FFmpegConcatProcessor.ParseFrameCount(output));
         }
         catch (OperationCanceledException)
         {

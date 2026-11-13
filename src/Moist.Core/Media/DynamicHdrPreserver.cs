@@ -33,6 +33,7 @@ public sealed class DynamicHdrPreserver
     private readonly string _ffmpegPath;
     private readonly string? _doviToolPath;
     private readonly string? _hdr10PlusToolPath;
+    private readonly string? _mkvmergePath;
     private readonly ILogger _logger;
 
     /// <summary>Raw HEVC elementary-stream extensions — an encoded file of this kind needs no remux.</summary>
@@ -51,11 +52,13 @@ public sealed class DynamicHdrPreserver
         string ffmpegPath,
         string? doviToolPath,
         string? hdr10plusToolPath,
-        ILoggerFactory? loggerFactory = null)
+        ILoggerFactory? loggerFactory = null,
+        string? mkvmergePath = null)
     {
         _ffmpegPath = ffmpegPath;
         _doviToolPath = doviToolPath;
         _hdr10PlusToolPath = hdr10plusToolPath;
+        _mkvmergePath = string.IsNullOrWhiteSpace(mkvmergePath) ? null : mkvmergePath;
         _logger = loggerFactory?.CreateLogger<DynamicHdrPreserver>()
                   ?? NullLogger<DynamicHdrPreserver>.Instance;
     }
@@ -114,7 +117,10 @@ public sealed class DynamicHdrPreserver
         }
 
         // Scratch area for the elementary streams and metadata. Best-effort cleanup in finally.
-        var scratch = Path.Combine(Path.GetTempPath(), $"moist_hdr_{Guid.NewGuid():N}");
+        // Beside the encoded file — i.e. in moist's own temp directory, which the user chose (and
+        // which may be on a roomier drive than the system temp) — not Path.GetTempPath().
+        var scratch = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(encodedHevcOrMkv)) ?? Path.GetTempPath(),
+                                   $"moist_hdr_{Guid.NewGuid():N}");
 
         // The in-place replacement is staged next to the encoded file so the final move is a
         // same-volume rename rather than a cross-volume copy that could be interrupted mid-write.
@@ -196,10 +202,21 @@ public sealed class DynamicHdrPreserver
             {
                 File.Copy(currentHevc, replacement, overwrite: true);
             }
+            else if (IsMatroska(ext) && _mkvmergePath is not null
+                     && await TryRemuxWithMkvmergeAsync(currentHevc, encodedHevcOrMkv, replacement, ct))
+            {
+                // mkvmerge rebuilt the timestamps from the stream's picture order (see below).
+            }
             else
             {
+                // An elementary stream has no timestamps. FFmpeg 8 refuses to mux untimed packets, and
+                // with B-frames (libx265's default) it couldn't number them correctly anyway — so this
+                // path only works for streams FFmpeg can time itself. mkvmerge is the reliable route.
                 if (!await RunFfmpegAsync(BuildRemuxArgs(currentHevc, encodedHevcOrMkv, replacement), "remux", ct))
-                    return Failed(encodedHevcOrMkv, "failed to remux the enriched stream back into the container.");
+                    return Failed(encodedHevcOrMkv, _mkvmergePath is null
+                        ? "failed to remux the enriched stream back into the container. Install MKVToolNix " +
+                          "(Settings -> Tools) so mkvmerge can rebuild the timestamps of a B-frame HEVC stream."
+                        : "failed to remux the enriched stream back into the container.");
             }
 
             if (!IsNonEmptyFile(replacement))
@@ -298,6 +315,66 @@ public sealed class DynamicHdrPreserver
         "-map_chapters", "1",
         outContainerPath,
     ];
+
+    /// <summary>
+    /// mkvmerge reads HEVC picture order and so writes correct presentation timestamps for an
+    /// untimed B-frame stream, given the frame duration — which it reads back from the encoded file
+    /// itself (<c>mkvmerge -J</c>). Every non-video track, the chapters and the tags of the encoded
+    /// file are carried over with <c>-D</c>. Exit code 1 means "finished with warnings": still good.
+    /// </summary>
+    private async Task<bool> TryRemuxWithMkvmergeAsync(string injectedHevc, string encodedMkv, string outMkv, CancellationToken ct)
+    {
+        var (started, exit, json) = await CaptureAsync(_mkvmergePath!, ["-J", encodedMkv], ct);
+        if (!started || exit != 0)
+        {
+            _logger.LogWarning("Experimental HDR passthrough: mkvmerge could not identify {File}.", encodedMkv);
+            return false;
+        }
+        var durationNs = DefaultDurationNs(json);
+        if (durationNs is null)
+        {
+            _logger.LogWarning("Experimental HDR passthrough: {File} has no frame duration for mkvmerge to reuse.", encodedMkv);
+            return false;
+        }
+        var (ok, code, _) = await CaptureAsync(_mkvmergePath!, BuildMkvmergeRemuxArgs(injectedHevc, encodedMkv, outMkv, durationNs.Value), ct);
+        if (ok && code is 0 or 1) return true;
+        _logger.LogWarning("Experimental HDR passthrough: mkvmerge remux exited with code {Code}.", code);
+        return false;
+    }
+
+    /// <summary>The first video track's default_duration (ns) from <c>mkvmerge -J</c> output.</summary>
+    internal static long? DefaultDurationNs(string identifyJson)
+    {
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(identifyJson);
+            foreach (var track in doc.RootElement.GetProperty("tracks").EnumerateArray())
+            {
+                if (track.GetProperty("type").GetString() != "video") continue;
+                if (track.TryGetProperty("properties", out var props)
+                    && props.TryGetProperty("default_duration", out var dd)
+                    && dd.TryGetInt64(out var ns) && ns > 0)
+                    return ns;
+                return null;
+            }
+        }
+        catch { /* malformed output: treated as "unknown" */ }
+        return null;
+    }
+
+    /// <summary>mkvmerge args: the enriched HEVC timed at <paramref name="durationNs"/> per frame, plus
+    /// everything but the video (<c>-D</c>) from the original encoded file.</summary>
+    internal static IReadOnlyList<string> BuildMkvmergeRemuxArgs(string injectedHevc, string encodedMkv, string outMkv, long durationNs) =>
+    [
+        "-q", "-o", outMkv,
+        "--default-duration", $"0:{durationNs}ns", injectedHevc,
+        "-D", encodedMkv,
+    ];
+
+    private static bool IsMatroska(string extension) =>
+        extension.Equals(".mkv", StringComparison.OrdinalIgnoreCase) ||
+        extension.Equals(".mka", StringComparison.OrdinalIgnoreCase) ||
+        extension.Equals(".webm", StringComparison.OrdinalIgnoreCase);
 
     // ---- Process orchestration ----
 
@@ -407,6 +484,36 @@ public sealed class DynamicHdrPreserver
             }
             try { await Task.WhenAll(stdoutTask, stderrTask); } catch { /* pipe drain best-effort */ }
             return (true, process.ExitCode);
+        }
+    }
+
+    /// <summary>Like <see cref="RunAsync"/> but returns stdout (for <c>mkvmerge -J</c>).</summary>
+    private static async Task<(bool Started, int ExitCode, string Stdout)> CaptureAsync(
+        string exe, IReadOnlyList<string> args, CancellationToken ct)
+    {
+        var psi = new ProcessStartInfo
+        {
+            FileName = exe, UseShellExecute = false, CreateNoWindow = true,
+            RedirectStandardOutput = true, RedirectStandardError = true,
+        };
+        foreach (var a in args) psi.ArgumentList.Add(a);
+        Process? process;
+        try { process = Process.Start(psi); }
+        catch (Win32Exception) { return (false, -1, ""); }
+        if (process is null) return (false, -1, "");
+        using (process)
+        {
+            var stdoutTask = process.StandardOutput.ReadToEndAsync(ct);
+            var stderrTask = process.StandardError.ReadToEndAsync(ct);
+            try { await process.WaitForExitAsync(ct); }
+            catch (OperationCanceledException)
+            {
+                try { if (!process.HasExited) process.Kill(entireProcessTree: true); } catch { }
+                throw;
+            }
+            string stdout = "";
+            try { stdout = await stdoutTask; await stderrTask; } catch { }
+            return (true, process.ExitCode, stdout);
         }
     }
 

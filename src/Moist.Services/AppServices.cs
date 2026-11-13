@@ -264,7 +264,9 @@ public sealed class AppServices : IDisposable
             // experimental HDR passthrough reports "tool missing" rather than shelling nothing.
             string.IsNullOrWhiteSpace(Settings.DoviToolPath) ? null : Settings.DoviToolPath,
             string.IsNullOrWhiteSpace(Settings.Hdr10PlusToolPath) ? null : Settings.Hdr10PlusToolPath,
-            LoggerFactory));
+            LoggerFactory,
+            // mkvmerge rebuilds the timestamps of the enriched (untimed, B-frame) HEVC stream.
+            Settings.MkvMergePath));
     }
 
     private void RegisterVideoEncoder(string id, string name, string codec, Type settingsType, string desc)

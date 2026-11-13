@@ -15,6 +15,7 @@ public sealed partial class FFmpegMuxProcessor : CommandLineProcessor
     private readonly string _ffmpegPath;
     private readonly string? _doviToolPath;
     private readonly string? _hdr10PlusToolPath;
+    private readonly string? _mkvmergePath;
     private readonly ILoggerFactory? _loggerFactory;
     private readonly Stopwatch _stopwatch = new();
 
@@ -25,12 +26,14 @@ public sealed partial class FFmpegMuxProcessor : CommandLineProcessor
         string ffmpegPath,
         string? doviToolPath = null,
         string? hdr10plusToolPath = null,
-        ILoggerFactory? loggerFactory = null)
+        ILoggerFactory? loggerFactory = null,
+        string? mkvmergePath = null)
     {
         _ffmpegPath = ffmpegPath;
         _doviToolPath = doviToolPath;
         _hdr10PlusToolPath = hdr10plusToolPath;
         _loggerFactory = loggerFactory;
+        _mkvmergePath = string.IsNullOrWhiteSpace(mkvmergePath) ? null : mkvmergePath;
     }
 
     public override bool CanProcess(Job job) => job is MuxJob;
@@ -53,7 +56,7 @@ public sealed partial class FFmpegMuxProcessor : CommandLineProcessor
 
         try
         {
-            var preserver = new DynamicHdrPreserver(_ffmpegPath, _doviToolPath, _hdr10PlusToolPath, _loggerFactory);
+            var preserver = new DynamicHdrPreserver(_ffmpegPath, _doviToolPath, _hdr10PlusToolPath, _loggerFactory, _mkvmergePath);
             // The mux runs on a background job worker (no sync context), so blocking here is safe.
             var result = preserver
                 .PreserveAsync(mj.SourceFile, mj.VideoInput, mj.SourceHasDolbyVision, mj.SourceHasHdr10Plus)

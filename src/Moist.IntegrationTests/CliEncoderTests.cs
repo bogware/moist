@@ -185,10 +185,11 @@ public sealed class CliEncoderTests(MediaFixture media) : PipelineTestBase(media
         if (Ffmpeg.MajorVersion >= 7) Assert.Equal(expected, Ffmpeg.FrameCount(output));
         else Assert.InRange(Ffmpeg.FrameCount(output), expected, expected + 1);
 
-        // One decimal is loose enough to ignore how containers round their own duration,
-        // and tight enough to catch the failure this guards: the same frames timed at an
-        // assumed 25 fps come out ~4% short.
-        Assert.Equal(Ffmpeg.Duration(Media.NtscVideo), Ffmpeg.Duration(output), 1);
+        // Within 60 ms: one frame (FFmpeg < 7's trailing CFR duplicate, above) plus container
+        // rounding — and still far tighter than the failure this guards: the same frames timed at an
+        // assumed 25 fps come out ~4% (130 ms here) short. Not "to one decimal place": 3.023 vs
+        // 3.067 straddles a rounding boundary and failed although they differ by a single frame.
+        AssertDurationMatches(Ffmpeg.Duration(Media.NtscVideo), Ffmpeg.Duration(output));
     }
 
     /// <summary>
@@ -215,8 +216,11 @@ public sealed class CliEncoderTests(MediaFixture media) : PipelineTestBase(media
         var output = await EncodeAsync(services, "cli-x265", Media.NtscVideo, "cli_x265_mkvmerge.mkv",
             b => b.X265StreamWrap = X265StreamWrap.Mkvmerge);
         AssertMonotonicEven(output);
-        Assert.Equal(Ffmpeg.Duration(Media.NtscVideo), Ffmpeg.Duration(output), 1);
+        AssertDurationMatches(Ffmpeg.Duration(Media.NtscVideo), Ffmpeg.Duration(output));
     }
+
+    private static void AssertDurationMatches(double expected, double actual)
+        => Assert.True(Math.Abs(expected - actual) <= 0.060, $"duration {actual:F3}s vs source {expected:F3}s");
 
     private static void AssertMonotonicEven(string file)
     {

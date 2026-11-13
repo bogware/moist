@@ -393,7 +393,9 @@ public static class Help
 
           curl -X POST http://127.0.0.1:7788/api/encode             -H "Authorization: Bearer $TOKEN"             -H "Content-Type: application/json"             -d '{"input":"/media/in.mkv","options":{"crf":22,"preset":"slow"}}'
 
-          curl -X POST http://127.0.0.1:7788/api/queue/start             -H "Authorization: Bearer $TOKEN"
+          curl -X POST http://127.0.0.1:7788/api/queue/start -d ""             -H "Authorization: Bearer $TOKEN"
+
+          (-d "" sends a Content-Length; without one Windows answers 411 Length Required.)
         """);
 
     private static void Health() => Console.WriteLine("""

@@ -104,6 +104,24 @@ public class EnhancementsTests
         Assert.Contains("extract", DynamicHdrPreserver.BuildHdr10PlusExtractArgs("s.hevc", "m.json"));
     }
 
+    /// <summary>The enriched stream is untimed raw HEVC (with libx265's B-frames), so the remux goes
+    /// through mkvmerge, timed by the frame duration read back from the encoded file.</summary>
+    [Fact]
+    public void DynamicHdr_MkvmergeRemux_ReusesTheEncodedFrameDuration()
+    {
+        const string identify = """
+            {"container":{"type":"Matroska"},"tracks":[
+              {"id":0,"type":"video","codec":"HEVC/H.265/MPEG-H","properties":{"default_duration":16683333,"pixel_dimensions":"1104x720"}},
+              {"id":1,"type":"audio","properties":{"default_duration":32000000}}]}
+            """;
+        Assert.Equal(16683333L, DynamicHdrPreserver.DefaultDurationNs(identify));
+        Assert.Null(DynamicHdrPreserver.DefaultDurationNs("""{"tracks":[{"type":"video","properties":{}}]}"""));
+        Assert.Null(DynamicHdrPreserver.DefaultDurationNs("not json"));
+
+        Assert.Equal(["-q", "-o", "out.mkv", "--default-duration", "0:16683333ns", "inj.hevc", "-D", "enc.mkv"],
+            DynamicHdrPreserver.BuildMkvmergeRemuxArgs("inj.hevc", "enc.mkv", "out.mkv", 16683333));
+    }
+
     [Fact]
     public async Task DynamicHdr_SkipsWhenNoMetadataRequested()
     {
