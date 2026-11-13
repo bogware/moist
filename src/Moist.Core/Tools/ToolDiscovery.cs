@@ -33,19 +33,22 @@ public sealed class ToolDiscovery
             Id = "ffmpeg", Name = "FFmpeg", DefaultBinaryName = "ffmpeg", IsRequired = true,
             Description = "Video/audio encoder, decoder, and muxer — the core engine",
             VersionArgs = "-version",
-            // Pinned to immutable dated/versioned builds (NOT BtbN's rolling `latest` tag): the
-            // served bytes stay constant, so a recorded SHA-256 stays valid. Windows uses gyan.dev's
-            // versioned release; Linux uses a BtbN dated autobuild. To update: bump these URLs to a
-            // newer build, download each artifact, hash it (`sha256sum <file>` /
-            // `Get-FileHash -Algorithm SHA256 <file>`), and record the hex in ExpectedSha256 below.
+            // Pinned to immutable versioned builds (NOT BtbN's rolling `latest` tag): the served
+            // bytes stay constant, so the recorded SHA-256 stays valid. Windows uses gyan.dev's
+            // versioned release; Linux uses BtbN's release-branch build from a MONTH-END autobuild —
+            // BtbN deletes its daily autobuilds after a few weeks (a daily pin 404'd) but keeps the
+            // last build of each month. To update: pick a month-end tag, download each artifact,
+            // hash it (`sha256sum <file>` / `Get-FileHash -Algorithm SHA256 <file>`), update both.
             DownloadUrls = new()
             {
                 ["win-x64"] = "https://github.com/GyanD/codexffmpeg/releases/download/9.0.2/ffmpeg-9.0.2-full_build.zip",
-                ["linux-x64"] = "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-09-21-13-55/ffmpeg-N-126734-ga9cbcc2bbb-linux64-gpl.tar.xz",
+                ["linux-x64"] = "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-10-31-12-59/ffmpeg-n9.0.2-39-g7adfbe40dc-linux64-gpl-9.0.tar.xz",
             },
-            // ExpectedSha256 intentionally omitted until a maintainer records the hashes of the
-            // pinned artifacts above. While absent, installs succeed but log an unverified-download
-            // warning; once filled, a hash mismatch aborts the install.
+            ExpectedSha256 = new()
+            {
+                ["win-x64"] = "759d0a9831c436a0eb331ad36f236c06cb04aaa0005da46571f0e9d3d9206f6b",
+                ["linux-x64"] = "73e29a56974ae5a651133a04584c7483b21afe941e17dc91d79814a758b608d3",
+            },
         },
         new ToolDefinition
         {
@@ -57,18 +60,32 @@ public sealed class ToolDiscovery
             DownloadUrls = new()
             {
                 ["win-x64"] = "https://github.com/GyanD/codexffmpeg/releases/download/9.0.2/ffmpeg-9.0.2-full_build.zip",
-                ["linux-x64"] = "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-09-21-13-55/ffmpeg-N-126734-ga9cbcc2bbb-linux64-gpl.tar.xz",
+                ["linux-x64"] = "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-10-31-12-59/ffmpeg-n9.0.2-39-g7adfbe40dc-linux64-gpl-9.0.tar.xz",
             },
-            // ExpectedSha256 intentionally omitted until a maintainer records the pinned artifact hashes.
+            ExpectedSha256 = new()
+            {
+                ["win-x64"] = "759d0a9831c436a0eb331ad36f236c06cb04aaa0005da46571f0e9d3d9206f6b",
+                ["linux-x64"] = "73e29a56974ae5a651133a04584c7483b21afe941e17dc91d79814a758b608d3",
+            },
         },
         new ToolDefinition
         {
             Id = "mkvmerge", Name = "MKVToolNix (mkvmerge)", DefaultBinaryName = "mkvmerge", IsRequired = false,
             Description = "MKV muxer — advanced Matroska container support",
             VersionArgs = "--version",
-            // MKVToolNix ships as a platform installer/package (and a Windows portable 7z), not a
-            // single drop-in binary we can safely auto-extract, so there's no DownloadUrls entry —
-            // the panel offers a one-click "Get" to the official downloads page instead.
+            // Windows: the official portable 7z (LZMA), unpacked in-process by SharpCompress — the
+            // tar.exe that ships with Windows can't decode LZMA. The hash matches the .sha256 file
+            // published beside it. Linux has no single-binary build (an AppImage or distro package),
+            // so it stays a "Get" link: `apt install mkvtoolnix` / `dnf install mkvtoolnix`.
+            // Used by the standalone x265 encoder to wrap B-frame streams with correct timestamps.
+            DownloadUrls = new()
+            {
+                ["win-x64"] = "https://mkvtoolnix.download/windows/releases/103.0/mkvtoolnix-64-bit-103.0.7z",
+            },
+            ExpectedSha256 = new()
+            {
+                ["win-x64"] = "01d76dbfdbd5615d9e02f69b0710d1429a902d47a98c8eee33bd884c4fcb3cbf",
+            },
             HelpUrl = "https://mkvtoolnix.download/downloads.html",
         },
         new ToolDefinition
@@ -86,8 +103,11 @@ public sealed class ToolDiscovery
                 ["win-x64"] = "https://github.com/quietvoid/dovi_tool/releases/download/2.1.3/dovi_tool-2.1.3-x86_64-pc-windows-msvc.zip",
                 ["linux-x64"] = "https://github.com/quietvoid/dovi_tool/releases/download/2.1.3/dovi_tool-2.1.3-x86_64-unknown-linux-musl.tar.gz",
             },
-            // ExpectedSha256 intentionally omitted until a maintainer records the pinned artifact hashes;
-            // while absent, installs succeed but log an unverified-download warning.
+            ExpectedSha256 = new()
+            {
+                ["win-x64"] = "0b8742cabc29555f5bd128efce9c869aa96078d5a96de2de5d15dd4539ed9da5",
+                ["linux-x64"] = "3933a4ea48970ba63dc007e1889791343ab8dea7f46492554cec5da5aad8c13e",
+            },
         },
         new ToolDefinition
         {
@@ -102,7 +122,11 @@ public sealed class ToolDiscovery
                 ["win-x64"] = "https://github.com/quietvoid/hdr10plus_tool/releases/download/1.7.0/hdr10plus_tool-1.7.0-x86_64-pc-windows-msvc.zip",
                 ["linux-x64"] = "https://github.com/quietvoid/hdr10plus_tool/releases/download/1.7.0/hdr10plus_tool-1.7.0-x86_64-unknown-linux-musl.tar.gz",
             },
-            // ExpectedSha256 intentionally omitted until a maintainer records the pinned artifact hashes.
+            ExpectedSha256 = new()
+            {
+                ["win-x64"] = "9ed0a18efb5dce5e30770a801d5846b9ef165605c576762873c0ae290ccee784",
+                ["linux-x64"] = "ca03c9cb4a10e7d6407899c178d867610dbe13b01616abd587dab09efc593d3f",
+            },
         },
         new ToolDefinition
         {
@@ -130,7 +154,12 @@ public sealed class ToolDiscovery
             {
                 ["win-x64"] = "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/realesrgan-ncnn-vulkan-20220424-windows.zip",
                 ["linux-x64"] = "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/realesrgan-ncnn-vulkan-20220424-ubuntu.zip",
-            }
+            },
+            ExpectedSha256 = new()
+            {
+                ["win-x64"] = "abc02804e17982a3be33675e4d471e91ea374e65b70167abc09e31acb412802d",
+                ["linux-x64"] = "e5aa6eb131234b87c0c51f82b89390f5e3e642b7b70f2b9bbe95b6a285a40c96",
+            },
         },
         new ToolDefinition
         {
@@ -141,7 +170,12 @@ public sealed class ToolDiscovery
             {
                 ["win-x64"] = "https://github.com/nihui/rife-ncnn-vulkan/releases/download/20221029/rife-ncnn-vulkan-20221029-windows.zip",
                 ["linux-x64"] = "https://github.com/nihui/rife-ncnn-vulkan/releases/download/20221029/rife-ncnn-vulkan-20221029-ubuntu.zip",
-            }
+            },
+            ExpectedSha256 = new()
+            {
+                ["win-x64"] = "d8e4d772d26cd8006ef0ad0bc82eb191b53c68677d1ae2f42506d74cbbbea606",
+                ["linux-x64"] = "1e2c7ee7fa7daa326542d50622f0afedc80cf6f1858bda411d16385ffa5cdf68",
+            },
         },
         new ToolDefinition
         {
@@ -375,6 +409,10 @@ public sealed class ToolDiscovery
             if (downloadPath.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
             {
                 ZipFile.ExtractToDirectory(downloadPath, extractDir);
+            }
+            else if (downloadPath.EndsWith(".7z", StringComparison.OrdinalIgnoreCase))
+            {
+                SevenZipExtractor.ExtractToDirectory(downloadPath, extractDir);
             }
             else if (downloadPath.EndsWith(".tar.xz", StringComparison.OrdinalIgnoreCase)
                   || downloadPath.EndsWith(".tar.gz", StringComparison.OrdinalIgnoreCase))

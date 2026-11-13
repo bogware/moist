@@ -27,8 +27,15 @@ public static class ServeCommand
     {
         var host = cl.String("host") ?? "127.0.0.1";
         var port = cl.Int("port") ?? 7788;
-        var token = cl.String("token");
+        // MOIST_TOKEN is read here rather than passed on the command line by wrappers (the Docker
+        // entrypoint used to), because argv is visible to every user on the host via ps / /proc.
+        var token = cl.String("token")
+                    ?? (Environment.GetEnvironmentVariable("MOIST_TOKEN") is { Length: > 0 } envToken ? envToken : null);
         var open = cl.Flag("no-auth");
+        var roots = cl.Many("root").Select(r => Path.GetFullPath(r)).ToList();
+        foreach (var r in roots)
+            if (!Directory.Exists(r))
+                throw new UsageException($"--root {r}: no such directory");
 
         if (open && token is not null)
             throw new UsageException("--token and --no-auth contradict each other");
@@ -42,6 +49,13 @@ public static class ServeCommand
             throw new UsageException(
                 $"--no-auth is only allowed on loopback. Serving {host} unauthenticated would let " +
                 "anyone who can reach this machine read and write files as the user running it.");
+
+        // An encode names its own input and output paths. On loopback that is the local user's own
+        // reach; on a network it is a stranger's, so the folders they may touch must be named.
+        if (!loopback && roots.Count == 0)
+            throw new UsageException(
+                $"serving {host} needs at least one --root <dir>: the folders remote encodes may read and write. " +
+                "Without it any token holder could read or overwrite any file this user can.");
 
         if (!open && token is null)
         {
@@ -69,7 +83,7 @@ public static class ServeCommand
               }
             : null;
 
-        var api = new MoistHttpApi(services, token, loopbackHosts);
+        var api = new MoistHttpApi(services, token, loopbackHosts, new ServePolicy(roots));
 
         using var listener = new HttpListener();
         // Reserve the wildcard only for an explicit all-interfaces request; a specific host —
@@ -96,6 +110,9 @@ public static class ServeCommand
 
         Console.WriteLine($"moist serving on http://{host}:{port}/");
         Console.WriteLine(open ? "Authentication disabled (loopback only)." : "Authentication required.");
+        Console.WriteLine(roots.Count > 0
+            ? $"Requests confined to: {string.Join(", ", roots)}"
+            : "Requests are not confined to a folder (loopback only). Use --root to restrict them.");
         Console.WriteLine("Press Ctrl+C to stop.\n");
 
         // Stopping the listener is what unblocks GetContextAsync.
@@ -138,8 +155,11 @@ public static class ServeCommand
 /// (e.g. <c>127.0.0.1:7788</c>). A request whose Host is not one of them is a DNS-rebinding
 /// attempt and is refused. <c>null</c> disables the check (a deliberately exposed bind).
 /// </param>
-public sealed class MoistHttpApi(AppServices services, string? token, IReadOnlyCollection<string>? loopbackHosts = null)
+public sealed class MoistHttpApi(AppServices services, string? token, IReadOnlyCollection<string>? loopbackHosts = null,
+                                 ServePolicy? policy = null)
 {
+    /// <summary>What remote callers may ask for; unrestricted paths unless roots were given.</summary>
+    private readonly ServePolicy _policy = policy ?? new ServePolicy(null);
     private static readonly JsonSerializerOptions Json = new() { WriteIndented = true };
 
     private Task? _queueRun;
@@ -273,13 +293,19 @@ public sealed class MoistHttpApi(AppServices services, string? token, IReadOnlyC
             return true;
         }
 
-        if (!File.Exists(path))
+        if (_policy.Resolve(path, "path", out var refused) is not { } probePath)
         {
-            await WriteAsync(context, 404, new { error = $"not found: {path}" });
+            await WriteAsync(context, 403, new { error = refused });
             return true;
         }
 
-        var info = await services.MediaAnalyzer.AnalyzeAsync(path, ct);
+        if (!File.Exists(probePath))
+        {
+            await WriteAsync(context, 404, new { error = $"not found: {probePath}" });
+            return true;
+        }
+
+        var info = await services.MediaAnalyzer.AnalyzeAsync(probePath, ct);
         await WriteAsync(context, 200, new
         {
             file = info.FilePath,
@@ -395,7 +421,17 @@ public sealed class MoistHttpApi(AppServices services, string? token, IReadOnlyC
             return true;
         }
 
-        var input = Path.GetFullPath(payload.Input);
+        if (ServePolicy.CheckOptions(payload.Options) is { } optionError)
+        {
+            await WriteAsync(context, 400, new { error = optionError });
+            return true;
+        }
+
+        if (_policy.Resolve(payload.Input, "input", out var inputError) is not { } input)
+        {
+            await WriteAsync(context, 403, new { error = inputError });
+            return true;
+        }
         if (!File.Exists(input))
         {
             await WriteAsync(context, 404, new { error = $"input not found: {input}" });
@@ -414,8 +450,24 @@ public sealed class MoistHttpApi(AppServices services, string? token, IReadOnlyC
         }
 
         var output = payload.Output is { } requested
-            ? Path.GetFullPath(requested)
+            ? requested
             : EncodeOptions.DefaultOutputPath(cl, services, input, null, "_encoded");
+        if (_policy.Resolve(output, "output", out var outputError) is not { } confinedOutput)
+        {
+            await WriteAsync(context, 403, new { error = outputError });
+            return true;
+        }
+        output = confinedOutput;
+
+        // An external subtitle file is read into the encode, so it is a path like any other.
+        if (cl.String("subtitle") is { } subtitle)
+        {
+            if (_policy.Resolve(subtitle, "subtitle", out var subtitleError) is null)
+            {
+                await WriteAsync(context, 403, new { error = subtitleError });
+                return true;
+            }
+        }
 
         try
         {

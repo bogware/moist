@@ -2,6 +2,7 @@
 
   <ItemGroup>
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="8.0.2" />
+    <PackageReference Include="SharpCompress" Version="0.50.9" />
   </ItemGroup>
 
   <!-- Bundled GLSL upscaling shaders (FSRCNNX / Anime4K), run through FFmpeg's libplacebo

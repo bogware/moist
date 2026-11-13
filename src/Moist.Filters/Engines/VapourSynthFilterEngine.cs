@@ -112,7 +112,14 @@ public sealed class VapourSynthFilterEngine : IFilterEngine
                 case "vs_resize":
                     var w = GetInt(applied, "width", 1920);
                     var h = GetInt(applied, "height", 1080);
-                    var kernel = GetString(applied, "kernel", "Lanczos");
+                    // Emitted as a Python attribute name, so it is mapped from the known resizers
+                    // rather than interpolated: an unvalidated value was code in the .vpy script.
+                    var kernel = GetString(applied, "kernel", "Lanczos") switch
+                    {
+                        "Bicubic" => "Bicubic", "Bilinear" => "Bilinear", "Spline16" => "Spline16",
+                        "Spline36" => "Spline36", "Spline64" => "Spline64", "Point" => "Point",
+                        _ => "Lanczos",
+                    };
                     sb.AppendLine($"clip = core.resize.{kernel}(clip, width={w}, height={h})");
                     break;
 

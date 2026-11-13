@@ -2,16 +2,57 @@
 
 All notable changes to moist are recorded here.
 
-This project follows [Semantic Versioning](https://semver.org/). Until 1.0 the
-minor version carries breaking changes.
+This project follows [Semantic Versioning](https://semver.org/). From 1.0 onwards,
+breaking changes bump the major version.
 
 ---
 
-## [Unreleased]
+## [1.0.0] — unreleased
 
-A release-hardening pass over the whole codebase (a full audit: 80 confirmed issues,
-0 critical, all addressed) plus a set of enhancements. Build is clean and the full test
-suite is green.
+The first stable release: a release-hardening pass over the whole codebase (a full audit:
+80 confirmed issues, 0 critical, all addressed), a pre-publication security and privacy
+review, and a set of enhancements.
+
+### Breaking changes
+
+- **`moist serve` on a non-loopback address now requires `--root <dir>`** (repeatable).
+  Every input, output, external-subtitle and probe path must resolve under a root, and moist's
+  configuration folder is always refused. The Docker image passes `--root /media`.
+- **`moist serve` accepts an allow-list of encode options.** Tool paths (`ffmpeg`, `ffprobe`), raw
+  encoder arguments (`video-args`, `audio-args`), `temp-dir`, `output-dir`, `suffix` and
+  `filter-engine` are refused with a 400 that says why.
+- **Standalone x265 (`cli-x265`) encodes without B-frames by default.** See *Fixed*; choose
+  `--x265-wrap mkvmerge` (or Auto in the GUI) to keep B-frames.
+- **Filter parameters given on the command line or over the API are validated** (ranges and
+  choices, and free text may not contain `; [ ] ' " \``). Values the GUI could never produce now
+  fail with a usage error instead of reaching the filter graph.
+
+### Security
+
+- **Remote code execution through `moist serve` closed.** A token holder could previously name
+  the FFmpeg binary to run (`--ffmpeg`), append shell syntax to the standalone encoders' pipeline
+  (`--video-args`), inject Python into a generated VapourSynth script (`vs_resize` kernel), open a
+  second FFmpeg filtergraph through free-text filter values, and read or write any path the
+  service user could. All are closed: option allow-list, `--root` confinement, filter validation,
+  the VapourSynth kernel mapped from known names, and Windows `cmd` quoting that refuses `"`
+  instead of mis-escaping it.
+- **The serve token can come from `MOIST_TOKEN`**, and the Docker entrypoint no longer puts it on
+  the command line, where any user on the host could read it from the process list.
+- **Every tool download is verified.** SHA-256 hashes are now recorded for all auto-downloaded
+  tools (FFmpeg, MKVToolNix, dovi_tool, hdr10plus_tool, Real-ESRGAN, RIFE), so a tampered or
+  corrupted download is rejected before extraction. The Linux FFmpeg URL pointed at a BtbN daily
+  build that had been deleted (404). It now pins a month-end build, which BtbN keeps.
+- **CI no longer runs pull requests from forks on self-hosted runners**, which would execute
+  untrusted code on the maintainers' machines once the repository is public. Fork PRs run on
+  GitHub-hosted runners.
+- **Release signing and checksums.** Windows binaries are signed through SignPath Foundation once
+  the project is enrolled, and fail the release if a shipped executable isn't validly signed. Every
+  release publishes `SHA256SUMS.txt`. Third-party actions are pinned to commit SHAs, and the tag
+  name is no longer interpolated into release scripts.
+- **Vulnerable dependencies updated.** Tmds.DBus.Protocol 0.21.2 → 0.21.3 (GHSA-xrw6-gwf8-vvr9,
+  shipped in the Linux GUI) through Avalonia 11.3.23. Test-only System.Net.Http and
+  System.Text.RegularExpressions 4.3.0 are gone with xunit 2.9.3.
+- `SECURITY.md` describes how to report a vulnerability and the security model.
 
 ### Added
 
@@ -80,6 +121,15 @@ at 2%.
 
 ### Fixed
 
+- **Standalone x265 output had scrambled timestamps.** x265 writes an untimed HEVC stream, and
+  the FFmpeg wrap numbered its packets in decode order. With B-frames that put presentation
+  timestamps out of order (0, .042, .167, .125, …). The frames decoded correctly, but players and
+  remuxes that trust timestamps stuttered or dropped frames. On FFmpeg 5/6 the wrap was also off
+  scale (2 s of video labelled 0.09 s). The new **stream wrap** setting (`--x265-wrap`, GUI "Wrap")
+  offers: **No B-frames** (default, works everywhere, ~10–20% larger files), **mkvmerge** (keeps
+  B-frames; MKVToolNix reads the picture order), and **Auto**. Every wrap is now verified
+  (duration = frames ÷ rate), with a millisecond fallback for older FFmpeg. MKVToolNix
+  auto-downloads on Windows (7z unpacked in-process, hash-verified).
 - **Real-ESRGAN / RIFE frame rate after `ivtc` on FFmpeg 5.x/6.x.** Older FFmpeg's `decimate` drops one frame in five but leaves the survivors on the 30i timestamp grid, so the rate probe read 29.97 instead of 23.976 — on Debian 12 and the Docker image that would have played AI-upscaled film fast. The probe now detects uneven spacing, averages over 48 frames and snaps to a simple multiple of the source rate.
 - **Stall watchdog on Linux/macOS.** A killed tool is now waited for (bounded) before the job fails, since `Kill` only signals on Unix; cleanup could otherwise race a tool that was still alive.
 - **Configuration written to the working directory on Linux/macOS.** On an account without `~/.config` (fresh installs, CI runners, service users) the platform config folder resolved to an empty string and settings, logs and profiles went to a relative `moist/` folder — which collides with the `moist` executable and failed every write. All config paths now go through one resolver that creates the folder, falls back through `$XDG_CONFIG_HOME` and `$HOME/.config`, and accepts a `MOIST_CONFIG_DIR` override.

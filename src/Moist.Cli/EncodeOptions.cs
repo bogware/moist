@@ -75,6 +75,7 @@ public static class EncodeOptions
             Preset = cl.Enum<VideoPreset>("preset") ?? profile?.VideoPreset ?? VideoPreset.Medium,
             Tune = cl.Enum<VideoTune>("tune") ?? profile?.VideoTune ?? VideoTune.None,
             SvtAv1Preset = cl.Int("av1-preset") ?? profile?.SvtAv1Preset ?? 6,
+            X265StreamWrap = ParseX265Wrap(cl.String("x265-wrap")),
             VideoCustomArgs = cl.String("video-args") ?? profile?.VideoCustomArgs ?? string.Empty,
             BitDepth = cl.String("bit-depth") is { } bd ? ParseBitDepth(bd) : (profile?.BitDepth ?? VideoBitDepth.Auto),
 
@@ -326,6 +327,11 @@ public static class EncodeOptions
                 }
 
                 chain.Add(def, values);
+
+                // The GUI constrains values with its controls; text from a command line or the HTTP
+                // API reaches the filter script verbatim, so it is validated here.
+                if (chain.Filters[^1].Validate() is { Count: > 0 } problems)
+                    throw new UsageException($"filter '{id}': {string.Join("; ", problems)}");
             }
         }
 
@@ -398,4 +404,13 @@ public static class EncodeOptions
 
         return Path.Combine(dir, Path.GetFileNameWithoutExtension(input) + suffix + ext);
     }
+
+    /// <summary>--x265-wrap no-bframes|mkvmerge|auto (standalone x265 only).</summary>
+    public static X265StreamWrap ParseX265Wrap(string? value) => value?.Trim().ToLowerInvariant() switch
+    {
+        null or "" or "no-bframes" or "nobframes" => X265StreamWrap.NoBFrames,
+        "mkvmerge" => X265StreamWrap.Mkvmerge,
+        "auto" => X265StreamWrap.Auto,
+        _ => throw new UsageException($"--x265-wrap must be no-bframes, mkvmerge or auto (got '{value}')"),
+    };
 }

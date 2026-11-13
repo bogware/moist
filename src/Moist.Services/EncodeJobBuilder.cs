@@ -128,6 +128,12 @@ public sealed record EncodeRequest
     /// </summary>
     public bool PreserveDynamicHdr { get; init; }
 
+    /// <summary>
+    /// Standalone x265 only: how its untimed HEVC stream gets timestamps. No B-frames (default,
+    /// works everywhere), mkvmerge (keeps B-frames), or Auto. See <see cref="X265StreamWrap"/>.
+    /// </summary>
+    public X265StreamWrap X265StreamWrap { get; init; } = X265StreamWrap.NoBFrames;
+
     // Filters (already rendered to an engine-specific script)
     public string? FilterScript { get; init; }
     public string? FilterEngineId { get; init; }
@@ -697,7 +703,7 @@ public static class EncodeJobBuilder
         return req.VideoEncoderId switch
         {
             "ffmpeg-x264" or "cli-x264" => new X264Settings(),
-            "ffmpeg-x265" or "cli-x265" => new X265Settings(),
+            "ffmpeg-x265" or "cli-x265" => new X265Settings { StreamWrap = req.X265StreamWrap },
             "ffmpeg-svtav1" => new SvtAv1Settings { SvtPreset = req.SvtAv1Preset },
             _ => new VideoEncoderSettings(),
         };

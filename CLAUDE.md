@@ -326,6 +326,13 @@ Things that path gets wrong if you touch it carelessly:
   requires (Debian 12's 5.1, Ubuntu 24.04's 6.1). Don't "fix" it with `-fps_mode passthrough` — CFR conversion
   is what keeps a VFR source in sync once the untimed x265 stream is wrapped at the nominal rate. Chunks and
   trims are capped by `-frames:v`, so only a whole-file encode on an old FFmpeg sees the extra 42 ms.
+- **B-frames vs the wrap.** FFmpeg can only number a raw HEVC stream's packets in *decode*
+  order; with B-frames that gives presentation timestamps 0, .042, .167, .125… (right frames, wrong
+  times — invisible to frame-count and duration checks, caught with a flat-luma-per-frame source).
+  `X265StreamWrap`: `NoBFrames` (default, `--bframes 0`, FFmpeg wrap), `Mkvmerge` (keeps B-frames,
+  mkvmerge reads picture order), `Auto`. The decision is cached per job so both two-pass passes agree.
+  The FFmpeg wrap is **verified** (duration = packets ÷ rate) and retried with a millisecond `setts`
+  expression, because FFmpeg < 7 hands Matroska the filter's output in ms regardless of its time base.
 - **x265 has no muxer** — it writes a raw HEVC elementary stream with no timing at all, so `OnAfterSuccessAsync` wraps it while the source frame rate is still known. On FFmpeg 8 the raw demuxer emits packets with no timestamps and Matroska refuses them, so they're synthesised with `-bsf:v setts=ts=N*den/num/TB`. Don't "simplify" this to an MP4 remux: that exits 0 while dropping frames.
 - **`BuildArguments` is what actually runs**, composed into the pipeline by `OnBeforeStart`. Don't build a second copy of the arguments there — that's how the x264-specific settings got silently dropped for a year.
 
@@ -409,6 +416,15 @@ filters (`fps` / `minterpolate`) added to the `-vf` in `EncodeOptions.BuildFilte
 
 `ProfileManager` writes each of the 16 `GetBuiltInProfiles()` entries to `profiles/*.json` on first run if the file is absent. Editing `GetBuiltInProfiles()` therefore has **no effect on an existing install** — the on-disk copy wins. Delete the JSON to pick up changes.
 
+### Tool downloads are pinned and hash-verified
+
+Every `ToolDiscovery.KnownTools` entry with `DownloadUrls` also has `ExpectedSha256`; a mismatch
+aborts the install and deletes the file. Pin **immutable** URLs only. BtbN deletes its *daily*
+FFmpeg autobuilds after a few weeks (the old Linux pin 404'd) but keeps each month's last build, so
+pin a month-end tag's release-branch asset. MKVToolNix's Windows portable is LZMA 7z, which Windows'
+`tar.exe` can't read; `SevenZipExtractor` (SharpCompress) unpacks it with an explicit
+outside-the-folder check on every entry.
+
 ### Settings must never fail loudly
 
 `MoistSettings.Save()` is called from the window-closing path, so it is written to **never throw** — it sanitizes non-finite doubles, writes via a temp file + move, and reports failure through `Save(out string? error)` instead. Callers that can show a message (the Settings tab) use the `out` overload; shutdown paths use the fire-and-forget one.
@@ -463,7 +479,15 @@ loopback by default; `--no-auth` is allowed only on loopback, and any non-loopba
 requires a token, because an encode names its own input and output paths — that is a
 filesystem trust boundary. `POST /api/encode` takes a JSON body, converts it **back into
 CLI arguments** and runs them through the same `EncodeOptions` parser the CLI uses, so the
-option set cannot drift from the command line. Progress is mirrored into a dictionary from
+option set cannot drift from the command line — but **only allow-listed options are accepted**
+(`ServePolicy.AllowedOptions`, in `Moist.Cli/ServePolicy.cs`). Several CLI options are code
+execution in a stranger's hands: `--ffmpeg`/`--ffprobe` name the binary to run, `--video-args`/
+`--audio-args` reach a `cmd`/`sh` pipeline, `--temp-dir`/`--output-dir`/`--suffix` place files,
+`--filter-engine vapoursynth` runs generated Python. A new CLI option is refused over the API until
+someone adds it to the list on purpose. Paths (input, output, `--subtitle`, `/api/probe`) go through
+`ServePolicy.Resolve`: under a `--root` when roots are set (mandatory for a non-loopback bind) and
+never inside `MoistPaths.ConfigRoot`. The token can come from `MOIST_TOKEN` so wrappers never put it
+on argv. Progress is mirrored into a dictionary from
 `JobQueue.JobProgressUpdated` because a `Job` carries no progress of its own. The Docker
 image is purpose-built to run this command (see CI/CD).
 
@@ -589,6 +613,12 @@ volume so settings, profiles and the queue survive a restart.
 
 ## CI/CD
 
-- `ci.yml` — push/PR to `main`. Builds Debug + Release and runs tests on **self-hosted** runners (group `Default`, labels `Windows`/`Linux`). `DOTNET_INSTALL_DIR` is pinned into the workspace because the runners are self-hosted. A non-blocking step reports whether FFmpeg is present; if it isn't, the integration suite skips and CI still passes — install FFmpeg on the runners to actually exercise it. macOS jobs exist but are commented out.
-- `release.yml` — on `v*` tags. Self-contained single-file builds of both the GUI and the CLI for Windows x64 (ZIP, plus a framework-dependent GUI ZIP) and Linux x64 (tar.gz), then a GitHub release. CLI archives are named `moist-cli-*`. Tags containing `-` are marked prerelease.
+- `ci.yml` — push/PR to `main`. **Pull requests from forks run on GitHub-hosted runners** (and
+  install FFmpeg there); only pushes and same-repo PRs use the self-hosted ones, because on a public
+  repo a fork PR is arbitrary code that would otherwise run on a maintainer's machine. Builds Debug + Release and runs tests on **self-hosted** runners (group `Default`, labels `Windows`/`Linux`). `DOTNET_INSTALL_DIR` is pinned into the workspace because the runners are self-hosted. A non-blocking step reports whether FFmpeg is present; if it isn't, the integration suite skips and CI still passes — install FFmpeg on the runners to actually exercise it. macOS jobs exist but are commented out.
+- `release.yml` — on `v*` tags. The Windows build runs on `windows-latest` because **SignPath
+  Foundation** (code signing for OSS) only signs GitHub-hosted builds; signing turns on when the
+  `SIGNPATH_ORGANIZATION_ID` variable and `SIGNPATH_API_TOKEN` secret exist (see `SECURITY.md`,
+  `.signpath/artifact-configuration.xml`) and fails the release if a shipped exe isn't validly signed.
+  Publishes `SHA256SUMS.txt`; third-party actions are pinned to commit SHAs. Self-contained single-file builds of both the GUI and the CLI for Windows x64 (ZIP, plus a framework-dependent GUI ZIP) and Linux x64 (tar.gz), then a GitHub release. CLI archives are named `moist-cli-*`. Tags containing `-` are marked prerelease.
 - `Dockerfile` (repo root) — a two-stage image that publishes **`Moist.Cli` only** and runs `moist serve` as a non-root user on port 7788. It installs Debian's `ffmpeg`, which has **no libsvtav1 or libvmaf**, so AV1 encoding and `--target-vmaf` are unavailable in the stock image — `moist tools` reports what the build actually has. The version is stamped once for the whole solution from `src/Directory.Build.props` (`<Version>`), not per-project.

@@ -191,6 +191,64 @@ public sealed class CliEncoderTests(MediaFixture media) : PipelineTestBase(media
         Assert.Equal(Ffmpeg.Duration(Media.NtscVideo), Ffmpeg.Duration(output), 1);
     }
 
+    /// <summary>
+    /// The bug the frame-count and duration checks above could not see: with B-frames, the
+    /// FFmpeg wrap numbered packets in decode order, so the presentation timestamps ran
+    /// 0, .042, .167, .125, .209, .083… — right frames, wrong times. Every wrap mode must give
+    /// strictly increasing, evenly spaced presentation timestamps.
+    /// </summary>
+    [X265Fact]
+    public async Task X265_DefaultWrap_GivesMonotonicEvenlySpacedTimestamps()
+    {
+        using var services = CreateCliServices();
+        var output = await EncodeAsync(services, "cli-x265", Media.NtscVideo, "cli_x265_order.mkv");
+        AssertMonotonicEven(output);
+    }
+
+    [X265Fact]
+    public async Task X265_MkvmergeWrap_KeepsBFrames_WithCorrectTimestamps()
+    {
+        var mkvmerge = FindMkvmerge();
+        if (mkvmerge is null) return;   // MKVToolNix not installed here: nothing to prove
+        using var services = CreateCliServices();
+        services.Settings.MkvMergePath = mkvmerge;
+        var output = await EncodeAsync(services, "cli-x265", Media.NtscVideo, "cli_x265_mkvmerge.mkv",
+            b => b.X265StreamWrap = X265StreamWrap.Mkvmerge);
+        AssertMonotonicEven(output);
+        Assert.Equal(Ffmpeg.Duration(Media.NtscVideo), Ffmpeg.Duration(output), 1);
+    }
+
+    private static void AssertMonotonicEven(string file)
+    {
+        var pts = Ffmpeg.Probe("-v error -select_streams v:0 -show_entries frame=pts_time -of csv=p=0", file)
+            .Split('\n').Select(l => l.Trim().Trim(',')).Where(l => l.Length > 0)
+            .Select(l => double.Parse(l, System.Globalization.CultureInfo.InvariantCulture)).ToList();
+        Assert.True(pts.Count > 10, $"only {pts.Count} frames probed");
+        for (var i = 1; i < pts.Count; i++)
+        {
+            Assert.True(pts[i] > pts[i - 1], $"timestamps go backwards at frame {i}: {pts[i - 1]:F3} -> {pts[i]:F3}");
+            Assert.InRange(pts[i] - pts[i - 1], 0.035, 0.050);   // 24000/1001 ≈ 41.7 ms (Matroska ms rounding)
+        }
+    }
+
+    private static string? FindMkvmerge()
+    {
+        foreach (var candidate in new[] { "mkvmerge", @"C:\Program Files\MKVToolNix\mkvmerge.exe" })
+        {
+            try
+            {
+                using var p = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(candidate, "--version")
+                { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true });
+                if (p is null) continue;
+                p.StandardOutput.ReadToEnd();
+                p.WaitForExit(10_000);
+                if (p.ExitCode == 0) return candidate;
+            }
+            catch { /* not here */ }
+        }
+        return null;
+    }
+
     [X265Fact]
     public async Task X265KeepsTenBitSourcesAtTenBit()
     {

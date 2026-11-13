@@ -74,6 +74,9 @@ public static class Help
               --preset <name>       ultrafast … placebo                 (default: medium)
               --tune <name>         film, animation, grain, …
               --av1-preset <0-13>   SVT-AV1 speed preset
+              --x265-wrap <mode>    Standalone x265 (cli-x265) only: no-bframes | mkvmerge | auto
+                                    (default: no-bframes). Raw x265 output carries no timestamps;
+                                    mkvmerge keeps B-frames and times them correctly, needs MKVToolNix.
               --bit-depth <d>       auto | 8 | 10 | 12                  (default: auto = match source)
               --chroma <c>          auto | 420 | 422 | 444              (default: auto = match source)
               --ai-upscale <model>  Real-ESRGAN deep upscale: x4plus (live) | animevideov3 (anime).
@@ -350,13 +353,18 @@ public static class Help
         moist serve — HTTP API over the encode queue
 
         USAGE
-          moist serve [--host <addr>] [--port <n>] [--token <secret>]
+          moist serve [--host <addr>] [--port <n>] [--token <secret>] [--root <dir>]...
 
         OPTIONS
           --host <addr>         Address to bind          (default: 127.0.0.1)
           --port <n>            Port                     (default: 7788)
-          --token <secret>      Required bearer token. One is generated and
-                                printed if you do not supply it.
+          --token <secret>      Required bearer token. Read from MOIST_TOKEN when not
+                                given (keeps it out of the process list); one is
+                                generated and printed if neither is set.
+          --root <dir>          A folder remote encodes may read and write. Repeatable.
+                                Required when binding anything but loopback; input,
+                                output, subtitle and probe paths must resolve under one.
+                                moist's own config folder is always refused.
           --no-auth             Disable authentication. Loopback only.
           -j, --jobs <n>        Concurrent encodes
 
@@ -369,15 +377,19 @@ public static class Help
           POST /api/queue/start         Begin processing
           POST /api/queue/stop          Stop processing
 
-        An encode names its own input and output paths and may carry custom encoder
-        arguments, so anyone who can reach this API can read and write files as the
-        user running it. That is why it authenticates by default, binds to loopback
-        by default, and refuses to do neither.
+        An encode names its own input and output paths, so anyone who can reach this
+        API can read and write files as the user running it. That is why it
+        authenticates by default, binds to loopback by default, refuses to do neither,
+        and on a network confines paths to the --root folders. The traffic is plain
+        HTTP: off-loopback, put it behind a TLS reverse proxy so the token isn't sent
+        in the clear.
 
         QUEUEING AN ENCODE
-          The body takes an input, an optional output, and any option 'moist encode'
-          accepts — parsed by the same code, so an option means the same thing here
-          as it does on the command line.
+          The body takes an input, an optional output, and encode options — parsed by
+          the same code as 'moist encode', so an option means the same thing here.
+          Options that would execute or place files outside the encode itself are
+          refused: --ffmpeg/--ffprobe (tool paths), --video-args/--audio-args (raw
+          arguments reach a shell), --temp-dir, --output-dir, --suffix, --filter-engine.
 
           curl -X POST http://127.0.0.1:7788/api/encode             -H "Authorization: Bearer $TOKEN"             -H "Content-Type: application/json"             -d '{"input":"/media/in.mkv","options":{"crf":22,"preset":"slow"}}'
 

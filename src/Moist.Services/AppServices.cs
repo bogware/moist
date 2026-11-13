@@ -219,7 +219,7 @@ public sealed class AppServices : IDisposable
             Category = "Video",
             SettingsType = typeof(X265Settings),
             Description = "Direct x265 CLI for maximum control. Piped from FFmpeg.",
-        }, () => new X265CliProcessor(Settings.X265Path, Settings.FFmpegPath, Settings.FFprobePath));
+        }, () => new X265CliProcessor(Settings.X265Path, Settings.FFmpegPath, Settings.FFprobePath, Settings.MkvMergePath));
 
         // Audio encoders via FFmpeg
         RegisterAudioEncoder("ffmpeg-audio-opus", "Opus", "opus",

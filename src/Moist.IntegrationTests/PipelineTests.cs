@@ -370,6 +370,7 @@ public sealed class EncodeRequestBuilder
     public string? ExternalSubtitleFile { get; set; }
     public string? FilterScript { get; set; }
     public string? FilterEngineId { get; set; }
+    public X265StreamWrap X265StreamWrap { get; set; } = X265StreamWrap.NoBFrames;
 
     public EncodeRequest Build() => new()
     {
@@ -388,6 +389,7 @@ public sealed class EncodeRequestBuilder
         ExternalSubtitleFile = ExternalSubtitleFile,
         FilterScript = FilterScript,
         FilterEngineId = FilterEngineId,
+        X265StreamWrap = X265StreamWrap,
         AudioBitrate = 96,
     };
 }

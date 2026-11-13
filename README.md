@@ -15,7 +15,7 @@ A cross-platform video encoder GUI built with C# / .NET 8 / [Avalonia UI](https:
 The heart of the operation. No shortcuts, no compromises.
 
 - **Video Codecs**: x264, x265, SVT-AV1, VP9, FFV1 — via FFmpeg or standalone CLI
-- **Hardware Encoding**: NVENC, Quick Sync, AMF, VideoToolbox and VA-API (H.264 / H.265 / AV1)
+- **Hardware Encoding**: NVENC, plus experimental Quick Sync, AMF, VideoToolbox and VA-API (H.264 / H.265 / AV1)
 - **Bit Depth**: 8, 10 or 12-bit, or Auto to follow the source — 10-bit HDR masters stay 10-bit
 - **Encoding Modes**: CRF, constant quality, single-pass bitrate, two-pass bitrate
 - **Full Preset & Tune Control**: Every x264/x265/SVT-AV1 preset and tune option exposed
@@ -229,10 +229,15 @@ Your GPU is sitting right there. Use it.
 | | H.264 | H.265 | AV1 |
 |---|---|---|---|
 | **NVIDIA NVENC** | ✓ | ✓ | ✓ (RTX 40+) |
-| **Intel Quick Sync** | ✓ | ✓ | ✓ (Arc / 12th gen+) |
-| **AMD AMF** | ✓ | ✓ | ✓ (RX 7000+) |
-| **Apple VideoToolbox** | ✓ | ✓ | — |
-| **VA-API (Linux)** | ✓ | ✓ | ✓ |
+| **Intel Quick Sync** ⚗️ | ✓ | ✓ | ✓ (Arc / 12th gen+) |
+| **AMD AMF** ⚗️ | ✓ | ✓ | ✓ (RX 7000+) |
+| **Apple VideoToolbox** ⚗️ | ✓ | ✓ | — |
+| **VA-API (Linux)** ⚗️ | ✓ | ✓ | ✓ |
+
+⚗️ **Experimental.** NVENC is verified end-to-end on real hardware. Quick Sync, AMF,
+VideoToolbox and VA-API are implemented from their documented FFmpeg interfaces and are
+correctly *detected* (offered only where a test encode succeeds), but their encode paths
+haven't been exercised on the actual hardware yet. Reports welcome.
 
 moist doesn't take FFmpeg's word for what your machine can do. `ffmpeg -encoders` lists
 everything the binary was *compiled* with — a stock Windows build claims NVENC, Quick

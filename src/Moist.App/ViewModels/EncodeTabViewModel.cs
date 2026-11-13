@@ -116,6 +116,14 @@ public partial class EncodeTabViewModel : ViewModelBase, IDisposable
     private int _aiUpscaleHeight = 1080;
 
     [ObservableProperty] private ChromaSubsampling _chroma = ChromaSubsampling.Auto;
+
+    /// <summary>Standalone x265 only: how its untimed stream is wrapped (see X265StreamWrap).</summary>
+    [ObservableProperty] private X265StreamWrap _x265StreamWrap = X265StreamWrap.NoBFrames;
+    public static X265StreamWrap[] X265StreamWrapOptions { get; } = Enum.GetValues<X265StreamWrap>();
+
+    /// <summary>The wrap choice only means something for the standalone x265 encoder.</summary>
+    public bool IsX265Cli => SelectedVideoEncoder?.Id == "cli-x265";
+    partial void OnSelectedVideoEncoderChanged(EncoderInfo? value) => OnPropertyChanged(nameof(IsX265Cli));
     public static ChromaSubsampling[] ChromaOptions { get; } = Enum.GetValues<ChromaSubsampling>();
 
     /// <summary>Render subtitles into the picture rather than muxing them as a track.</summary>
@@ -1082,6 +1090,7 @@ public partial class EncodeTabViewModel : ViewModelBase, IDisposable
             Preset = Preset,
             Tune = Tune,
             SvtAv1Preset = SvtAv1Preset,
+            X265StreamWrap = X265StreamWrap,
             SvtAv1Tune = SvtAv1Tune,
             SvtAv1FilmGrain = SvtAv1FilmGrain,
             SvtAv1TileRows = SvtAv1TileRows,

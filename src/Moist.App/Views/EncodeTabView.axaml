@@ -174,9 +174,17 @@
                             </StackPanel>
 
                             <TextBlock Text="Custom Args:" VerticalAlignment="Center" Grid.Row="4"/>
-                            <TextBox Grid.Row="4" Grid.Column="1" Grid.ColumnSpan="3"
-                                     Text="{Binding CustomVideoArgs}"
-                                     Watermark="Additional encoder arguments..."/>
+                            <DockPanel Grid.Row="4" Grid.Column="1" Grid.ColumnSpan="3" LastChildFill="True">
+                                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="6" Margin="8,0,0,0"
+                                            IsVisible="{Binding IsX265Cli}">
+                                    <TextBlock Text="Wrap:" VerticalAlignment="Center"/>
+                                    <ComboBox ItemsSource="{x:Static vm:EncodeTabViewModel.X265StreamWrapOptions}"
+                                              SelectedItem="{Binding X265StreamWrap}" Width="130"
+                                              ToolTip.Tip="Raw x265 output has no timestamps. NoBFrames works everywhere (files ~10-20% larger). Mkvmerge keeps B-frames and times them correctly (needs MKVToolNix). Auto uses mkvmerge when it's installed."/>
+                                </StackPanel>
+                                <TextBox Text="{Binding CustomVideoArgs}"
+                                         Watermark="Additional encoder arguments..."/>
+                            </DockPanel>
 
                             <!-- Target quality: pick a score, let moist find the CRF -->
                             <TextBlock Text="Target Quality:" VerticalAlignment="Center" Grid.Row="5"/>
