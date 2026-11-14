@@ -55,6 +55,14 @@ public sealed class EncodingProfile
     // Filter chain (optional — engine ID + list of filter ID + param pairs)
     public string? FilterEngineId { get; set; }
     public List<ProfileFilter> Filters { get; set; } = [];
+
+    /// <summary>
+    /// With <see cref="AiUpscaleModel"/> set: the filters run <i>after</i> the AI upscale, on the
+    /// enlarged frames (sharpen, contrast, film grain…). Empty means the default light finish
+    /// (CAS 0.4 + deband). Grain in particular must go here, not in <see cref="Filters"/>: the model
+    /// would scrub any grain it was fed. Rendered by the FFmpeg engine.
+    /// </summary>
+    public List<ProfileFilter> AiFinishFilters { get; set; } = [];
 }
 
 /// <summary>Serializable filter entry within a profile.</summary>
@@ -277,6 +285,67 @@ public sealed class ProfileManager
             [
                 new() { FilterId = "deblock", Parameters = new() { ["quality"] = 3, ["strength"] = 4 } },
                 new() { FilterId = "hqdn3d",  Parameters = new() { ["luma_spatial"] = 2.0, ["chroma_spatial"] = 1.5, ["luma_temporal"] = 3.0 } },
+            ],
+        },
+        new()
+        {
+            // The film-first restore. Denoising is where restoration usually goes wrong: it erases the
+            // grain and the fine detail with the noise, and the result looks like plastic. So the only
+            // cleaning here is a light de-block for compression damage; the model does the enlarging,
+            // and the finish puts back what makes it read as film — a measured sharpen, a touch of
+            // contrast and colour, and fine moving grain — encoded with tune=grain so x265 keeps it.
+            Name = "Film Restore to 1080p (Real-ESRGAN)",
+            Description = "SD film to 1080p for maximum film-like fidelity: light de-block only (no denoiser), Real-ESRGAN deep-model upscale, then CAS sharpening, a touch of contrast and colour, and fine film grain. x265 10-bit tune=grain. Needs the realesrgan tool; slow — for the films you care most about.",
+            VideoEncoderId = "ffmpeg-x265",
+            VideoMode = VideoEncodingMode.ConstantRateFactor,
+            VideoQuality = 16,
+            VideoPreset = VideoPreset.Slow,
+            VideoTune = VideoTune.Grain,
+            BitDepth = VideoBitDepth.Ten,
+            AudioEncoderId = "ffmpeg-audio-opus",
+            AudioBitrate = 192,
+            Container = ContainerFormat.Mkv,
+            FilterEngineId = "ffmpeg",
+            AiUpscaleModel = "x4plus",
+            AiUpscaleHeight = 1080,
+            Filters =
+            [
+                new() { FilterId = "deblock", Parameters = new() { ["quality"] = 3, ["strength"] = 2 } },
+            ],
+            AiFinishFilters =
+            [
+                new() { FilterId = "cas",   Parameters = new() { ["strength"] = 0.4 } },
+                new() { FilterId = "eq",    Parameters = new() { ["contrast"] = 1.06, ["saturation"] = 1.05 } },
+                new() { FilterId = "grain", Parameters = new() { ["strength"] = 5 } },
+            ],
+        },
+        new()
+        {
+            // The same film finish without the AI model: a high-quality Lanczos enlargement in place of
+            // Real-ESRGAN. Real-time-class speed, nothing invented, nothing scrubbed.
+            Name = "Film Restore to 1080p (Classic)",
+            Description = "SD film to 1080p with traditional tools only: light de-block (no denoiser), CAS sharpening before and after a Lanczos upscale, a touch of contrast and colour, and fine film grain. x265 10-bit tune=grain. Fast, and faithful to the source.",
+            VideoEncoderId = "ffmpeg-x265",
+            VideoMode = VideoEncodingMode.ConstantRateFactor,
+            VideoQuality = 16,
+            VideoPreset = VideoPreset.Slow,
+            VideoTune = VideoTune.Grain,
+            BitDepth = VideoBitDepth.Ten,
+            AudioEncoderId = "ffmpeg-audio-opus",
+            AudioBitrate = 192,
+            Container = ContainerFormat.Mkv,
+            FilterEngineId = "ffmpeg",
+            Filters =
+            [
+                new() { FilterId = "deblock", Parameters = new() { ["quality"] = 3, ["strength"] = 2 } },
+                // Sharpen at the source resolution first, where the edges actually are; the second,
+                // lighter pass firms them up after the enlargement. One pass after the scale alone
+                // had little left to work with.
+                new() { FilterId = "cas",     Parameters = new() { ["strength"] = 0.7 } },
+                new() { FilterId = "resize",  Parameters = new() { ["width"] = -2, ["height"] = 1080, ["algorithm"] = "lanczos" } },
+                new() { FilterId = "cas",     Parameters = new() { ["strength"] = 0.6 } },
+                new() { FilterId = "eq",      Parameters = new() { ["contrast"] = 1.06, ["saturation"] = 1.05 } },
+                new() { FilterId = "grain",   Parameters = new() { ["strength"] = 5 } },
             ],
         },
         new()

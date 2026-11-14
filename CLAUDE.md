@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**moist** is a cross-platform video encoder with an Avalonia GUI and a CLI (C# / .NET 8) — a frontend for video encoding, audio encoding, filtering, and muxing. It shells out to FFmpeg/FFprobe/x264/x265/vspipe rather than linking codec libraries. Inspired by MeGUI, modernized for cross-platform use.
+**moist** is a cross-platform video encoder with an Avalonia GUI and a CLI (C# / .NET 10) — a frontend for video encoding, audio encoding, filtering, and muxing. It shells out to FFmpeg/FFprobe/x264/x265/vspipe rather than linking codec libraries. Inspired by MeGUI, modernized for cross-platform use.
 
 ## Build, Run & Test
 
@@ -36,7 +36,7 @@ docker build -t moist .                                          # from repo roo
 docker run -p 7788:7788 -v /media:/media -e MOIST_TOKEN=secret moist   # defaults to `moist serve`
 ```
 
-**Prerequisites**: .NET 8 SDK. FFmpeg/FFprobe on PATH for actual encoding — the app builds and runs without them, and Settings can auto-download them.
+**Prerequisites**: .NET 10 SDK. FFmpeg/FFprobe on PATH for actual encoding — the app builds and runs without them, and Settings can auto-download them.
 
 `Moist.IntegrationTests` **skips itself** when FFmpeg/FFprobe aren't on PATH (see `FfmpegFactAttribute`), so CI stays green on runners without them — but it also means a green local run proves nothing if the tools are missing. Check the skip count.
 
@@ -404,6 +404,12 @@ Things that path gets right on purpose:
   resolver snaps the span average to a simple multiple of the source rate instead of the median. Trims (`TrimStart`/`TrimFrames`/
   `TrimDuration`) are applied to extraction and are part of `WorkKey`, so a snippet preview
   neither upscales the whole film nor leaves a scratch the full encode would "resume" from.
+- **The finish is the profile's.** `EncodingProfile.AiFinishFilters` (rendered by `ProfileFinish`,
+  shared by GUI and CLI, carried as `VideoJob.AiFinishFilterScript`) runs on the enlarged frames after
+  the scale; empty keeps the default CAS 0.4 + deband. Film grain *must* live here, never in the
+  pre-clean — the model scrubs whatever grain it is fed. The finish and the tune are in `WorkKey`, and
+  `BuildEncodeArgs` passes `-tune` for libx264/libx265 (it used to drop it, so `tune=grain` profiles
+  lost their grain on exactly this path).
 - **It's a tool, so it's optional.** `realesrgan-ncnn-vulkan` is in `ToolDiscovery.KnownTools`
   (auto-downloadable), and the processor refuses with a pointer to Settings when it's absent.
 
@@ -414,7 +420,7 @@ filters (`fps` / `minterpolate`) added to the `-vf` in `EncodeOptions.BuildFilte
 
 ### Profiles: built-ins are materialized to disk
 
-`ProfileManager` writes each of the 16 `GetBuiltInProfiles()` entries to `profiles/*.json` on first run if the file is absent. Editing `GetBuiltInProfiles()` therefore has **no effect on an existing install** — the on-disk copy wins. Delete the JSON to pick up changes.
+`ProfileManager` writes each of the 18 `GetBuiltInProfiles()` entries to `profiles/*.json` on first run if the file is absent. Editing `GetBuiltInProfiles()` therefore has **no effect on an existing install** — the on-disk copy wins. Delete the JSON to pick up changes.
 
 ### Tool downloads are pinned and hash-verified
 
@@ -570,7 +576,7 @@ checked against commercial DV / HDR10+ masters.
 
 ## Code Conventions
 
-- C# 12 / .NET 8, nullable enabled, implicit usings, file-scoped namespaces
+- C# 14 / .NET 10, nullable enabled, implicit usings, file-scoped namespaces
 - Namespaces mirror folders: `Moist.Core.Jobs`, `Moist.App.ViewModels`, `Moist.Filters.Engines`
 - PascalCase public, `_camelCase` private; `[ObservableProperty]` on `_camelCase` fields generates the PascalCase property
 - MVVM via `[ObservableProperty]` / `[RelayCommand]`; views are pure AXAML with compiled bindings (`x:DataType`)
@@ -633,4 +639,4 @@ volume so settings, profiles and the queue survive a restart.
   `SIGNPATH_ORGANIZATION_ID` variable and `SIGNPATH_API_TOKEN` secret exist (see `SECURITY.md`,
   `.signpath/artifact-configuration.xml`) and fails the release if a shipped exe isn't validly signed.
   Publishes `SHA256SUMS.txt`; third-party actions are pinned to commit SHAs. Self-contained single-file builds of both the GUI and the CLI for Windows x64 (ZIP, plus a framework-dependent GUI ZIP) and Linux x64 (tar.gz), then a GitHub release. CLI archives are named `moist-cli-*`. Tags containing `-` are marked prerelease.
-- `Dockerfile` (repo root) — a two-stage image that publishes **`Moist.Cli` only** and runs `moist serve` as a non-root user on port 7788. It installs Debian's `ffmpeg`, which has **no libsvtav1 or libvmaf**, so AV1 encoding and `--target-vmaf` are unavailable in the stock image — `moist tools` reports what the build actually has. The version is stamped once for the whole solution from `src/Directory.Build.props` (`<Version>`), not per-project.
+- `Dockerfile` (repo root) — a two-stage image that publishes **`Moist.Cli` only** and runs `moist serve` as a non-root user on port 7788. The .NET 10 images are **Ubuntu 24.04**: its `ffmpeg` 6.1 has SVT-AV1 but **no libvmaf**, so `--target-vmaf` is unavailable in the stock image. The image also ships an `ubuntu` user at uid 1000 (with `sudo`/`adm` groups), which the Dockerfile deletes before creating `moist` at uid 1000 — renaming it would keep those groups — `moist tools` reports what the build actually has. The version is stamped once for the whole solution from `src/Directory.Build.props` (`<Version>`), not per-project.

@@ -129,7 +129,9 @@ public sealed partial class RealEsrganVideoProcessor : IJobProcessor
     /// <summary>Stable key for the work dir: the same source + settings resume the same scratch.</summary>
     internal static string WorkKey(VideoJob vj)
     {
-        var raw = $"{vj.InputFile}|{vj.AiUpscaleModel}|{vj.AiUpscaleHeight}|{vj.EncoderId}|{vj.Settings.Quality}|{vj.FilterScript}"
+        // The finish shapes every encoded segment, so a resumed run must not reuse segments
+        // finished differently.
+        var raw = $"{vj.InputFile}|{vj.AiUpscaleModel}|{vj.AiUpscaleHeight}|{vj.EncoderId}|{vj.Settings.Quality}|{vj.FilterScript}|{vj.AiFinishFilterScript}|{vj.Settings.Tune}"
                 + $"|{vj.TrimStart?.Ticks}|{vj.TrimDuration?.Ticks}|{vj.TrimFrames}";
         return Convert.ToHexString(System.Security.Cryptography.SHA1.HashData(System.Text.Encoding.UTF8.GetBytes(raw)))[..12];
     }
@@ -268,6 +270,12 @@ public sealed partial class RealEsrganVideoProcessor : IJobProcessor
         return [.. args];
     }
 
+    /// <summary>The post-upscale finish: the job's own, or the default light CAS + deband.</summary>
+    internal static string FinishChain(VideoJob vj)
+        => string.IsNullOrWhiteSpace(vj.AiFinishFilterScript)
+            ? "cas=strength=0.4,deband=range=16:blur=1"
+            : vj.AiFinishFilterScript.Trim().Trim(',');
+
     internal static string[] BuildEncodeArgs(VideoJob vj, string framesPattern, string frameRate, string outFile, long startNumber = 1)
     {
         var s = vj.Settings;
@@ -279,9 +287,10 @@ public sealed partial class RealEsrganVideoProcessor : IJobProcessor
             "-framerate", frameRate,          // the rate measured after the pre-clean, so playback speed is preserved
             "-start_number", startNumber.ToString(CultureInfo.InvariantCulture),
             "-i", framesPattern,
-            // Scale the AI-upscaled frames to the exact target height (aspect preserved), then a light
-            // sharpen + deband finish. CAS is gentle here because the model already added detail.
-            "-vf", $"scale=-2:{height}:flags=spline,cas=strength=0.4,deband=range=16:blur=1",
+            // Scale the AI-upscaled frames to the exact target height (aspect preserved), then the
+            // finish: the profile's own (sharpen, contrast, film grain…) or, by default, a light CAS
+            // + deband — gentle because the model already added detail.
+            "-vf", $"scale=-2:{height}:flags=spline,{FinishChain(vj)}",
             "-c:v", FinalCodec(vj.EncoderId),
         };
 
@@ -295,6 +304,11 @@ public sealed partial class RealEsrganVideoProcessor : IJobProcessor
         var q = s.Quality.ToString("0.##", CultureInfo.InvariantCulture);
         args.AddRange(["-crf", q]);
         args.AddRange(["-preset", s.Preset.ToString().ToLowerInvariant()]);
+
+        // The tune matters most on exactly this path: tune=grain is what keeps x264/x265 from
+        // smoothing away the film grain a finish just laid down. It used to be dropped here.
+        if (s.Tune != VideoTune.None && FinalCodec(vj.EncoderId) is "libx264" or "libx265")
+            args.AddRange(["-tune", s.Tune.ToString().ToLowerInvariant()]);
 
         if (s.ResolvePixelFormat(vj.SourceBitDepth) is { } pixFmt)
             args.AddRange(["-pix_fmt", pixFmt]);

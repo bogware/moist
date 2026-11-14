@@ -115,6 +115,10 @@ public partial class EncodeTabViewModel : ViewModelBase, IDisposable
     /// with the model rather than silently defaulting to 1080 (no UI field yet — profile-driven).</summary>
     private int _aiUpscaleHeight = 1080;
 
+    /// <summary>The selected profile's post-upscale finish (sharpen, contrast, grain…), carried so
+    /// the encode gets it and saving the profile back doesn't drop it.</summary>
+    private List<ProfileFilter> _aiFinishFilters = [];
+
     [ObservableProperty] private ChromaSubsampling _chroma = ChromaSubsampling.Auto;
 
     /// <summary>Standalone x265 only: how its untimed stream is wrapped (see X265StreamWrap).</summary>
@@ -628,6 +632,7 @@ public partial class EncodeTabViewModel : ViewModelBase, IDisposable
         BitDepth = profile.BitDepth;
         AiUpscaleModel = profile.AiUpscaleModel;
         _aiUpscaleHeight = profile.AiUpscaleHeight;
+        _aiFinishFilters = profile.AiFinishFilters.Select(f => new ProfileFilter { FilterId = f.FilterId, Parameters = new(f.Parameters) }).ToList();
 
         SelectedAudioEncoder = AudioEncoders.FirstOrDefault(e => e.Id == profile.AudioEncoderId)
                                ?? AudioEncoders.FirstOrDefault();
@@ -671,6 +676,7 @@ public partial class EncodeTabViewModel : ViewModelBase, IDisposable
         BitDepth = BitDepth,
         AiUpscaleModel = AiUpscaleModel,
         AiUpscaleHeight = _aiUpscaleHeight,
+        AiFinishFilters = _aiFinishFilters,
         AudioEncoderId = SelectedAudioEncoder?.Id ?? "ffmpeg-audio-opus",
         AudioBitrateMode = AudioBitrateMode,
         AudioBitrate = AudioBitrate,
@@ -697,6 +703,7 @@ public partial class EncodeTabViewModel : ViewModelBase, IDisposable
         Description = basedOn?.Description ?? string.Empty,
         CreatedAt = basedOn?.CreatedAt ?? DateTime.UtcNow,
         AiUpscaleHeight = _aiUpscaleHeight,
+        AiFinishFilters = _aiFinishFilters,
         VideoEncoderId = SelectedVideoEncoder?.Id ?? "ffmpeg-x265",
         VideoMode = EncodingMode,
         VideoQuality = Quality,
@@ -1130,6 +1137,7 @@ public partial class EncodeTabViewModel : ViewModelBase, IDisposable
             Chroma = Chroma,
             AiUpscaleModel = AiUpscaleModel,
             AiUpscaleHeight = _aiUpscaleHeight,
+            AiFinishFilterScript = ProfileFinish.Render(new EncodingProfile { AiFinishFilters = _aiFinishFilters }, _services.Filters),
             AiUpscaleAllowLong = AiUpscaleAllowLong,
             RifeTargetFps = RifeTargetFps,
             BurnInSubtitles = BurnInSubtitles,

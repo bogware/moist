@@ -139,6 +139,20 @@ public sealed class FFmpegFilterEngine : IFilterEngine
                 ["strength"] = new() { Name = "Strength", Type = FilterParameterType.Double, DefaultValue = 0.4, MinValue = 0.0, MaxValue = 1.0 },
             }
         },
+        // Film grain — a fine, temporal layer on the luma. The last step of a film-like finish:
+        // a cleaned or upscaled picture without it reads as plastic. Pair with tune=grain.
+        new FilterDefinition
+        {
+            Id = "grain", Name = "Film Grain", Category = FilterCategory.Other,
+            Description = "Fine, moving film grain on the brightness channel — what keeps a cleaned or "
+                          + "upscaled picture reading as film instead of plastic. Put it last, and encode "
+                          + "with tune=grain so the encoder keeps it. 4–8 is subtle; past 12 it shows.",
+            Parameters = new()
+            {
+                ["strength"] = new() { Name = "Strength", Type = FilterParameterType.Int, DefaultValue = 6, MinValue = 0, MaxValue = 30 },
+                ["chroma"] = new() { Name = "Grain in colour too", Type = FilterParameterType.Bool, DefaultValue = false },
+            }
+        },
         // Deblock — DCT-domain artifact removal for low-bitrate MPEG/DivX/XviD sources.
         new FilterDefinition
         {
@@ -334,6 +348,7 @@ public sealed class FFmpegFilterEngine : IFilterEngine
                 "hqdn3d" => BuildHqdn3dFilter(applied),
                 "unsharp" => BuildUnsharpFilter(applied),
                 "cas" => BuildCasFilter(applied),
+                "grain" => BuildGrainFilter(applied),
                 "deblock" => BuildDeblockFilter(applied),
                 "eq" => BuildEqFilter(applied),
                 "fps" => BuildFpsFilter(applied),
@@ -438,6 +453,22 @@ public sealed class FFmpegFilterEngine : IFilterEngine
         var ly = GetInt(af, "luma_y", 5);
         var la = GetDouble(af, "luma_amount", 1.0);
         return $"unsharp={lx}:{ly}:{Fmt(la)}";
+    }
+
+    /// <summary>
+    /// FFmpeg's <c>noise</c> with temporal (<c>t</c>) averaged (<c>a</c>) noise: a new, smooth-edged
+    /// pattern every frame, like grain, rather than a frozen mesh or harsh salt-and-pepper. Luma only
+    /// by default — colour noise reads as video, not film — with a half-strength chroma option.
+    /// </summary>
+    public static string BuildGrainFilter(AppliedFilter af)
+    {
+        var s = Math.Clamp(GetInt(af, "strength", 6), 0, 30);
+        if (s == 0) return "null";
+        var chroma = GetBool(af, "chroma", false);
+        var c = Math.Max(1, s / 2);
+        return chroma
+            ? $"noise=c0s={s}:c0f=t+a:c1s={c}:c1f=t+a:c2s={c}:c2f=t+a"
+            : $"noise=c0s={s}:c0f=t+a";
     }
 
     private static string BuildCasFilter(AppliedFilter af)

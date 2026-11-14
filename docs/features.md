@@ -45,8 +45,8 @@ Three engines. One chain. No manual script editing required.
 
 | Engine | Platform | Output | Encodes? |
 |--------|----------|--------|----------|
-| FFmpeg | All | `-vf` filter chain | ✓ direct |
-| VapourSynth | All | `.vpy` Python script | ✓ piped `vspipe → ffmpeg` (`--filter-engine vapoursynth`) |
+| FFmpeg | All | `-vf` filter chain | Yes, directly |
+| VapourSynth | All | `.vpy` Python script | Yes, piped `vspipe → ffmpeg` (`--filter-engine vapoursynth`) |
 | AviSynth+ | Windows | `.avs` script | — (script only) |
 
 The **VapourSynth** engine is fully encodable — moist pipes `vspipe --y4m script.vpy - | ffmpeg …`,
@@ -70,9 +70,29 @@ your own; moist generates the script and runs the pipe.
 - **30+ built-in presets** — professional, anime, restoration, upscaling, color grading, speed, creative
 - **Save your own presets** — because nobody wants to rebuild a filter chain from memory
 
+## Film-first restoration
+
+Restoration usually goes wrong at the denoiser: it removes grain and fine detail along with the noise,
+and the picture comes out looking like wax. The two *Film Restore* profiles are built the other way.
+
+- **No denoiser.** Only a light `deblock` for compression damage.
+- **Contrast-adaptive sharpening** (`cas`), which sharpens without halos. The Classic profile sharpens
+  twice — once at the source resolution, where the edges are, and lighter after the enlargement.
+- **A measured contrast and colour lift** (`eq`).
+- **Film grain last** (`grain`): fine, temporal, on the luma only, the way film carries it. Encoded
+  with x265 `tune=grain` so the encoder keeps it rather than smoothing it into blocks.
+
+On the Real-ESRGAN path the finish has to come *after* the model, which would scrub any grain it was
+fed. A profile's **`AiFinishFilters`** are exactly that: the filters run on the enlarged frames,
+after the scale to the target height. Without them the AI path uses a light default finish
+(CAS 0.4 + deband). The finish is part of the resume key, so an interrupted run never splices
+segments finished two different ways.
+
+The `grain` filter is available to any chain. Strength 4–8 is subtle; past 12 it shows. Turn on
+**Grain in colour too** only for sources that had colour grain to begin with.
+
 ## Job System
 
-> *"A man's gotta encode what a man's gotta encode."*
 
 - **Dependency-aware queue** — Video + Audio encode in parallel, mux waits for both. Automatic.
 - **Concurrent processing** — 1 to 32 simultaneous jobs. Your CPU, your rules.
@@ -222,13 +242,13 @@ Your GPU is sitting right there. Use it.
 
 | | H.264 | H.265 | AV1 |
 |---|---|---|---|
-| **NVIDIA NVENC** | ✓ | ✓ | ✓ (RTX 40+) |
-| **Intel Quick Sync** ⚗️ | ✓ | ✓ | ✓ (Arc / 12th gen+) |
-| **AMD AMF** ⚗️ | ✓ | ✓ | ✓ (RX 7000+) |
-| **Apple VideoToolbox** ⚗️ | ✓ | ✓ | — |
-| **VA-API (Linux)** ⚗️ | ✓ | ✓ | ✓ |
+| **NVIDIA NVENC** | Yes | Yes | Yes (RTX 40+) |
+| **Intel Quick Sync** † | Yes | Yes | Yes (Arc / 12th gen+) |
+| **AMD AMF** † | Yes | Yes | Yes (RX 7000+) |
+| **Apple VideoToolbox** † | Yes | Yes | — |
+| **VA-API (Linux)** † | Yes | Yes | Yes |
 
-⚗️ **Experimental.** NVENC is verified end-to-end on real hardware. Quick Sync, AMF,
+† **Experimental.** NVENC is verified end-to-end on real hardware. Quick Sync, AMF,
 VideoToolbox and VA-API are implemented from their documented FFmpeg interfaces and are
 correctly *detected* (offered only where a test encode succeeds), but their encode paths
 haven't been exercised on the actual hardware yet. Reports welcome.
@@ -321,10 +341,12 @@ A re-encode shouldn't quietly lose half your file.
 
 ## Profiles
 
-Sixteen built-in profiles, plus save your own:
+Eighteen built-in profiles, plus save your own:
 
 | Profile | Video | Audio | Container |
 |---------|-------|-------|-----------|
+| **Film Restore to 1080p (Real-ESRGAN)** | x265 CRF 16, Slow, **10-bit, tune=grain**: light de-block only (no denoiser) → **Real-ESRGAN** deep-model upscale → CAS → contrast/colour lift → **film grain**. The finish runs *after* the model, which would scrub any grain fed to it | Opus 192k | MKV |
+| **Film Restore to 1080p (Classic)** | x265 CRF 16, Slow, **10-bit, tune=grain**: light de-block → CAS at source resolution → Lanczos → CAS → contrast/colour lift → **film grain**. Traditional tools only; nothing invented, nothing scrubbed | Opus 192k | MKV |
 | **Restore SD to HD (vintage)** | x265 CRF 19, Medium, **10-bit** + restoration filter chain | Opus 192k | MKV |
 | **AI Upscale SD to HD (GPU)** | x265 CRF 19, Medium, **10-bit** + restore chain with a **GPU neural upscale** (needs Vulkan) | Opus 192k | MKV |
 | **AI Upscale SD to HD (Real-ESRGAN)** | x265 CRF 19, Medium, **10-bit** + **deep-model upscale** (needs the realesrgan tool; slow, for short/precious clips) | Opus 192k | MKV |
@@ -346,7 +368,7 @@ Profiles store everything: video encoder, audio encoder, all codec-specific sett
 
 - **Local + online sources** — Add local plugin directories or browse online repositories
 - **20+ curated plugins** — VapourSynth, AviSynth, FFmpeg ecosystem
-- **Enable/disable sources** — Toggle without removing. Civilized.
+- **Enable/disable sources** — Toggle a source without removing it.
 
 ## Theming
 
@@ -380,11 +402,11 @@ moist knows which codecs each container can actually carry and tells you *before
 
 | Encoder | ID | Notes |
 |---------|----|-------|
-| x264 via FFmpeg | `ffmpeg-x264` | H.264 — the reliable deputy |
-| x265 via FFmpeg | `ffmpeg-x265` | H.265 — twice the efficiency, twice the patience |
-| SVT-AV1 via FFmpeg | `ffmpeg-svtav1` | AV1 — the new sheriff in town (preset 0-13) |
-| VP9 via FFmpeg | `ffmpeg-vp9` | WebM's finest |
-| FFV1 Lossless | `ffmpeg-ffv1` | For the archivists who don't trust lossy |
+| x264 via FFmpeg | `ffmpeg-x264` | H.264 — the widest device support |
+| x265 via FFmpeg | `ffmpeg-x265` | H.265 — roughly half the bitrate of H.264 at equal quality; slower |
+| SVT-AV1 via FFmpeg | `ffmpeg-svtav1` | AV1 — the most efficient; numeric preset 0–13 |
+| VP9 via FFmpeg | `ffmpeg-vp9` | VP9 — for WebM |
+| FFV1 Lossless | `ffmpeg-ffv1` | Mathematically lossless — for archival masters |
 | x264 Standalone CLI | `cli-x264` | Direct x264 via FFmpeg pipe |
 | x265 Standalone CLI | `cli-x265` | Direct x265 via FFmpeg pipe |
 
@@ -392,10 +414,10 @@ moist knows which codecs each container can actually carry and tells you *before
 
 | Encoder | ID | Default | Notes |
 |---------|----|---------|-------|
-| Opus | `ffmpeg-audio-opus` | VBR 128k | Best general-purpose lossy codec. Just use this. |
+| Opus | `ffmpeg-audio-opus` | VBR 128k | The best general-purpose lossy codec; the default |
 | AAC | `ffmpeg-audio-aac` | VBR 192k | When compatibility matters more than quality |
-| MP3 (LAME) | `ffmpeg-audio-mp3` | VBR 192k, scale 2 | For the nostalgic |
-| FLAC | `ffmpeg-audio-flac` | Level 5 | Lossless — because bits matter |
+| MP3 (LAME) | `ffmpeg-audio-mp3` | VBR 192k, scale 2 | For players that accept nothing newer |
+| FLAC | `ffmpeg-audio-flac` | Level 5 | Lossless |
 | AC3 (Dolby) | `ffmpeg-audio-ac3` | CBR 384k | Dolby Digital surround |
 | E-AC3 (Dolby+) | `ffmpeg-audio-eac3` | CBR 448k | Enhanced Dolby Digital Plus |
 | Vorbis | `ffmpeg-audio-vorbis` | VBR 160k, Q3 | For WebM containers |

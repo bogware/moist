@@ -8,7 +8,7 @@
 # and output paths, so that is a filesystem-level trust boundary: mount only what
 # you intend it to touch, and keep the token secret.
 
-FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
+FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
 WORKDIR /src
 
 # Restore against the project files alone, so a source-only change doesn't
@@ -27,18 +27,22 @@ RUN dotnet publish Moist.Cli/Moist.Cli.csproj \
         --no-restore \
         --output /app
 
-FROM mcr.microsoft.com/dotnet/runtime:8.0 AS runtime
+FROM mcr.microsoft.com/dotnet/runtime:10.0 AS runtime
 
 # FFmpeg is not one program: what a build contains is decided when it is compiled.
-# Debian's package has x264, x265 and VP9, and does NOT have libsvtav1 or libvmaf —
-# so AV1 encoding and --target-vmaf are unavailable in this image unless you install
-# a build that has them. `moist tools` reports what was found.
+# The .NET 10 images are Ubuntu 24.04, whose FFmpeg 6.1 has x264, x265, VP9 and SVT-AV1
+# but NOT libvmaf — so --target-vmaf is unavailable in this image (the XPSNR, SSIM and
+# PSNR targets still work) unless you install a build that has it. `moist tools`
+# reports what was found.
 RUN apt-get update \
     && apt-get install --no-install-recommends -y ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
-# Encoding as root would write output owned by root into mounted volumes.
-RUN useradd --create-home --uid 1000 moist
+# Encoding as root would write output owned by root into mounted volumes. The service
+# user is uid 1000, as it was on the earlier Debian-based image, so volumes written by
+# either keep working. Ubuntu images already give uid 1000 to "ubuntu" — with sudo and adm
+# among its groups — so that account is removed, not renamed, and moist starts clean.
+RUN if id ubuntu >/dev/null 2>&1; then userdel --remove ubuntu; fi     && useradd --create-home --uid 1000 --user-group moist
 
 WORKDIR /app
 COPY --from=build /app .

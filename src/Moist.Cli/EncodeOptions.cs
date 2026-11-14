@@ -82,6 +82,7 @@ public static class EncodeOptions
             // Real-ESRGAN AI upscale (Tier 2). An explicit --ai-upscale wins; else the profile's.
             AiUpscaleModel = (cl.String("ai-upscale") is { Length: > 0 } m ? m : null) ?? profile?.AiUpscaleModel,
             AiUpscaleHeight = cl.Int("ai-upscale-height") ?? profile?.AiUpscaleHeight ?? 1080,
+            AiFinishFilterScript = ProfileFinish.Render(profile, services.Filters),
             AiUpscaleAllowLong = cl.Flag("ai-upscale-allow-long"),
 
             // --fps-mode rife routes framerate change through RIFE AI interpolation (a processor);

@@ -61,6 +61,10 @@ public sealed class VideoJob : Job
     /// <summary>Target output height for the Real-ESRGAN upscale; aspect is preserved. Default 1080.</summary>
     public int AiUpscaleHeight { get; set; } = 1080;
 
+    /// <summary>FFmpeg filters run on the AI-upscaled frames, after the scale to
+    /// <see cref="AiUpscaleHeight"/>. Null = the default light finish (CAS 0.4 + deband).</summary>
+    public string? AiFinishFilterScript { get; set; }
+
     /// <summary>
     /// Reserved. Windowed processing now handles any length, so this no longer gates anything.
     /// </summary>

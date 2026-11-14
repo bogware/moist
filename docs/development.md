@@ -8,7 +8,7 @@ For contributors: building, testing, how the pieces fit, and how to extend them.
 
 ### Prerequisites
 
-- [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0) or later
+- [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0) or later
 - [FFmpeg](https://ffmpeg.org/download.html) and FFprobe on your PATH (or let moist install them for you)
 - Optional: [x264](https://www.videolan.org/developers/x264.html), [x265](https://www.videolan.org/developers/x265.html) for standalone CLI encoding
 - Optional: [VapourSynth](https://www.vapoursynth.com/) for VapourSynth filters
@@ -41,7 +41,7 @@ dotnet test Moist.Core.Tests       # fast unit tests only
 dotnet test Moist.IntegrationTests # real FFmpeg encodes
 ```
 
-**380+ unit tests** covering job models, queue behavior, encoder registry, profiles, settings, filter engines (including the restoration filters and profile-carried filter chains), container/extension mapping, audio processor argument building, hardware encoder plumbing, quality metric parsing, search arithmetic, chunk planning, the per-scene complexity model, and CLI parsing — none of which launch an external process.
+**390+ unit tests** covering job models, queue behavior, encoder registry, profiles, settings, filter engines (including the restoration filters and profile-carried filter chains), container/extension mapping, audio processor argument building, hardware encoder plumbing, quality metric parsing, search arithmetic, chunk planning, the per-scene complexity model, and CLI parsing — none of which launch an external process.
 
 **170+ integration tests** that run real encodes through the full pipeline and verify the output with ffprobe: every video encoder, every audio codec, every container, 10-bit and HDR sources, silent sources, multi-track audio, chapters and attachments, chroma and subtitle handling, filter chains, cancellation, concurrency, awkward filenames, temp-file cleanup, all four quality metrics, target-quality search, chunked encoding, per-scene optimisation, and queue persistence — including a test that searches then encodes the full file and asserts the sampled prediction held, one that deliberately truncates a chunk to prove the frame-count verification catches it, one that checks per-scene beats a fixed CRF chosen for the hardest scene, and one that measures the picture to prove burned-in subtitles were actually rendered rather than merely not erroring. They skip automatically when FFmpeg isn't on your PATH (and hardware tests skip without a usable GPU), so check the skip count before trusting a green run.
 
@@ -51,7 +51,6 @@ If FFmpeg isn't on your PATH, set the path in the **Settings** tab after launchi
 
 ## Architecture
 
-> *"Out here, a man builds things to last — or he doesn't build 'em at all."*
 
 ### Four-Project Structure
 
@@ -63,7 +62,7 @@ src/
     Muxers/             Container muxing + codec/container compatibility
     Media/              FFprobe analysis, subtitle/audio stream parsing
     Settings/           JSON-based app settings
-    Profiles/           Encoding profile save/load (16 built-in + user profiles)
+    Profiles/           Encoding profile save/load (18 built-in + user profiles)
     Tools/              Tool discovery, version detection, auto-download
     Plugins/            Plugin interface + assembly loader
  Moist.Filters/         Filter engine abstraction layer
@@ -129,7 +128,7 @@ User configures settings
 
 ### Code Conventions
 
-- **C# 12** / .NET 8, nullable enabled, implicit usings
+- **C# 14** / .NET 10, nullable enabled, implicit usings
 - **MVVM** via `CommunityToolkit.Mvvm` (`[ObservableProperty]`, `[RelayCommand]`)
 - **Avalonia AXAML** with `x:DataType` (compiled bindings)
 - PascalCase for public members, `_camelCase` for private fields

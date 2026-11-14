@@ -7,6 +7,37 @@ breaking changes bump the major version.
 
 ---
 
+## [Unreleased]
+
+### Changed
+
+- **Moved to .NET 10.** Every project targets `net10.0` (C# 14), the Microsoft.Extensions logging
+  packages follow at 10.0.15, and CI, the release workflow and the Docker image build on .NET 10. The
+  Docker image is now based on Ubuntu 24.04 (the .NET 10 default), so its FFmpeg gains SVT-AV1. The
+  image's stock `ubuntu` account (uid 1000, in the `sudo` and `adm` groups) is removed and the
+  `moist` service user recreated at uid 1000 with no other groups, so existing volumes keep working.
+- **A new front page.** The README is rewritten for production: no emojis, plain prose, and a
+  showcase of the new film-restore profiles from a DVD-era source, with 1:1 detail crops.
+
+### Added
+
+- **Film Restore to 1080p (Real-ESRGAN)** and **Film Restore to 1080p (Classic)** — built-in
+  profiles for maximum film-like fidelity. No denoiser (it removes grain and fine detail with the
+  noise); a light de-block for compression damage only; contrast-adaptive sharpening; a measured
+  contrast and colour lift; and fine film grain laid down last, encoded with x265 `tune=grain`. The
+  Classic profile sharpens at the source resolution before a Lanczos upscale and again after it.
+- **`grain` filter** — fine, temporal film grain on the luma (optional half-strength chroma).
+- **Configurable finish after an AI upscale.** A profile's `AiFinishFilters` run on the
+  Real-ESRGAN-enlarged frames, after the scale to the target height; without them the light default
+  finish (CAS + deband) applies. Grain belongs there: the model would scrub any grain fed to it.
+  The finish is part of the resume key.
+
+### Fixed
+
+- **The encoder tune was dropped on the Real-ESRGAN path**, so a `tune=grain` profile lost its grain
+  exactly where it mattered. `-tune` is now passed for x264 and x265 there too, and is part of the
+  resume key.
+
 ## [1.0.0] — 2026-11-13
 
 The first stable release: a release-hardening pass over the whole codebase (a full audit:

@@ -4,7 +4,6 @@
 
 ## Tips, Tricks & Hard-won Hints
 
-> *"Experience is the comb life hands you after you've already lost your hair."*
 
 - **Stop guessing at CRF.** `--target-vmaf 93` samples the file and finds the CRF that hits
   your quality target. A number you can reason about beats a dial with no units.

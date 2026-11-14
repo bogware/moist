@@ -60,6 +60,10 @@ public sealed record EncodeRequest
     /// </summary>
     public string? AiUpscaleModel { get; init; }
     public int AiUpscaleHeight { get; init; } = 1080;
+
+    /// <summary>FFmpeg filters applied after the AI upscale (rendered from the profile's
+    /// <c>AiFinishFilters</c>); null keeps the processor's default light finish.</summary>
+    public string? AiFinishFilterScript { get; init; }
     public bool AiUpscaleAllowLong { get; init; }
 
     /// <summary>RIFE AI frame-interpolation target frame rate (0 = off). See RifeVideoProcessor.</summary>
@@ -509,6 +513,7 @@ public static class EncodeJobBuilder
                 TotalFrames = info?.Video?.TotalFrames ?? 0,
                 SourceBitDepth = info?.Video?.BitDepth ?? 8,
                 AiUpscaleModel = req.AiUpscaleModel,
+                AiFinishFilterScript = req.AiFinishFilterScript,
                 AiUpscaleHeight = req.AiUpscaleHeight,
                 AiUpscaleAllowLong = req.AiUpscaleAllowLong,
                 RifeTargetFps = req.RifeTargetFps,
@@ -685,6 +690,7 @@ public static class EncodeJobBuilder
             TotalFrames = frames,
             // Carry the whole-file AI/RIFE settings so the preview shows their effect too.
             AiUpscaleModel = req.AiUpscaleModel,
+            AiFinishFilterScript = req.AiFinishFilterScript,
             AiUpscaleHeight = req.AiUpscaleHeight,
             AiUpscaleAllowLong = req.AiUpscaleAllowLong,
             RifeTargetFps = req.RifeTargetFps,

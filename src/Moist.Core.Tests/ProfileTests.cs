@@ -31,7 +31,7 @@ public class ProfileTests
     public void RestoreProfile_CarriesTheFullPipeline()
     {
         var restore = ProfileManager.GetBuiltInProfiles()
-            .Single(p => p.Name.Contains("Restore", StringComparison.OrdinalIgnoreCase));
+            .Single(p => p.Name == "Restore SD to HD (vintage)");
 
         Assert.Equal("ffmpeg-x265", restore.VideoEncoderId);
         Assert.Equal(VideoBitDepth.Ten, restore.BitDepth);
