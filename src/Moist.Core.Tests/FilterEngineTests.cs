@@ -107,6 +107,58 @@ public class FilterEngineTests
     }
 
     [Fact]
+    public void FFmpegEngine_GenerateScript_MpdecimateFilter()
+    {
+        var engine = new FFmpegFilterEngine();
+        var chain = new FilterChain();
+        var f = engine.GetAvailableFilters().First(x => x.Id == "mpdecimate");
+        chain.Add(f, new Dictionary<string, object> { ["hi"] = 1280, ["lo"] = 512, ["frac"] = 0.5 });
+
+        var script = engine.GenerateScript(chain, "input.mkv");
+        Assert.Equal("mpdecimate=hi=1280:lo=512:frac=0.5", script);
+    }
+
+    [Fact]
+    public void FFmpegEngine_GenerateScript_GrayscaleFilter_StripsChromaButKeepsYuv420()
+    {
+        var engine = new FFmpegFilterEngine();
+        var chain = new FilterChain();
+        chain.Add(engine.GetAvailableFilters().First(x => x.Id == "grayscale"), new Dictionary<string, object>());
+
+        var script = engine.GenerateScript(chain, "input.mkv");
+        // hue=s=0, deliberately not format=gray: zero the chroma, leave the 4:2:0 layout intact.
+        Assert.Equal("hue=s=0", script);
+    }
+
+    [Fact]
+    public void FFmpegEngine_GenerateScript_IvtcFilter_WeavesBobbedInputBeforeFieldmatch()
+    {
+        var engine = new FFmpegFilterEngine();
+        var ivtc = engine.GetAvailableFilters().First(x => x.Id == "ivtc");
+
+        // Bob-deinterlaced 60p: weave pairs back to ONE same-height 30i frame so fieldmatch can
+        // see the 3:2 cadence. interleave_top, never merge (merge doubles the height and a later
+        // height-based resize then halves the width).
+        var bobbed = new FilterChain();
+        bobbed.Add(ivtc, new Dictionary<string, object> { ["bobbed"] = true, ["order"] = "tff" });
+        // fps=source_fps leads: it fills reception-dropout pts gaps with duplicate frames BEFORE
+        // decimate rewrites the timestamps, or the video loses the gap and runs ahead of the audio.
+        Assert.Equal("fps=source_fps,tinterlace=mode=interleave_top,fieldmatch=order=tff:combmatch=full,decimate",
+            engine.GenerateScript(bobbed, "in.mkv"));
+
+        // BFF material weaves the other way round.
+        var bff = new FilterChain();
+        bff.Add(ivtc, new Dictionary<string, object> { ["bobbed"] = true, ["order"] = "bff" });
+        Assert.StartsWith("fps=source_fps,tinterlace=mode=interleave_bottom,fieldmatch=order=bff", engine.GenerateScript(bff, "in.mkv"));
+
+        // Native interlaced telecine: straight to fieldmatch.
+        var native = new FilterChain();
+        native.Add(ivtc, new Dictionary<string, object> { ["bobbed"] = false, ["order"] = "auto" });
+        Assert.Equal("fps=source_fps,fieldmatch=order=auto:combmatch=full,decimate",
+            engine.GenerateScript(native, "in.mkv"));
+    }
+
+    [Fact]
     public void FFmpegEngine_GenerateScript_DeblockFilter_EmitsSpp()
     {
         var engine = new FFmpegFilterEngine();
@@ -250,7 +302,8 @@ public class FilterEngineTests
         Assert.Contains("core.trt.Model(", script);           // the vs-mlrt backend node
         Assert.Contains("realesr.onnx", script);              // with the chosen model
         Assert.Contains("format=vs.RGBS", script);            // converts to RGB float for the network
-        Assert.Contains("format=vs.YUV420P8", script);        // and back to YUV afterwards
+        Assert.Contains("format=_src.format.id", script);     // and back to the SOURCE format (not forced 8-bit)
+        Assert.Contains("_mat", script);                      // SD/HD-aware matrix (601 for <=576, else 709)
     }
 
     // === AviSynth Filter Engine ===

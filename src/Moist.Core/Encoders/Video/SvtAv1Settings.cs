@@ -39,7 +39,17 @@ public sealed class SvtAv1Settings : VideoEncoderSettings
     public SvtAv1Tune? SvtTune { get; set; }
     public int FilmGrain { get; set; }
     public int FilmGrainDenoise { get; set; }
+
+    /// <summary>
+    /// Number of tile rows. A count of 1 means no tiling (the default). SVT-AV1 itself takes
+    /// log2 of the count, so the encoder is handed <c>log2(TileRows)</c> — a count is the more
+    /// natural thing to store and set.
+    /// </summary>
     public int TileRows { get; set; } = 1;
+
+    /// <summary>Number of tile columns; see <see cref="TileRows"/> for how the count is emitted.</summary>
     public int TileColumns { get; set; } = 1;
+
+    /// <summary>Maximum GOP length in frames, emitted as FFmpeg's <c>-g</c>. Zero leaves it to libsvtav1.</summary>
     public int KeyframeInterval { get; set; } = 240;
 }

@@ -40,6 +40,8 @@ public sealed class FilterChain
 
 public sealed class AppliedFilter
 {
+    private static readonly char[] UnsafeTextChars = [';', '[', ']', '\'', '"', '`'];
+
     public required FilterDefinition Filter { get; init; }
     public Dictionary<string, object> ParameterValues { get; init; } = new();
 
@@ -79,6 +81,16 @@ public sealed class AppliedFilter
                         var strVal = value.ToString();
                         if (paramDef.Options is not null && strVal is not null && !paramDef.Options.Contains(strVal))
                             errors.Add($"{paramDef.Name}: '{strVal}' is not a valid option");
+                        break;
+
+                    case FilterParameterType.String:
+                        // Free text is emitted verbatim into an FFmpeg filtergraph or a generated
+                        // Python script. ';' and '[' ']' would open a second filtergraph (e.g. a
+                        // movie= source reading an arbitrary file), quotes and newlines would break
+                        // out of a .vpy string literal. None of them belong in an expression or path.
+                        var text = value.ToString() ?? "";
+                        if (text.IndexOfAny(UnsafeTextChars) >= 0 || text.Any(char.IsControl))
+                            errors.Add($"{paramDef.Name}: contains a character that isn't allowed (; [ ] ' \" ` or a control character)");
                         break;
                 }
             }

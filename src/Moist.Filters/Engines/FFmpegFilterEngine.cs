@@ -176,6 +176,46 @@ public sealed class FFmpegFilterEngine : IFilterEngine
         },
         new FilterDefinition
         {
+            Id = "mpdecimate", Name = "Decimate Duplicate Frames", Category = FilterCategory.FrameRate,
+            Description = "Drop near-duplicate frames by pixel difference — e.g. a 60p stream padded with "
+                          + "repeated frames. Output is variable frame rate with the original timing kept, so "
+                          + "audio stays in sync. A generic threshold can't follow a 3:2 film cadence reliably; "
+                          + "for bobbed telecine use Inverse Telecine instead. Not compatible with chunked encoding.",
+            Parameters = new()
+            {
+                ["hi"] = new() { Name = "Hi threshold", Type = FilterParameterType.Int, DefaultValue = 768, MinValue = 0, MaxValue = 65535 },
+                ["lo"] = new() { Name = "Lo threshold", Type = FilterParameterType.Int, DefaultValue = 320, MinValue = 0, MaxValue = 65535 },
+                ["frac"] = new() { Name = "Fraction", Type = FilterParameterType.Double, DefaultValue = 0.33, MinValue = 0.0, MaxValue = 1.0 },
+            }
+        },
+        new FilterDefinition
+        {
+            Id = "grayscale", Name = "Grayscale (strip chroma)", Category = FilterCategory.ColorCorrection,
+            Description = "Remove all colour. For black-and-white sources this deletes broadcast chroma noise "
+                          + "outright — a cleaner picture and a smaller file — while keeping the 4:2:0 layout "
+                          + "every downstream filter and encoder expects.",
+            Parameters = new(),
+        },
+        new FilterDefinition
+        {
+            Id = "ivtc", Name = "Inverse Telecine (film cadence)", Category = FilterCategory.Deinterlace,
+            Description = "Recover the original ~24 fps film frames from telecined video. Handles native "
+                          + "interlaced telecine (29.97i) and — with 'Bobbed 60p input' on — a broadcast that was "
+                          + "bob-deinterlaced to 60p, by weaving frame pairs back to 30i first. Unlike a "
+                          + "deinterlacer it reunites the real fields, so nothing is interpolated: judder-free, "
+                          + "and 2.5x fewer frames to encode. Not compatible with chunked encoding.",
+            Parameters = new()
+            {
+                ["bobbed"] = new() { Name = "Bobbed 60p input", Type = FilterParameterType.Bool, DefaultValue = true },
+                ["order"] = new()
+                {
+                    Name = "Field order", Type = FilterParameterType.Choice, DefaultValue = "tff",
+                    Options = ["tff", "bff", "auto"]
+                },
+            }
+        },
+        new FilterDefinition
+        {
             Id = "minterpolate", Name = "Motion Interpolate (frame rate)", Category = FilterCategory.FrameRate,
             Description = "Change frame rate with motion-compensated interpolation — smooth 24->60 or slow-mo, "
                           + "no dropped/duplicated frames. CPU-heavy. (For AI interpolation use --fps-mode rife.)",
@@ -297,6 +337,9 @@ public sealed class FFmpegFilterEngine : IFilterEngine
                 "deblock" => BuildDeblockFilter(applied),
                 "eq" => BuildEqFilter(applied),
                 "fps" => BuildFpsFilter(applied),
+                "mpdecimate" => BuildMpdecimateFilter(applied),
+                "grayscale" => BuildGrayscaleFilter(applied),
+                "ivtc" => BuildIvtcFilter(applied),
                 "minterpolate" => BuildMinterpolateFilter(applied),
                 "deband" => BuildDebandFilter(applied),
                 "tonemap" => BuildTonemapFilter(applied),
@@ -328,11 +371,17 @@ public sealed class FFmpegFilterEngine : IFilterEngine
         return $"crop=iw-{l + r}:ih-{t + b}:{l}:{t}";
     }
 
-    private static string BuildResizeFilter(AppliedFilter af)
+    private static string? BuildResizeFilter(AppliedFilter af)
     {
         var w = GetInt(af, "width", -1);
         var h = GetInt(af, "height", -1);
         var algo = GetString(af, "algorithm", "lanczos");
+        // FFmpeg can derive one dimension from the other via a negative value, but not both:
+        // "scale=-2:-2" / "scale=-1:-1" fails filtergraph configuration ("Cannot scale to ...").
+        // A resize with no usable target dimension is a no-op, so treat it as pass-through
+        // (skipped) rather than emitting an invalid graph that aborts the whole encode.
+        if (w <= 0 && h <= 0)
+            return null;
         return $"scale={w}:{h}:flags={algo}";
     }
 
@@ -417,6 +466,60 @@ public sealed class FFmpegFilterEngine : IFilterEngine
     {
         var fps = GetDouble(af, "fps", 23.976);
         return $"fps={Fmt(fps)}";
+    }
+
+    private static string BuildMpdecimateFilter(AppliedFilter af)
+    {
+        var hi = GetInt(af, "hi", 768);
+        var lo = GetInt(af, "lo", 320);
+        var frac = GetDouble(af, "frac", 0.33);
+        return $"mpdecimate=hi={hi}:lo={lo}:frac={Fmt(frac)}";
+    }
+
+    // hue=s=0 rather than format=gray: it zeroes the chroma planes but keeps yuv420p, so every
+    // downstream filter and encoder still sees the pixel format it expects.
+    private static string BuildGrayscaleFilter(AppliedFilter af) => "hue=s=0";
+
+    private static string BuildIvtcFilter(AppliedFilter af)
+    {
+        var order = GetString(af, "order", "tff");
+        // fps=source_fps first: decimate rewrites timestamps assuming a constant input rate, so a
+        // reception dropout in a broadcast capture (a pts gap with no frames) silently vanishes from
+        // the video while the separately encoded audio keeps the gap - the picture then runs ahead
+        // of the sound by the cumulative gap (1.8 s by minute 55 on one Gunsmoke capture). Filling
+        // the gap with duplicate frames keeps the timeline: a dropout becomes a short freeze with
+        // silent audio, in sync, instead of a growing lead.
+        var ivtc = $"fps=source_fps,fieldmatch=order={order}:combmatch=full,decimate";
+        if (!GetBool(af, "bobbed", true)) return ivtc;
+
+        // A bob-deinterlaced 60p stream still carries the 3:2 field structure; weaving each pair
+        // of consecutive frames back into ONE same-height 30i frame lets fieldmatch see it.
+        // interleave_top/bottom take alternate lines from the two frames — NOT mode=merge, which
+        // stacks them into a double-height frame and silently halves the picture's width once a
+        // later height-based resize runs. Verified on MeTV 720p60 captures: idet reads the woven
+        // stream as pure TFF/BFF, the frame stays 1104x720, and decimate lands on 23.98 fps where a
+        // pixel-difference decimator (mpdecimate) could not find a threshold that held across episodes.
+        var weave = order == "bff" ? "interleave_bottom" : "interleave_top";
+        return $"fps=source_fps,tinterlace=mode={weave},{ivtc.Replace("fps=source_fps,", "")}";
+    }
+
+    // Values arrive as bool from the UI, JsonElement from a saved profile/preset, or a string
+    // from the CLI — accept all three rather than trusting one shape.
+    private static bool GetBool(AppliedFilter af, string key, bool def)
+    {
+        if (!af.ParameterValues.TryGetValue(key, out var v) || v is null) return def;
+        return v switch
+        {
+            bool b => b,
+            System.Text.Json.JsonElement e => e.ValueKind switch
+            {
+                System.Text.Json.JsonValueKind.True => true,
+                System.Text.Json.JsonValueKind.False => false,
+                _ => def,
+            },
+            string s => bool.TryParse(s, out var parsed) ? parsed : def,
+            _ => def,
+        };
     }
 
     private static string BuildMinterpolateFilter(AppliedFilter af)

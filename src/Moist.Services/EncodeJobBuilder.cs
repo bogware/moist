@@ -51,6 +51,18 @@ public sealed record EncodeRequest
     /// <summary>SVT-AV1 tuning. Null leaves the encoder on its PSNR default.</summary>
     public SvtAv1Tune? SvtAv1Tune { get; init; }
 
+    /// <summary>SVT-AV1 film-grain synthesis strength (0 = off, 1-50). Hides banding by
+    /// re-adding grain the encoder removed; 0 leaves it off.</summary>
+    public int SvtAv1FilmGrain { get; init; }
+
+    /// <summary>SVT-AV1 tile rows / columns (count, 1 = no tiling). More tiles improve threading
+    /// at a small quality cost.</summary>
+    public int SvtAv1TileRows { get; init; } = 1;
+    public int SvtAv1TileColumns { get; init; } = 1;
+
+    /// <summary>SVT-AV1 maximum GOP length in frames (FFmpeg -g). 0 leaves it to libsvtav1.</summary>
+    public int SvtAv1KeyframeInterval { get; init; } = 240;
+
     // Audio
     public string AudioEncoderId { get; init; } = "ffmpeg-audio-opus";
     public AudioBitrateMode AudioBitrateMode { get; init; } = AudioBitrateMode.Vbr;
@@ -108,6 +120,19 @@ public sealed record EncodeRequest
 
     /// <summary>Carry container-level tags over from the source.</summary>
     public bool CopyMetadata { get; init; } = true;
+
+    /// <summary>
+    /// Experimental, opt-in: attempt to carry Dolby Vision RPU / HDR10+ dynamic metadata across
+    /// the re-encode using dovi_tool / hdr10plus_tool. Unverified binary-metadata surgery — it
+    /// degrades to a warning and never corrupts the output. See <see cref="DynamicHdrPreserver"/>.
+    /// </summary>
+    public bool PreserveDynamicHdr { get; init; }
+
+    /// <summary>
+    /// Standalone x265 only: how its untimed HEVC stream gets timestamps. No B-frames (default,
+    /// works everywhere), mkvmerge (keeps B-frames), or Auto. See <see cref="X265StreamWrap"/>.
+    /// </summary>
+    public X265StreamWrap X265StreamWrap { get; init; } = X265StreamWrap.NoBFrames;
 
     // Filters (already rendered to an engine-specific script)
     public string? FilterScript { get; init; }
@@ -176,6 +201,27 @@ public static class EncodeJobBuilder
                 : null;
         }
 
+        // Real-ESRGAN (AiUpscaleModel) and the GPU super-resolution filter (libplacebo / "superres")
+        // both enlarge the picture. Stacking them double-upscales, and the Real-ESRGAN frame extractor
+        // has no Vulkan device for libplacebo, so it dies with a cryptic "hardware device reference is
+        // required" error mid-encode. Catch the conflict up front with an actionable message.
+        if (!string.IsNullOrWhiteSpace(req.AiUpscaleModel)
+            && req.FilterScript?.Contains("libplacebo", StringComparison.Ordinal) == true)
+        {
+            return "Both AI upscale (Real-ESRGAN) and the GPU super-resolution filter are enabled — " +
+                   "they each enlarge the video, so use one or the other. Remove the \"superres\" filter " +
+                   "on the Filters tab, or pick a profile that doesn't set AI upscale.";
+        }
+
+        // Tune/codec compatibility. The VideoTune set is shared across encoders, but each
+        // encoder accepts only a subset: x264 takes them all, x265 has no film/stillimage,
+        // and libvpx-vp9 has only psnr/ssim. An unsupported -tune makes FFmpeg abort at init,
+        // so reject it up front (in the one place both front-ends validate) rather than after
+        // the whole video encode. Verified empirically against FFmpeg's libx265/libvpx-vp9.
+        if (!TuneAllowed(req.VideoEncoderId, req.Tune))
+            return $"The '{req.Tune}' tune isn't supported by the selected encoder " +
+                   $"({req.VideoEncoderId}). Pick a compatible tune, or set Tune to None.";
+
         // A silent source produces no audio stream, so audio compatibility is moot.
         var audioCodec = silent
             ? null
@@ -185,6 +231,27 @@ public static class EncodeJobBuilder
             req.Container,
             ContainerCompatibility.StreamCodecForEncoder(req.VideoEncoderId),
             audioCodec);
+    }
+
+    /// <summary>
+    /// Whether an encoder accepts a given <see cref="VideoTune"/>. The enum is shared, but
+    /// the tune vocabularies differ: x264 supports the full set; x265 rejects film/stillimage;
+    /// libvpx-vp9 supports only psnr/ssim; SVT-AV1 ignores <c>-tune</c> entirely (it uses its
+    /// own <c>SvtAv1Tune</c>); FFV1 has no tune. Hardware and unknown encoders don't emit the
+    /// shared <c>-tune</c>, so they're left permissive.
+    /// </summary>
+    internal static bool TuneAllowed(string encoderId, VideoTune tune)
+    {
+        if (tune == VideoTune.None) return true;
+        return encoderId switch
+        {
+            "ffmpeg-x264" or "cli-x264" => true,
+            "ffmpeg-x265" or "cli-x265" => tune is not (VideoTune.Film or VideoTune.StillImage),
+            "ffmpeg-vp9" => tune is VideoTune.Psnr or VideoTune.Ssim,
+            "ffmpeg-svtav1" => true,   // -tune is not emitted for SVT-AV1
+            "ffmpeg-ffv1" => false,    // FFV1 has no tune parameter
+            _ => true,                 // hardware / unknown: no shared -tune emitted
+        };
     }
 
     /// <summary>
@@ -201,6 +268,34 @@ public static class EncodeJobBuilder
                 "Burned-in subtitles and chunked encoding don't mix: each chunk is seeked to " +
                 "independently, so subtitle timings would drift after the first chunk. " +
                 "Turn one of them off.");
+        }
+
+        // Cadence filters change the frame count unpredictably, so the chunk frame-count
+        // verification — the guard against silently lost footage — would reject the joined
+        // result. Excluded for the same reason burn-in is.
+        if (chunked && req.FilterScript is { } cadenceScript
+            && (cadenceScript.Contains("decimate", StringComparison.Ordinal)
+                || cadenceScript.Contains("fieldmatch", StringComparison.Ordinal)))
+        {
+            warnings.Add(
+                "Frame decimation / inverse telecine and chunked encoding don't mix: these filters " +
+                "change the frame count, so the chunk verification would reject the joined result. " +
+                "Turn one of them off.");
+        }
+
+        // Subtitles that won't survive the chosen container. Text subs transcode into MP4/MOV
+        // (mov_text) and WebM (webvtt); image-based subs (PGS/DVD) can't be converted to those,
+        // and AVI/MPEG-TS hold no text subtitles at all. Those streams are dropped rather than
+        // failing the mux — warn up front so it isn't a silent loss.
+        if (req.CopySubtitles && !req.BurnInSubtitles && info?.SubtitleStreams is { Count: > 0 } subs)
+        {
+            var selected = req.SubtitleTracks.Count == 0
+                ? subs
+                : req.SubtitleTracks.Where(i => i >= 0 && i < subs.Count).Select(i => subs[i]);
+            if (selected.Any(s => !ContainerCarriesSubtitle(req.Container, s.Codec)))
+                warnings.Add(
+                    $"Some subtitles can't be carried in {req.Container} and will be dropped " +
+                    "(image-based PGS/DVD subs, or any subs in AVI/MPEG-TS). Use MKV to keep them all.");
         }
 
         if (info?.Video is not { } video) return warnings;
@@ -234,6 +329,15 @@ public static class EncodeJobBuilder
                     "This source carries HDR10+ dynamic metadata, which re-encoding drops. " +
                     "The static HDR10 base layer survives, so the result stays HDR but loses " +
                     "the per-scene tone mapping.");
+            }
+
+            if (req.PreserveDynamicHdr && (video.HasDolbyVision || video.HasHdr10Plus))
+            {
+                warnings.Add(
+                    "Dynamic-HDR passthrough is enabled — this is EXPERIMENTAL and unverified. " +
+                    "It uses dovi_tool / hdr10plus_tool to re-inject the RPU/metadata after encoding; " +
+                    "if the tools are missing or the step fails it is skipped without breaking the " +
+                    "encode. Always check the result plays correctly before trusting it.");
             }
         }
 
@@ -303,18 +407,7 @@ public static class EncodeJobBuilder
         }
 
         // ---- Video ----
-        var videoSettings = CreateVideoSettings(req);
-        videoSettings.Mode = req.Mode;
-        videoSettings.Quality = req.Quality;
-        videoSettings.Bitrate = req.Bitrate;
-        videoSettings.Preset = req.Preset;
-        videoSettings.Tune = req.Tune;
-        videoSettings.CustomArgs = req.VideoCustomArgs;
-        videoSettings.BitDepth = req.BitDepth;
-        videoSettings.Chroma = req.Chroma;
-
-        if (videoSettings is SvtAv1Settings svt && req.SvtAv1Tune is { } svtTune)
-            svt.SvtTune = svtTune;
+        var videoSettings = BuildVideoSettings(req, req.Quality);
 
         // Burning subtitles in means rendering them into the picture, so it has to happen
         // before the encoder sees the frames — ahead of any user filters.
@@ -339,19 +432,15 @@ public static class EncodeJobBuilder
                 if (chunks.AlreadyDone.Contains(i)) continue;
 
                 var chunk = chunks.Plan.Chunks[i];
-                var settings = CreateVideoSettings(req);
-                settings.Mode = req.Mode;
 
-                // Per-scene optimisation gives each chunk its own CRF so quality is
-                // uniform across the file instead of bitrate being uniform.
-                settings.Quality = chunks.PerChunkQuality.TryGetValue(i, out var sceneQuality)
+                // Per-scene optimisation gives each chunk its own CRF so quality is uniform
+                // across the file instead of bitrate being uniform. Everything else (chroma,
+                // SVT knobs, bit depth, …) comes from the shared helper so a chunk can't drift
+                // from a non-chunked encode.
+                var chunkQuality = chunks.PerChunkQuality.TryGetValue(i, out var sceneQuality)
                     ? sceneQuality
                     : req.Quality;
-                settings.Bitrate = req.Bitrate;
-                settings.Preset = req.Preset;
-                settings.Tune = req.Tune;
-                settings.CustomArgs = req.VideoCustomArgs;
-                settings.BitDepth = req.BitDepth;
+                var settings = BuildVideoSettings(req, chunkQuality);
 
                 chunkJobs.Add(new VideoJob
                 {
@@ -417,6 +506,14 @@ public static class EncodeJobBuilder
             var source = info?.AudioStreams.ElementAtOrDefault(sourceIndex);
             var label = source?.Language is { } lang ? $" [{lang}]" : $" #{sourceIndex}";
 
+            // A/V alignment. The video and audio are encoded separately and the video encode
+            // starts at the first video frame — but in a broadcast capture or a stream-copied
+            // cut the audio typically begins ~1 s earlier (the recording starts mid-GOP), and
+            // some sources have it begin later. Muxing the two temps naively plays the picture
+            // out of lip-sync by that whole stagger. Anchor every track to the first video
+            // frame: trim a lead at encode time, delay a lag in the mux.
+            var lead = AudioLead(info, source);
+
             audioJobs.Add(new AudioJob
             {
                 Name = $"Audio{label}: {Path.GetFileName(req.InputFile)}",
@@ -426,6 +523,7 @@ public static class EncodeJobBuilder
                 Settings = CreateAudioSettings(req),
                 TotalDurationSeconds = info?.Duration.TotalSeconds ?? 0,
                 AudioStreamIndex = sourceIndex,
+                TrimStart = lead > TimeSpan.Zero ? lead : null,
             });
 
             audioInputs.Add(new AudioTrackInput
@@ -434,6 +532,7 @@ public static class EncodeJobBuilder
                 Language = source?.Language,
                 TrackName = source?.Title,
                 IsDefault = position == 0,
+                DelayMs = lead < TimeSpan.Zero ? (int)Math.Round(-lead.TotalMilliseconds) : 0,
             });
         }
 
@@ -442,18 +541,23 @@ public static class EncodeJobBuilder
         if (req.CopySubtitles && info?.SubtitleStreams is { Count: > 0 } allSubs)
         {
             // An empty selection means everything; otherwise keep only what was asked for.
-            var subs = req.SubtitleTracks.Count == 0
-                ? allSubs
-                : req.SubtitleTracks
-                    .Where(i => i >= 0 && i < allSubs.Count)
-                    .Select(i => allSubs[i])
-                    .ToList();
+            // Carry each stream's subtitle-relative index so the muxer maps exactly the chosen
+            // streams — collapsing them lost the selection and mapped every subtitle in the file.
+            var indices = req.SubtitleTracks.Count == 0
+                ? Enumerable.Range(0, allSubs.Count).ToList()
+                : req.SubtitleTracks.Where(i => i >= 0 && i < allSubs.Count).Distinct().ToList();
 
-            foreach (var sub in subs)
+            foreach (var i in indices)
             {
+                var sub = allSubs[i];
+                // Skip subtitles the target container genuinely can't carry (image-based subs
+                // into MP4/WebM can't convert to mov_text/webvtt; AVI/TS hold none). Dropping
+                // them here keeps the mux from failing; Warnings() tells the user.
+                if (!ContainerCarriesSubtitle(req.Container, sub.Codec)) continue;
                 subtitleInputs.Add(new SubtitleTrackInput
                 {
                     FilePath = req.InputFile,
+                    SourceStreamIndex = i,
                     Language = sub.Language,
                     TrackName = sub.Title,
                     IsDefault = sub.IsDefault,
@@ -488,6 +592,11 @@ public static class EncodeJobBuilder
             CopyChapters = req.CopyChapters,
             CopyAttachments = req.CopyAttachments,
             CopyGlobalMetadata = req.CopyMetadata,
+            // Experimental dynamic-HDR passthrough, only when opted in AND the source actually
+            // carries the metadata (so a normal encode never touches the tools).
+            PreserveDynamicHdr = req.PreserveDynamicHdr,
+            SourceHasDolbyVision = req.PreserveDynamicHdr && info?.Video?.HasDolbyVision == true,
+            SourceHasHdr10Plus = req.PreserveDynamicHdr && info?.Video?.HasHdr10Plus == true,
         };
 
         muxJob.FilesToCleanup.Add(tempVideoFile);
@@ -501,6 +610,78 @@ public static class EncodeJobBuilder
             AudioJobs = audioJobs,
             Mux = muxJob,
         };
+    }
+
+    /// <summary>
+    /// Build the video encoder settings for a request at a given quality. Shared by the
+    /// single-video branch, every chunk (which only varies <paramref name="quality"/> for
+    /// per-scene optimisation), and the snippet-preview path — so no branch can silently
+    /// diverge in chroma, bit depth, tune or the SVT-AV1 knobs.
+    /// </summary>
+    private static VideoEncoderSettings BuildVideoSettings(EncodeRequest req, double quality)
+    {
+        var s = CreateVideoSettings(req);
+        s.Mode = req.Mode;
+        s.Quality = quality;
+        s.Bitrate = req.Bitrate;
+        s.Preset = req.Preset;
+        s.Tune = req.Tune;
+        s.CustomArgs = req.VideoCustomArgs;
+        s.BitDepth = req.BitDepth;
+        s.Chroma = req.Chroma;
+        if (s is SvtAv1Settings svt) ApplySvtAv1(svt, req);
+        return s;
+    }
+
+    /// <summary>
+    /// Build a single, trimmed, video-only <see cref="VideoJob"/> that reproduces exactly what
+    /// the real encode would output for a span of the source — same encoder, settings, filter
+    /// chain, bit depth and AI/RIFE processors. Used by the snippet-preview so the preview
+    /// reflects ALL changes, not just the filter chain. Not part of the queue; the caller runs
+    /// it through <see cref="JobQueue.ResolveProcessor"/> to a scratch file.
+    /// </summary>
+    public static VideoJob BuildPreviewVideoJob(
+        EncodeRequest req, MediaFileInfo? info, TimeSpan start, TimeSpan duration, string outputFile)
+    {
+        var settings = BuildVideoSettings(req, req.Quality);
+        var frames = info?.Video is { Framerate: > 0 } v
+            ? Math.Max(1, (int)Math.Round(duration.TotalSeconds * v.Framerate))
+            : 0;
+        return new VideoJob
+        {
+            Name = $"Preview: {Path.GetFileName(req.InputFile)}",
+            InputFile = req.InputFile,
+            OutputFile = outputFile,
+            EncoderId = req.VideoEncoderId,
+            Settings = settings,
+            FilterScript = ComposeFilters(req),
+            FilterEngineId = req.FilterEngineId,
+            SourceBitDepth = info?.Video?.BitDepth ?? 8,
+            TrimStart = start,
+            // Frame-exact where we know the rate (chunk-style), else fall back to a duration.
+            TrimFrames = frames > 0 ? frames : null,
+            TrimDuration = frames > 0 ? null : duration,
+            TotalFrames = frames,
+            // Carry the whole-file AI/RIFE settings so the preview shows their effect too.
+            AiUpscaleModel = req.AiUpscaleModel,
+            AiUpscaleHeight = req.AiUpscaleHeight,
+            AiUpscaleAllowLong = req.AiUpscaleAllowLong,
+            RifeTargetFps = req.RifeTargetFps,
+        };
+    }
+
+    /// <summary>
+    /// Apply the SVT-AV1-specific request fields onto its settings, shared by the single-video
+    /// and chunk branches so the two can't diverge (all of these shape the encoded bytes and
+    /// feed the chunk-resume fingerprint).
+    /// </summary>
+    private static void ApplySvtAv1(SvtAv1Settings svt, EncodeRequest req)
+    {
+        if (req.SvtAv1Tune is { } tune) svt.SvtTune = tune;
+        svt.FilmGrain = req.SvtAv1FilmGrain;
+        svt.TileRows = req.SvtAv1TileRows;
+        svt.TileColumns = req.SvtAv1TileColumns;
+        svt.KeyframeInterval = req.SvtAv1KeyframeInterval;
     }
 
     /// <summary>
@@ -522,7 +703,7 @@ public static class EncodeJobBuilder
         return req.VideoEncoderId switch
         {
             "ffmpeg-x264" or "cli-x264" => new X264Settings(),
-            "ffmpeg-x265" or "cli-x265" => new X265Settings(),
+            "ffmpeg-x265" or "cli-x265" => new X265Settings { StreamWrap = req.X265StreamWrap },
             "ffmpeg-svtav1" => new SvtAv1Settings { SvtPreset = req.SvtAv1Preset },
             _ => new VideoEncoderSettings(),
         };
@@ -583,6 +764,33 @@ public static class EncodeJobBuilder
         s.SampleFormat = req.AudioSampleFormat;
         return s;
     }
+
+    /// <summary>
+    /// How far an audio stream's first packet precedes the first video frame. Positive: the
+    /// audio leads, and that lead is trimmed at encode time; negative: the audio starts late,
+    /// and it is delayed in the mux. Everything anchors to the first video frame because that
+    /// is where the video encode — and therefore the output — begins. Zero when nothing is
+    /// known (no probe, or a clean source whose streams start together).
+    /// </summary>
+    internal static TimeSpan AudioLead(MediaFileInfo? info, AudioStreamInfo? audio)
+        => info?.Video is null || audio is null ? TimeSpan.Zero : info.Video.StartTime - audio.StartTime;
+
+    /// <summary>
+    /// Whether a container can carry a subtitle of the given source codec. Matroska carries
+    /// anything; MP4/MOV/WebM carry text subs (transcoded to mov_text/webvtt) but not image-based
+    /// ones (PGS/DVD); AVI and MPEG-TS carry no text subtitles at all. Mirrors the muxer's own
+    /// per-container subtitle handling so the two never disagree.
+    /// </summary>
+    internal static bool ContainerCarriesSubtitle(ContainerFormat container, string codec) => container switch
+    {
+        ContainerFormat.Mkv => true,
+        ContainerFormat.Mp4 or ContainerFormat.Mov or ContainerFormat.Webm => !IsImageSubtitle(codec),
+        _ => false,
+    };
+
+    private static bool IsImageSubtitle(string codec) => codec is
+        "hdmv_pgs_subtitle" or "pgssub" or "dvd_subtitle" or "dvdsub" or
+        "dvb_subtitle" or "dvbsub" or "xsub";
 
     /// <summary>File extension that matches an audio encoder, for audio-only output.</summary>
     public static string AudioFileExtension(string? encoderId) => encoderId switch

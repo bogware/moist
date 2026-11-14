@@ -23,7 +23,7 @@ public sealed class CommandLine
         "audio-only", "no-subtitles", "no-chapters", "no-attachments", "no-metadata",
         "dry-run", "json", "overwrite", "y", "measure", "no-cache",
         "chunked", "no-resume", "no-verify", "per-scene", "per-scene-full",
-        "burn-subtitles",
+        "burn-subtitles", "ai-upscale-allow-long", "preserve-dynamic-hdr",
         "quiet", "q", "verbose", "v", "help", "h", "version", "no-progress", "keep-going",
         // watch / health / serve
         "recursive", "r", "new-only", "deep", "no-recursive", "no-auth",

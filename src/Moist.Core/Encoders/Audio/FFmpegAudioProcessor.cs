@@ -33,15 +33,22 @@ public partial class FFmpegAudioProcessor : CommandLineProcessor
         _stopwatch.Reset();
         var aj = (AudioJob)job;
         var s = aj.Settings;
-        var args = new List<string>
-        {
-            "-y", "-hide_banner", "-progress", "pipe:1",
+        var args = new List<string> { "-y", "-hide_banner", "-progress", "pipe:1" };
+
+        // A/V alignment: when the audio stream began before the first video frame, drop that
+        // lead so this track starts at the same instant the video encode does. Input-side -ss
+        // is sample-accurate for audio and costs nothing.
+        if (aj.TrimStart is { } trimStart && trimStart > TimeSpan.Zero)
+            args.AddRange(["-ss", trimStart.TotalSeconds.ToString("F3", System.Globalization.CultureInfo.InvariantCulture)]);
+
+        args.AddRange(
+        [
             "-i", Quote(aj.InputFile),
             "-vn",
             // Select specific audio stream
             "-map", $"0:a:{aj.AudioStreamIndex}",
-            "-c:a", GetFfmpegCodecName()
-        };
+            "-c:a", GetFfmpegCodecName(),
+        ]);
 
         // Passthrough mode: skip all encoding options
         if (_codec == "copy")
@@ -57,7 +64,10 @@ public partial class FFmpegAudioProcessor : CommandLineProcessor
             case AudioBitrateMode.ConstrainedVbr:
                 args.AddRange(["-b:a", $"{s.Bitrate}k"]);
                 break;
-            case AudioBitrateMode.Vbr when _codec != "flac":
+            // FLAC is lossless (bitrate ignored); MP3/Vorbis take the -q:a quality-scale
+            // path in VBR (see GetCodecSpecificArgs), where a co-emitted -b:a is silently
+            // dropped by libmp3lame/libvorbis — so don't send it and muddy the command.
+            case AudioBitrateMode.Vbr when _codec != "flac" && _codec != "mp3" && _codec != "vorbis":
                 args.AddRange(["-b:a", $"{s.Bitrate}k"]);
                 break;
         }
@@ -78,17 +88,23 @@ public partial class FFmpegAudioProcessor : CommandLineProcessor
         if (channelArg is not null)
             args.AddRange(["-ac", channelArg]);
 
-        // Sample format
+        // Sample format. FFmpeg has no "s24" sample format (-sample_fmts lists only
+        // u8/s16/s32/flt/dbl and their planar/s64 variants), so 24-bit audio is carried
+        // in the s32 container; passing "s24" aborts the encode with "Invalid sample format".
         var sampleFmtArg = s.SampleFormat switch
         {
             AudioSampleFormat.S16 => "s16",
-            AudioSampleFormat.S24 => "s24",
+            AudioSampleFormat.S24 => "s32",
             AudioSampleFormat.S32 => "s32",
             AudioSampleFormat.Float => "flt",
             _ => null
         };
         if (sampleFmtArg is not null)
             args.AddRange(["-sample_fmt", sampleFmtArg]);
+
+        // For true 24-bit FLAC (rather than 32-bit-padded), tell the encoder the real depth.
+        if (s.SampleFormat == AudioSampleFormat.S24 && _codec == "flac")
+            args.AddRange(["-bits_per_raw_sample", "24"]);
 
         // Normalization via audio filter chain
         var normFilter = BuildNormalizationFilter(s);
@@ -176,6 +192,15 @@ public partial class FFmpegAudioProcessor : CommandLineProcessor
         {
             case OpusSettings opus:
                 codecArgs.AddRange(["-compression_level", opus.Complexity.ToString()]);
+                // libopus defaults to VBR; without an explicit -vbr the Cbr/ConstrainedVbr
+                // requests are silently ignored. -vbr is libopus-specific, so it stays here
+                // rather than in the shared bitrate switch (aac/mp3/flac/... reject it).
+                codecArgs.AddRange(["-vbr", opus.BitrateMode switch
+                {
+                    AudioBitrateMode.Cbr => "off",
+                    AudioBitrateMode.ConstrainedVbr => "constrained",
+                    _ => "on"
+                }]);
                 break;
 
             case FlacSettings flac:

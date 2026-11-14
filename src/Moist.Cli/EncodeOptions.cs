@@ -75,6 +75,7 @@ public static class EncodeOptions
             Preset = cl.Enum<VideoPreset>("preset") ?? profile?.VideoPreset ?? VideoPreset.Medium,
             Tune = cl.Enum<VideoTune>("tune") ?? profile?.VideoTune ?? VideoTune.None,
             SvtAv1Preset = cl.Int("av1-preset") ?? profile?.SvtAv1Preset ?? 6,
+            X265StreamWrap = ParseX265Wrap(cl.String("x265-wrap")),
             VideoCustomArgs = cl.String("video-args") ?? profile?.VideoCustomArgs ?? string.Empty,
             BitDepth = cl.String("bit-depth") is { } bd ? ParseBitDepth(bd) : (profile?.BitDepth ?? VideoBitDepth.Auto),
 
@@ -88,6 +89,10 @@ public static class EncodeOptions
             RifeTargetFps = cl.Double("fps") is { } fps && string.Equals(cl.String("fps-mode"), "rife", StringComparison.OrdinalIgnoreCase) ? fps : 0,
             Chroma = ParseChroma(cl.String("chroma")),
             SvtAv1Tune = ParseSvtTune(cl.String("av1-tune")),
+            SvtAv1FilmGrain = cl.Int("av1-film-grain") ?? 0,
+            SvtAv1TileRows = cl.Int("av1-tile-rows") ?? 1,
+            SvtAv1TileColumns = cl.Int("av1-tile-columns") ?? 1,
+            SvtAv1KeyframeInterval = cl.Int("av1-keyint") ?? 240,
 
             AudioEncoderId = audioEncoder,
             AudioBitrateMode = cl.Enum<AudioBitrateMode>("audio-mode") ?? profile?.AudioBitrateMode ?? AudioBitrateMode.Vbr,
@@ -119,6 +124,7 @@ public static class EncodeOptions
             CopyChapters = !cl.Flag("no-chapters"),
             CopyAttachments = !cl.Flag("no-attachments"),
             CopyMetadata = !cl.Flag("no-metadata"),
+            PreserveDynamicHdr = cl.Flag("preserve-dynamic-hdr"),
 
             FilterScript = filterScript,
             FilterEngineId = filterEngineId,
@@ -321,6 +327,11 @@ public static class EncodeOptions
                 }
 
                 chain.Add(def, values);
+
+                // The GUI constrains values with its controls; text from a command line or the HTTP
+                // API reaches the filter script verbatim, so it is validated here.
+                if (chain.Filters[^1].Validate() is { Count: > 0 } problems)
+                    throw new UsageException($"filter '{id}': {string.Join("; ", problems)}");
             }
         }
 
@@ -335,8 +346,27 @@ public static class EncodeOptions
             else if (mode != "rife")
                 chain.Add(available.First(f => f.Id == "fps"), new() { ["fps"] = targetFps });
         }
+        else if (engineId != "ffmpeg" && cl.Double("fps") is { }
+                 && !string.Equals(cl.String("fps-mode"), "rife", StringComparison.OrdinalIgnoreCase))
+        {
+            // The fps/minterpolate filters only exist on the FFmpeg engine, and RIFE (a
+            // processor) is the only other route. Anything else silently drops --fps, so say so.
+            Console.Error.WriteLine(
+                $"warning: --fps is ignored with --filter-engine {engineId} unless --fps-mode rife is used; " +
+                "the requested frame rate was not applied.");
+        }
 
         if (chain.Filters.Count == 0) return (null, null);
+
+        // Only the FFmpeg and VapourSynth engines have a wired encode path (a -vf string and a
+        // vspipe|ffmpeg pipe respectively). AviSynth generates an .avs script that nothing consumes,
+        // so FFmpegVideoProcessor would hand it to '-vf' and fail deep inside FFmpeg — reject it up
+        // front, matching the GUI's guard (which likewise only fires once there are filters to run).
+        if (engineId is not ("ffmpeg" or "vapoursynth"))
+            throw new UsageException(
+                $"the '{engineId}' filter engine can't be encoded yet — avs2pipe piping isn't built. " +
+                "Use --filter-engine ffmpeg or vapoursynth, or drop the --filter options.");
+
         return (engine.GenerateScript(chain, inputFile), engine.Id);
     }
 
@@ -374,4 +404,13 @@ public static class EncodeOptions
 
         return Path.Combine(dir, Path.GetFileNameWithoutExtension(input) + suffix + ext);
     }
+
+    /// <summary>--x265-wrap no-bframes|mkvmerge|auto (standalone x265 only).</summary>
+    public static X265StreamWrap ParseX265Wrap(string? value) => value?.Trim().ToLowerInvariant() switch
+    {
+        null or "" or "no-bframes" or "nobframes" => X265StreamWrap.NoBFrames,
+        "mkvmerge" => X265StreamWrap.Mkvmerge,
+        "auto" => X265StreamWrap.Auto,
+        _ => throw new UsageException($"--x265-wrap must be no-bframes, mkvmerge or auto (got '{value}')"),
+    };
 }

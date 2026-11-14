@@ -42,6 +42,8 @@ public sealed class VideoPreviewService
         };
         psi.ArgumentList.Add("-y");
         psi.ArgumentList.Add("-hide_banner");
+        psi.ArgumentList.Add("-loglevel");
+        psi.ArgumentList.Add("error");
         psi.ArgumentList.Add("-ss");
         psi.ArgumentList.Add(posStr);
         psi.ArgumentList.Add("-i");
@@ -55,7 +57,22 @@ public sealed class VideoPreviewService
         using var process = Process.Start(psi);
         if (process is null) return null;
 
-        await process.WaitForExitAsync(ct);
+        // Drain both pipes concurrently and kill the child on cancellation. FFmpeg dumps
+        // its input probe to stderr; on a rich source (many audio/subtitle/attachment
+        // streams) that exceeds the OS pipe buffer, and if nothing reads it ffmpeg blocks
+        // on the write and WaitForExitAsync never returns.
+        var stdoutTask = process.StandardOutput.ReadToEndAsync(ct);
+        var stderrTask = process.StandardError.ReadToEndAsync(ct);
+        try
+        {
+            await process.WaitForExitAsync(ct);
+        }
+        catch (OperationCanceledException)
+        {
+            try { if (!process.HasExited) process.Kill(entireProcessTree: true); } catch { }
+            throw;
+        }
+        await Task.WhenAll(stdoutTask, stderrTask);
 
         return process.ExitCode == 0 && File.Exists(outputPath) ? outputPath : null;
     }
@@ -111,6 +128,8 @@ public sealed class VideoPreviewService
         };
         psi.ArgumentList.Add("-y");
         psi.ArgumentList.Add("-hide_banner");
+        psi.ArgumentList.Add("-loglevel");
+        psi.ArgumentList.Add("error");
         psi.ArgumentList.Add("-ss");
         psi.ArgumentList.Add(posStr);
         psi.ArgumentList.Add("-i");
@@ -124,7 +143,20 @@ public sealed class VideoPreviewService
         using var process = Process.Start(psi);
         if (process is null) return null;
 
-        await process.WaitForExitAsync(ct);
+        // Drain both pipes concurrently and kill the child on cancellation — see
+        // ExtractFrameAsync: an undrained stderr dump deadlocks WaitForExitAsync.
+        var stdoutTask = process.StandardOutput.ReadToEndAsync(ct);
+        var stderrTask = process.StandardError.ReadToEndAsync(ct);
+        try
+        {
+            await process.WaitForExitAsync(ct);
+        }
+        catch (OperationCanceledException)
+        {
+            try { if (!process.HasExited) process.Kill(entireProcessTree: true); } catch { }
+            throw;
+        }
+        await Task.WhenAll(stdoutTask, stderrTask);
 
         return process.ExitCode == 0 && File.Exists(outputPath) ? outputPath : null;
     }

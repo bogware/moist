@@ -27,18 +27,35 @@ public static class ServeCommand
     {
         var host = cl.String("host") ?? "127.0.0.1";
         var port = cl.Int("port") ?? 7788;
-        var token = cl.String("token");
+        // MOIST_TOKEN is read here rather than passed on the command line by wrappers (the Docker
+        // entrypoint used to), because argv is visible to every user on the host via ps / /proc.
+        var token = cl.String("token")
+                    ?? (Environment.GetEnvironmentVariable("MOIST_TOKEN") is { Length: > 0 } envToken ? envToken : null);
         var open = cl.Flag("no-auth");
+        var roots = cl.Many("root").Select(r => Path.GetFullPath(r)).ToList();
+        foreach (var r in roots)
+            if (!Directory.Exists(r))
+                throw new UsageException($"--root {r}: no such directory");
 
         if (open && token is not null)
             throw new UsageException("--token and --no-auth contradict each other");
 
-        var loopback = host is "127.0.0.1" or "localhost" or "::1";
+        // IPAddress.IsLoopback covers all of 127.0.0.0/8 and ::1, so 127.0.0.2 counts as
+        // loopback too — the old exact-string test misclassified it as public.
+        var loopback = IPAddress.TryParse(host, out var ip) ? IPAddress.IsLoopback(ip)
+                       : host is "localhost";
 
         if (open && !loopback)
             throw new UsageException(
                 $"--no-auth is only allowed on loopback. Serving {host} unauthenticated would let " +
                 "anyone who can reach this machine read and write files as the user running it.");
+
+        // An encode names its own input and output paths. On loopback that is the local user's own
+        // reach; on a network it is a stranger's, so the folders they may touch must be named.
+        if (!loopback && roots.Count == 0)
+            throw new UsageException(
+                $"serving {host} needs at least one --root <dir>: the folders remote encodes may read and write. " +
+                "Without it any token holder could read or overwrite any file this user can.");
 
         if (!open && token is null)
         {
@@ -46,14 +63,34 @@ public static class ServeCommand
             // with something they must copy — unlike a default that everyone shares.
             token = Convert.ToHexString(RandomNumberGenerator.GetBytes(16)).ToLowerInvariant();
             Console.WriteLine($"Generated access token: {token}");
-            Console.WriteLine("Pass it as 'Authorization: Bearer <token>' or ?token=<token>.\n");
+            Console.WriteLine("Pass it as 'Authorization: Bearer <token>'.\n");
         }
 
         using var services = Cli.CreateServices(cl);
-        var api = new MoistHttpApi(services, token);
+
+        // `moist serve` is long-lived: without a cap, JobQueue would retain every job it ever ran —
+        // and each job's rolling output-log buffer — for the life of the daemon. Bound it so memory
+        // stays flat over days of encodes. (Per-job progress entries are evicted separately in
+        // MoistHttpApi.TrackProgress when a job settles.)
+        services.JobQueue.MaxCompletedJobsRetained = 200;
+
+        // When bound to loopback, only these Host authorities are ours; anything else is a
+        // page that resolved another hostname to a loopback address (DNS rebinding).
+        var loopbackHosts = loopback
+            ? new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+              {
+                  $"127.0.0.1:{port}", $"localhost:{port}", $"[::1]:{port}", $"{host}:{port}",
+              }
+            : null;
+
+        var api = new MoistHttpApi(services, token, loopbackHosts, new ServePolicy(roots));
 
         using var listener = new HttpListener();
-        listener.Prefixes.Add($"http://{(loopback ? host : "+")}:{port}/");
+        // Reserve the wildcard only for an explicit all-interfaces request; a specific host —
+        // loopback or a single NIC — binds only that address rather than silently listening on
+        // every interface, which is what `+` did for any non-loopback host.
+        var bindHost = host is "0.0.0.0" or "*" or "+" or "::" ? "+" : host;
+        listener.Prefixes.Add($"http://{bindHost}:{port}/");
 
         try
         {
@@ -66,13 +103,16 @@ public static class ServeCommand
             throw new UsageException(
                 $"could not listen on {host}:{port} — {ex.Message}." +
                 (loopback ? "" : $"\nOn Windows, binding a non-loopback address needs: " +
-                                 $"netsh http add urlacl url=http://+:{port}/ user=\"%USERNAME%\""));
+                                 $"netsh http add urlacl url=http://{bindHost}:{port}/ user=\"%USERNAME%\""));
         }
 
         Cli.WarnUnknown(cl);
 
         Console.WriteLine($"moist serving on http://{host}:{port}/");
         Console.WriteLine(open ? "Authentication disabled (loopback only)." : "Authentication required.");
+        Console.WriteLine(roots.Count > 0
+            ? $"Requests confined to: {string.Join(", ", roots)}"
+            : "Requests are not confined to a folder (loopback only). Use --root to restrict them.");
         Console.WriteLine("Press Ctrl+C to stop.\n");
 
         // Stopping the listener is what unblocks GetContextAsync.
@@ -110,8 +150,16 @@ public static class ServeCommand
 }
 
 /// <summary>Routes and serves the API.</summary>
-public sealed class MoistHttpApi(AppServices services, string? token)
+/// <param name="loopbackHosts">
+/// When the listener is bound to loopback, the set of acceptable <c>Host</c> authorities
+/// (e.g. <c>127.0.0.1:7788</c>). A request whose Host is not one of them is a DNS-rebinding
+/// attempt and is refused. <c>null</c> disables the check (a deliberately exposed bind).
+/// </param>
+public sealed class MoistHttpApi(AppServices services, string? token, IReadOnlyCollection<string>? loopbackHosts = null,
+                                 ServePolicy? policy = null)
 {
+    /// <summary>What remote callers may ask for; unrestricted paths unless roots were given.</summary>
+    private readonly ServePolicy _policy = policy ?? new ServePolicy(null);
     private static readonly JsonSerializerOptions Json = new() { WriteIndented = true };
 
     private Task? _queueRun;
@@ -131,6 +179,15 @@ public sealed class MoistHttpApi(AppServices services, string? token)
         {
             if (_subscribed) return;
             services.JobQueue.JobProgressUpdated += (_, e) => _progress[e.Job.Id] = e.Progress.Percentage;
+            // Evict a job's progress once it settles, so a long-lived daemon doesn't retain an
+            // entry per job forever. Describe() reports 100 for a Completed job unconditionally,
+            // so this only changes the last-seen percent of a Failed/Cancelled job (then 0) —
+            // cosmetic.
+            services.JobQueue.JobStatusChanged += (_, job) =>
+            {
+                if (job.Status is JobStatus.Completed or JobStatus.Failed or JobStatus.Cancelled)
+                    _progress.TryRemove(job.Id, out double _);
+            };
             _subscribed = true;
         }
     }
@@ -142,6 +199,15 @@ public sealed class MoistHttpApi(AppServices services, string? token)
 
         try
         {
+            // DNS-rebinding guard (loopback binds only): a request whose Host authority is not
+            // one of ours came from a page that resolved some other hostname to a loopback
+            // address, hoping to borrow our trusted-local-caller status. Refuse it.
+            if (loopbackHosts is not null && !loopbackHosts.Contains(request.UserHostName ?? ""))
+            {
+                await WriteAsync(context, 421, new { error = "misdirected request" });
+                return;
+            }
+
             if (!Authorized(request))
             {
                 await WriteAsync(context, 401, new { error = "unauthorized" });
@@ -174,10 +240,12 @@ public sealed class MoistHttpApi(AppServices services, string? token)
     {
         if (token is null) return true;
 
+        // Header only: a token in the query string leaks into proxy logs, browser history
+        // and Referer headers — the same credential that gates the filesystem trust boundary.
         var header = request.Headers["Authorization"];
         var presented = header?.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase) == true
             ? header["Bearer ".Length..].Trim()
-            : request.QueryString["token"];
+            : null;
 
         if (presented is null) return false;
 
@@ -225,13 +293,19 @@ public sealed class MoistHttpApi(AppServices services, string? token)
             return true;
         }
 
-        if (!File.Exists(path))
+        if (_policy.Resolve(path, "path", out var refused) is not { } probePath)
         {
-            await WriteAsync(context, 404, new { error = $"not found: {path}" });
+            await WriteAsync(context, 403, new { error = refused });
             return true;
         }
 
-        var info = await services.MediaAnalyzer.AnalyzeAsync(path, ct);
+        if (!File.Exists(probePath))
+        {
+            await WriteAsync(context, 404, new { error = $"not found: {probePath}" });
+            return true;
+        }
+
+        var info = await services.MediaAnalyzer.AnalyzeAsync(probePath, ct);
         await WriteAsync(context, 200, new
         {
             file = info.FilePath,
@@ -279,6 +353,8 @@ public sealed class MoistHttpApi(AppServices services, string? token)
         error = job.ErrorMessage,
     };
 
+    private const long MaxBodyBytes = 1 << 20; // 1 MiB; encode requests are tiny JSON.
+
     /// <summary>
     /// Queue an encode. The body names the input and output, plus any option
     /// <c>moist encode</c> accepts:
@@ -289,11 +365,43 @@ public sealed class MoistHttpApi(AppServices services, string? token)
     /// Those options are turned back into a command line and parsed by the same code the
     /// CLI uses, so there is one definition of what an option means rather than two that
     /// drift.
+    ///
+    /// Clients must send <c>Content-Type: application/json</c>: requiring a non-simple content
+    /// type forces a CORS preflight, so a cross-site page cannot reach this file-touching
+    /// endpoint with a "simple" request the same-origin policy would otherwise let through.
     /// </summary>
     private async Task<bool> EncodeAsync(HttpListenerContext context, CancellationToken ct)
     {
-        using var reader = new StreamReader(context.Request.InputStream, Encoding.UTF8);
-        var body = await reader.ReadToEndAsync(ct);
+        if (!IsJsonContentType(context.Request.ContentType))
+        {
+            await WriteAsync(context, 415, new { error = "Content-Type must be application/json" });
+            return true;
+        }
+
+        if (context.Request.ContentLength64 > MaxBodyBytes)
+        {
+            await WriteAsync(context, 413, new { error = $"request body too large (max {MaxBodyBytes} bytes)" });
+            return true;
+        }
+
+        // Bounded read: abort past the cap rather than buffering an arbitrarily large (or
+        // chunked, unknown-length) body into a managed string and OOM-crashing the daemon.
+        string body;
+        using (var ms = new MemoryStream())
+        {
+            var buffer = new byte[8192];
+            int read;
+            while ((read = await context.Request.InputStream.ReadAsync(buffer, ct)) > 0)
+            {
+                if (ms.Length + read > MaxBodyBytes)
+                {
+                    await WriteAsync(context, 413, new { error = $"request body too large (max {MaxBodyBytes} bytes)" });
+                    return true;
+                }
+                ms.Write(buffer, 0, read);
+            }
+            body = Encoding.UTF8.GetString(ms.GetBuffer(), 0, (int)ms.Length);
+        }
 
         EncodeApiRequest? payload;
         try
@@ -313,7 +421,17 @@ public sealed class MoistHttpApi(AppServices services, string? token)
             return true;
         }
 
-        var input = Path.GetFullPath(payload.Input);
+        if (ServePolicy.CheckOptions(payload.Options) is { } optionError)
+        {
+            await WriteAsync(context, 400, new { error = optionError });
+            return true;
+        }
+
+        if (_policy.Resolve(payload.Input, "input", out var inputError) is not { } input)
+        {
+            await WriteAsync(context, 403, new { error = inputError });
+            return true;
+        }
         if (!File.Exists(input))
         {
             await WriteAsync(context, 404, new { error = $"input not found: {input}" });
@@ -332,8 +450,24 @@ public sealed class MoistHttpApi(AppServices services, string? token)
         }
 
         var output = payload.Output is { } requested
-            ? Path.GetFullPath(requested)
+            ? requested
             : EncodeOptions.DefaultOutputPath(cl, services, input, null, "_encoded");
+        if (_policy.Resolve(output, "output", out var outputError) is not { } confinedOutput)
+        {
+            await WriteAsync(context, 403, new { error = outputError });
+            return true;
+        }
+        output = confinedOutput;
+
+        // An external subtitle file is read into the encode, so it is a path like any other.
+        if (cl.String("subtitle") is { } subtitle)
+        {
+            if (_policy.Resolve(subtitle, "subtitle", out var subtitleError) is null)
+            {
+                await WriteAsync(context, 403, new { error = subtitleError });
+                return true;
+            }
+        }
 
         try
         {
@@ -449,6 +583,16 @@ public sealed class MoistHttpApi(AppServices services, string? token)
             },
         });
         return true;
+    }
+
+    /// <summary>True when the Content-Type's media type is exactly <c>application/json</c>,
+    /// ignoring any <c>; charset=…</c> parameter.</summary>
+    private static bool IsJsonContentType(string? contentType)
+    {
+        if (string.IsNullOrEmpty(contentType)) return false;
+        var semicolon = contentType.IndexOf(';');
+        var media = (semicolon >= 0 ? contentType[..semicolon] : contentType).Trim();
+        return media.Equals("application/json", StringComparison.OrdinalIgnoreCase);
     }
 
     private static async Task WriteAsync(HttpListenerContext context, int status, object body)

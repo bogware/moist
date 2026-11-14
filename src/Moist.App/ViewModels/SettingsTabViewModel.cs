@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Diagnostics;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Moist.Services;
@@ -66,6 +67,26 @@ public partial class SettingsTabViewModel : ViewModelBase
         _ = ScanToolsAsync();
     }
 
+    /// <summary>
+    /// Open the folder holding the session logs and any crash_*.log files — the first thing to
+    /// grab when reporting a problem, now that everything the app logs actually lands there.
+    /// </summary>
+    [RelayCommand]
+    private void OpenLogFolder()
+    {
+        var dir = Path.GetDirectoryName(_services.LogFilePath);
+        if (string.IsNullOrEmpty(dir)) dir = Core.Diagnostics.CrashLog.LogDirectory;
+        try
+        {
+            Directory.CreateDirectory(dir);
+            Process.Start(new ProcessStartInfo { FileName = dir, UseShellExecute = true });
+        }
+        catch (Exception ex)
+        {
+            ToolScanStatus = $"Couldn't open the log folder: {ex.Message}";
+        }
+    }
+
     [RelayCommand]
     private async Task ScanToolsAsync()
     {
@@ -109,6 +130,12 @@ public partial class SettingsTabViewModel : ViewModelBase
             IsScanning = false;
         }
     }
+
+    /// <summary>
+    /// Re-runs the tool scan so the prerequisites panel refreshes after a tool is installed or its
+    /// path is set manually. Rebuilds <see cref="ToolStatuses"/> and the required-tools summary.
+    /// </summary>
+    internal Task RescanAsync() => ScanToolsAsync();
 
     private void RefreshPathsFromSettings()
     {
@@ -225,6 +252,15 @@ public partial class ToolStatusViewModel : ViewModelBase
 
     public string Name => _status.Tool.Name;
 
+    /// <summary>True when the tool is missing, so the "Browse…" button (manual locate) is offered.</summary>
+    public bool IsNotAvailable => !_status.IsAvailable;
+
+    /// <summary>
+    /// True when the tool is missing and has a <see cref="ToolDefinition.HelpUrl"/> but no in-app
+    /// auto-download — the panel then shows a "Get" button that opens the download page in a browser.
+    /// </summary>
+    public bool CanOpenPage => !_status.IsAvailable && !string.IsNullOrWhiteSpace(_status.Tool.HelpUrl);
+
     public ToolStatusViewModel(ToolStatus status, AppServices services, SettingsTabViewModel parent)
     {
         _status = status;
@@ -267,21 +303,14 @@ public partial class ToolStatusViewModel : ViewModelBase
                 StatusIcon = "OK";
                 StatusText = $"Installed at {installedPath}";
 
-                // Update the settings path
-                switch (_status.Tool.Id)
-                {
-                    case "ffmpeg": _services.Settings.FFmpegPath = installedPath; break;
-                    case "ffprobe": _services.Settings.FFprobePath = installedPath; break;
-                    case "mkvmerge": _services.Settings.MkvMergePath = installedPath; break;
-                    case "x264": _services.Settings.X264Path = installedPath; break;
-                    case "x265": _services.Settings.X265Path = installedPath; break;
-                    case "vspipe": _services.Settings.VapourSynthPath = installedPath; break;
-                    case "mp4box": _services.Settings.Mp4BoxPath = installedPath; break;
-                    case "realesrgan": _services.Settings.RealEsrganPath = installedPath; break;
-                    case "rife": _services.Settings.RifePath = installedPath; break;
-                }
+                // Persist the freshly-installed binary's path and update the editable Tool Paths boxes.
+                ApplyPathToSettings(installedPath);
                 _services.Save();
                 _parent.SetToolPath(_status.Tool.Id, installedPath);
+
+                // Re-scan so the whole panel (this row's status and the required-tools summary)
+                // refreshes seamlessly without the user pressing Scan Tools.
+                await _parent.RescanAsync();
             }
             else
             {
@@ -298,6 +327,57 @@ public partial class ToolStatusViewModel : ViewModelBase
         finally
         {
             IsInstalling = false;
+        }
+    }
+
+    /// <summary>
+    /// Opens the tool's <see cref="ToolDefinition.HelpUrl"/> (its official download / info page) in
+    /// the user's default browser. Best-effort: launching the browser can fail and is not critical.
+    /// </summary>
+    [RelayCommand]
+    private void OpenPage()
+    {
+        var url = _status.Tool.HelpUrl;
+        if (string.IsNullOrWhiteSpace(url)) return;
+        try
+        {
+            Process.Start(new ProcessStartInfo { FileName = url, UseShellExecute = true });
+        }
+        catch { /* Opening the browser is best-effort */ }
+    }
+
+    /// <summary>
+    /// Sets this tool's path to a user-picked file (via the row's "Browse…" button), persists it,
+    /// and triggers a re-scan so the panel reflects the newly-located binary immediately.
+    /// </summary>
+    public async Task SetManualPathAsync(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path)) return;
+        ApplyPathToSettings(path);
+        _parent.SetToolPath(_status.Tool.Id, path);
+        _services.Save();
+        await _parent.RescanAsync();
+    }
+
+    /// <summary>
+    /// Maps a resolved binary path onto the matching settings field for this tool. Shared by
+    /// auto-install and manual "Browse…" so both persist to the same place.
+    /// </summary>
+    private void ApplyPathToSettings(string path)
+    {
+        switch (_status.Tool.Id)
+        {
+            case "ffmpeg": _services.Settings.FFmpegPath = path; break;
+            case "ffprobe": _services.Settings.FFprobePath = path; break;
+            case "mkvmerge": _services.Settings.MkvMergePath = path; break;
+            case "x264": _services.Settings.X264Path = path; break;
+            case "x265": _services.Settings.X265Path = path; break;
+            case "vspipe": _services.Settings.VapourSynthPath = path; break;
+            case "mp4box": _services.Settings.Mp4BoxPath = path; break;
+            case "realesrgan": _services.Settings.RealEsrganPath = path; break;
+            case "rife": _services.Settings.RifePath = path; break;
+            case "dovi_tool": _services.Settings.DoviToolPath = path; break;
+            case "hdr10plus_tool": _services.Settings.Hdr10PlusToolPath = path; break;
         }
     }
 }

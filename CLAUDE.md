@@ -127,6 +127,21 @@ not a global stream number, which would shift depending on whether video is pres
 Audio-only output uses the first selected track — a single file can't hold several
 encoded tracks without a mux step.
 
+### Streams that don't start together: anchor to the first video frame
+
+A broadcast capture or a stream-copied cut starts its video and audio at *different*
+timestamps — the recording begins mid-GOP, so the first decodable video frame is typically
+~1 s after the first audio packet (MeTV `.ts` captures measured 0.6–1.2 s). Because video and
+audio are encoded in separate jobs, each temp file starts at its own first packet, and a naive
+mux plays the picture ahead of the sound by the whole stagger. `FFprobeMediaAnalyzer` reads
+every stream's `start_time`, and `EncodeJobBuilder` anchors each audio track to the first
+video frame: a lead is trimmed at encode time (`AudioJob.TrimStart` → input-side `-ss`), a lag
+is delayed in the mux (`AudioTrackInput.DelayMs` → `-itsoffset`). The synthesized fixtures
+start all streams together, which is why this went unnoticed; `AvSyncTests` now uses a
+staggered fixture. Known gap: subtitles muxed straight from the source file stay on the
+source's timeline (a negative `-itsoffset` on one mux input risks `avoid_negative_ts` shifting
+the whole output), so on a staggered source they can run early by the stagger.
+
 ### Codec ↔ container compatibility
 
 `ContainerCompatibility` (in `Moist.Core/Muxers`) holds the allow-lists for what each container can carry under `-c copy`, plus the bitstream filter some containers need. Both front-ends call `EncodeJobBuilder.Validate()` **before** enqueuing, because otherwise the video and audio encodes run to completion and only the final mux fails.
@@ -275,6 +290,23 @@ Only NVENC is verified on real hardware here (RTX 4080). QSV, AMF, VideoToolbox 
 VA-API are implemented from their documented interfaces and correctly *detected* as
 absent, but their encode paths are unproven.
 
+### Hung tools are killed, not waited on
+
+Every external tool runs under `ProcessWatchdog` (`Moist.Core/Jobs/`): if neither pipe
+produces a line for `StallTimeout` (15 min by default) the process tree is killed and the job
+fails with a `TimeoutException` that says so. `CommandLineProcessor` applies it to every
+encoder, muxer and probe; `RealEsrganVideoProcessor` and `RifeVideoProcessor` call it directly
+for each of their steps because they don't inherit from `CommandLineProcessor`. The budget is
+deliberately generous — a false positive kills real work — and a processor can override
+`StallTimeout` if its tool is legitimately quiet for long stretches.
+
+The watchdog only works because **every tool moist runs emits a heartbeat**: ffmpeg via
+`-progress pipe:1` (or its stats line), x264/x265 via their status line, Real-ESRGAN and RIFE
+via per-frame percentages. If you add a tool invocation, make sure it reports continuously —
+or that you pass `-progress`/`-stats` — otherwise the watchdog will kill it mid-work. The
+Real-ESRGAN frame *extraction* is the cautionary example: it ran ffmpeg with no progress
+output for minutes at a time, which looked identical to a hang.
+
 ### Two-pass encoding mutates the job
 
 `TwoPassProcessor` runs the inner processor twice against the *same* `VideoJob`, temporarily overwriting `OutputFile` (to `NUL`/`/dev/null` for pass 1) and `Settings.CustomArgs` (appending `-pass N -passlogfile …`, or `--pass N --stats …` for `cli-` encoders). A `finally` block restores `OutputFile`, `Name`, `CustomArgs`, and `PixelFormat`. Any new mutable field touched during a pass must be added to both the snapshot and the restore.
@@ -290,6 +322,17 @@ Things that path gets wrong if you touch it carelessly:
 - **`cmd.exe` strips the first and last quote after `/c`.** A pipeline begins with a quoted tool path, so it needs an *extra* enclosing pair — `/s /c "…"` — or the command arrives mangled and fails with no usable error. Use `ShellPipeline.Apply`, which also uses `ArgumentList` on Unix so the command is never re-parsed.
 - **Trims are not optional.** Chunked encoding, target-quality search and per-scene optimisation encode *pieces* of the source via `TrimStart`/`TrimFrames`/`TrimDuration`. An encoder ignoring them encodes the whole file for every chunk and every probe, silently.
 - **Both encoders default to 8-bit output** regardless of what the pipe carries, so `--output-depth` has to be sent explicitly for 10/12-bit. It's only sent when it differs from 8, since single-depth builds reject the option outright.
+- **FFmpeg before 7 adds one trailing frame** when converting to the constant rate a y4m pipe
+  requires (Debian 12's 5.1, Ubuntu 24.04's 6.1). Don't "fix" it with `-fps_mode passthrough` — CFR conversion
+  is what keeps a VFR source in sync once the untimed x265 stream is wrapped at the nominal rate. Chunks and
+  trims are capped by `-frames:v`, so only a whole-file encode on an old FFmpeg sees the extra 42 ms.
+- **B-frames vs the wrap.** FFmpeg can only number a raw HEVC stream's packets in *decode*
+  order; with B-frames that gives presentation timestamps 0, .042, .167, .125… (right frames, wrong
+  times — invisible to frame-count and duration checks, caught with a flat-luma-per-frame source).
+  `X265StreamWrap`: `NoBFrames` (default, `--bframes 0`, FFmpeg wrap), `Mkvmerge` (keeps B-frames,
+  mkvmerge reads picture order), `Auto`. The decision is cached per job so both two-pass passes agree.
+  The FFmpeg wrap is **verified** (duration = packets ÷ rate) and retried with a millisecond `setts`
+  expression, because FFmpeg < 7 hands Matroska the filter's output in ms regardless of its time base.
 - **x265 has no muxer** — it writes a raw HEVC elementary stream with no timing at all, so `OnAfterSuccessAsync` wraps it while the source frame rate is still known. On FFmpeg 8 the raw demuxer emits packets with no timestamps and Matroska refuses them, so they're synthesised with `-bsf:v setts=ts=N*den/num/TB`. Don't "simplify" this to an MP4 remux: that exits 0 while dropping frames.
 - **`BuildArguments` is what actually runs**, composed into the pipeline by `OnBeforeStart`. Don't build a second copy of the arguments there — that's how the x264-specific settings got silently dropped for a year.
 
@@ -349,6 +392,18 @@ Things that path gets right on purpose:
   upscaled frames never all land at once and it handles full films, not just clips. The work dir is
   keyed on source+settings (`WorkKey`) and only cleaned on success, so an interrupted run **resumes**
   by reusing finished segments.
+- **The encode rate is measured, not assumed.** The pre-clean runs *before* the frames hit
+  disk, and a cadence filter in it (`ivtc`, `fps`, `decimate`) changes the rate those frames must
+  be encoded at. `MeasureOutputRateAsync` runs a dozen frames through the same chain with
+  `settb=AVTB,showinfo` appended and snaps the median frame period to an exact rational
+  (`ResolveOutputFrameRate`), so an ivtc'd 59.94 capture encodes at `24000/1001` rather than the
+  source's `60000/1001` — which played the picture at 2.5× against the audio. Don't replace this
+  with ffmpeg's `-progress` counters: `frame=` and `out_time=` lag each other under threaded PNG
+  encoding and the slope between them was off by 9%. **FFmpeg before 7 retimes differently:** its `decimate` leaves the
+  survivors on the 30i grid (33/33/33/67 ms), so `MeasureFromShowinfo` flags uneven spacing and the
+  resolver snaps the span average to a simple multiple of the source rate instead of the median. Trims (`TrimStart`/`TrimFrames`/
+  `TrimDuration`) are applied to extraction and are part of `WorkKey`, so a snippet preview
+  neither upscales the whole film nor leaves a scratch the full encode would "resume" from.
 - **It's a tool, so it's optional.** `realesrgan-ncnn-vulkan` is in `ToolDiscovery.KnownTools`
   (auto-downloadable), and the processor refuses with a pointer to Settings when it's absent.
 
@@ -359,7 +414,16 @@ filters (`fps` / `minterpolate`) added to the `-vf` in `EncodeOptions.BuildFilte
 
 ### Profiles: built-ins are materialized to disk
 
-`ProfileManager` writes each of the 7 `GetBuiltInProfiles()` entries to `profiles/*.json` on first run if the file is absent. Editing `GetBuiltInProfiles()` therefore has **no effect on an existing install** — the on-disk copy wins. Delete the JSON to pick up changes.
+`ProfileManager` writes each of the 16 `GetBuiltInProfiles()` entries to `profiles/*.json` on first run if the file is absent. Editing `GetBuiltInProfiles()` therefore has **no effect on an existing install** — the on-disk copy wins. Delete the JSON to pick up changes.
+
+### Tool downloads are pinned and hash-verified
+
+Every `ToolDiscovery.KnownTools` entry with `DownloadUrls` also has `ExpectedSha256`; a mismatch
+aborts the install and deletes the file. Pin **immutable** URLs only. BtbN deletes its *daily*
+FFmpeg autobuilds after a few weeks (the old Linux pin 404'd) but keeps each month's last build, so
+pin a month-end tag's release-branch asset. MKVToolNix's Windows portable is LZMA 7z, which Windows'
+`tar.exe` can't read; `SevenZipExtractor` (SharpCompress) unpacks it with an explicit
+outside-the-folder check on every entry.
 
 ### Settings must never fail loudly
 
@@ -415,7 +479,15 @@ loopback by default; `--no-auth` is allowed only on loopback, and any non-loopba
 requires a token, because an encode names its own input and output paths — that is a
 filesystem trust boundary. `POST /api/encode` takes a JSON body, converts it **back into
 CLI arguments** and runs them through the same `EncodeOptions` parser the CLI uses, so the
-option set cannot drift from the command line. Progress is mirrored into a dictionary from
+option set cannot drift from the command line — but **only allow-listed options are accepted**
+(`ServePolicy.AllowedOptions`, in `Moist.Cli/ServePolicy.cs`). Several CLI options are code
+execution in a stranger's hands: `--ffmpeg`/`--ffprobe` name the binary to run, `--video-args`/
+`--audio-args` reach a `cmd`/`sh` pipeline, `--temp-dir`/`--output-dir`/`--suffix` place files,
+`--filter-engine vapoursynth` runs generated Python. A new CLI option is refused over the API until
+someone adds it to the list on purpose. Paths (input, output, `--subtitle`, `/api/probe`) go through
+`ServePolicy.Resolve`: under a `--root` when roots are set (mandatory for a non-loopback bind) and
+never inside `MoistPaths.ConfigRoot`. The token can come from `MOIST_TOKEN` so wrappers never put it
+on argv. Progress is mirrored into a dictionary from
 `JobQueue.JobProgressUpdated` because a `Job` carries no progress of its own. The Docker
 image is purpose-built to run this command (see CI/CD).
 
@@ -436,18 +508,61 @@ and escapes the drive colon. Same class of problem as libvmaf's `log_path`, solv
 differently there (working directory) because that one is a bare filename.
 
 Burn-in and chunked encoding are **mutually exclusive**, and `Warnings()` says so: each
-chunk seeks independently, so subtitle timings would drift after the first chunk.
+chunk seeks independently, so subtitle timings would drift after the first chunk. So are
+the cadence filters (`ivtc`, `mpdecimate`): they change the frame count, which the chunk
+frame-count verification would then reject.
 
-### Known gap: HDR10+ / Dolby Vision passthrough
+### Telecined film: `ivtc`, not `mpdecimate`
 
-Dynamic HDR metadata is **detected and warned about, but not preserved**. Extracting the
-RPU with `dovi_tool` / `hdr10plus_tool`, encoding, then re-injecting is not implemented:
-neither tool is installed on the development machine, so the code could be written but
-never run, and untested binary-metadata surgery is worse than none. Both tools are in
-`ToolDiscovery.KnownTools` so their absence is reported.
+`ivtc` exists because a pixel-difference decimator cannot follow a 3:2 film cadence. On
+bob-deinterlaced 60p broadcast captures (MeTV-style 1280×720p59.94 MPEG-2 of 24 fps film),
+`mpdecimate` landed anywhere between 26 and 42 fps depending on the episode's grain and
+chroma noise, and pushing the thresholds started deleting real frames before it reached the
+duplicates. Weaving each pair of 60p frames back into one 30i frame
+(`tinterlace=mode=interleave_top`, or `interleave_bottom` for BFF) and running
+`fieldmatch,decimate` reunites the real fields — `idet` reads the woven stream as pure
+TFF — and lands on 23.98 fps on every episode tried, with nothing interpolated. Prefer
+`ivtc` for telecined film; keep `mpdecimate` for genuinely duplicated frames.
 
-If you pick this up, you'll need the tools and real Dolby Vision content — do not ship
-it on the strength of it compiling.
+**Dropouts collapse under `decimate`.** Over-the-air captures have reception gaps: one
+Gunsmoke episode had 16 video pts jumps totalling 2.2 s, with matching audio gaps. `decimate`
+rewrites timestamps assuming a constant input rate, so the gaps vanished from the video while
+the separately encoded audio kept them — the picture led the sound by 1.8 s at minute 55. The
+`ivtc` chain therefore starts with `fps=source_fps`, which duplicates frames across a gap so
+the timeline survives: a dropout becomes a short freeze over silent audio, in sync. The 75 s
+test clips had no dropouts, which is why only a full-length capture caught it — verify sync by
+matching a late-episode output frame back to its source frame (PSNR peak over a ±10 s window),
+not by comparing durations: decimate's fixed 4:5 ratio keeps the total length plausible.
+
+**Not `tinterlace=mode=merge`.** It recovers the same cadence, which is how it passed the
+first frame-count experiment — but it stacks the pair into a *double-height* frame, so a
+later height-based resize (`scale=-2:1080`) silently halves the width. The 828×1080 outputs
+it produced were caught by probing the result's dimensions, not by counting its frames:
+when a chain changes frame geometry, probe `width`×`height` on the output, not just `nb_frames`.
+
+### HDR10+ / Dolby Vision passthrough is experimental and opt-in
+
+Dynamic HDR metadata is detected and warned about, and — only when
+`EncodeRequest.PreserveDynamicHdr` is set (`--preserve-dynamic-hdr`, or the GUI toggle) —
+`DynamicHdrPreserver` (`Moist.Core/Media`) tries to carry it across the re-encode: demux
+HEVC → `dovi_tool extract-rpu` / `hdr10plus_tool extract` from the source → `inject-rpu` /
+`inject` into the encoded stream → remux. The muxer runs it in `OnBeforeStart` (after the
+video job finished, before the mux) against the temp video; `AppServices` threads the tool
+paths in late-bound like every other tool. Both tools auto-download from Settings.
+
+**The remux needs mkvmerge.** The enriched stream is raw HEVC — untimed, and libx265 encodes
+with B-frames — so FFmpeg can't put it back in a container (FFmpeg 8 refuses untimed packets,
+exit -22). `TryRemuxWithMkvmergeAsync` reads the encoded file's frame duration (`mkvmerge -J`)
+and remuxes with `--default-duration`, carrying every non-video track over with `-D`. Without
+MKVToolNix the FFmpeg remux is still attempted and the failure message says to install it.
+The scratch area lives beside the encoded file (moist's temp dir), not `Path.GetTempPath()`.
+
+**Verified on synthetic content only.** End-to-end runs built HDR10 PQ clips with
+DV profile 8.1 RPUs (`dovi_tool generate` + `inject-rpu`) and per-frame HDR10+ (`hdr10plus_tool
+inject`); with the flag every frame's metadata survived (1137/1137 for each), without it none.
+It stays contracted to never throw and never to touch the encoded file unless the whole
+round-trip succeeded (temp file + atomic move). Keep the "experimental" label until it has been
+checked against commercial DV / HDR10+ masters.
 
 ### Theming is additive
 
@@ -475,7 +590,7 @@ it on the strength of it compiling.
 | Change per-scene behaviour | `PerSceneOptimizer`. Per-chunk CRFs feed the chunk directory fingerprint, so a run at a different target can't reuse the previous run's chunks — keep that true |
 | Add an audio encoder | Settings class in `Core/Encoders/Audio/` → `AppServices.RegisterAudioEncoder()` (ID must be `ffmpeg-audio-{codec}`) → `FFmpegAudioProcessor.GetCodecSpecificArgs()` + `GetFfmpegCodecName()` → `EncodeJobBuilder.CreateAudioSettings()` + `AudioFileExtension()` → `ContainerCompatibility` |
 | Add an encode option | `EncodeRequest` first, then `EncodeJobBuilder`, then surface it in *both* `EncodeTabViewModel.BuildRequest()` and `EncodeOptions.Build()` + `Help.cs` |
-| Add a CLI command | Dispatch word in the `Program.Main` switch (`Program.cs`) + a section in `Help.cs`. A small command handler goes in `Commands.cs`; a substantial one gets its own file (`watch`/`health` → `WatchCommands.cs`, `serve` → `ServeCommand.cs`). Anything it encodes must still go through `EncodeJobBuilder`. |
+| Add a CLI command | Dispatch word in the `Program.Main` switch (`Program.cs`) + a section in `Help.cs`. A small command handler goes in `Commands.cs` (`encode`, `batch`, `probe`, `list`, `tools`); a substantial one gets its own file (`compare`/`crf-search` → `QualityCommands.cs`, `watch`/`health` → `WatchCommands.cs`, `serve` → `ServeCommand.cs`). Anything it encodes must still go through `EncodeJobBuilder`. |
 | Test encoder arguments | `Core.Tests/AudioProcessorTests.cs` — subclass the processor, call `BuildArguments()`, assert on the string. No process launch. |
 | Test real encoding | `Moist.IntegrationTests` — use `[FfmpegFact]`/`[FfmpegTheory]` so it skips without FFmpeg, and assert on the **probed** output, not the exit code |
 | Add a filter | `FilterDefinition` in the engine's `GetAvailableFilters()` + the emit branch in its `GenerateScript()` |
@@ -486,13 +601,14 @@ it on the strength of it compiling.
 
 ## Data & Runtime Paths
 
-All under `%AppData%/moist` (Windows) / `~/.config/moist` (Linux/macOS) — the code uses `SpecialFolder.ApplicationData` uniformly:
+All under `%AppData%/moist` (Windows) / `~/.config/moist` (Linux/macOS), resolved **only** through `MoistPaths` (`Moist.Core/Settings`) — never call `GetFolderPath(ApplicationData)` directly. On Unix that returns `""` when `~/.config` doesn't exist yet (fresh account, CI runner, service user), and `Path.Combine("", "moist")` is the *relative* path `moist` — beside the published CLI, that's the executable itself, so every write failed with "The file '…/moist' already exists". `MoistPaths` creates the folder, falls back through `$XDG_CONFIG_HOME` → `$HOME/.config` → local app data → temp, always returns an absolute path, and honours a `MOIST_CONFIG_DIR` override:
 
 - `settings.json` — app settings. Corrupt settings are deleted and defaults reloaded on startup failure.
 - `profiles/*.json` — one file per profile, built-ins included
 - `plugins/*.dll` — scanned recursively at startup; `IPlugin` types with a parameterless ctor are instantiated and given `Register(EncoderRegistry, JobQueue)`. Load failures are logged and skipped.
 - `tools/` — auto-downloaded tool binaries
-- `logs/moist_<timestamp>.log` — per-session; last 10 kept. Completed/failed job output is appended here via `AppServices.WriteJobLogToFile`.
+- `logs/moist_<timestamp>.log` — per-session; last 10 kept. **Everything the app logs** lands here (`FileLoggerProvider` in `Moist.Core/Diagnostics`, registered beside the console provider in `AppServices`), plus completed/failed job output via `AppServices.WriteJobLogToFile`. It used to receive only the job output, so a failure outside a queued job — a preview, a probe, a tool download — left no trace once the console scrolled (and the GUI has no console).
+- `logs/crash_<timestamp>.log` — one per unhandled exception or unobserved task fault, written by `CrashLog` (`Moist.Core/Diagnostics`), which both entry points install first thing in `Program.Main`. Deliberately independent of the logging pipeline so it still works when that has failed or isn't built yet.
 - `queue.json` — written on close, consumed once on startup (see the persistence gap above)
 - `watch-<hash>.json` — per-watched-folder record of already-handled files, so `moist watch` doesn't re-encode on restart
 
@@ -504,6 +620,12 @@ volume so settings, profiles and the queue survive a restart.
 
 ## CI/CD
 
-- `ci.yml` — push/PR to `main`. Builds Debug + Release and runs tests on **self-hosted** runners (group `Default`, labels `Windows`/`Linux`). `DOTNET_INSTALL_DIR` is pinned into the workspace because the runners are self-hosted. A non-blocking step reports whether FFmpeg is present; if it isn't, the integration suite skips and CI still passes — install FFmpeg on the runners to actually exercise it. macOS jobs exist but are commented out.
-- `release.yml` — on `v*` tags. Self-contained single-file builds of both the GUI and the CLI for Windows x64 (ZIP, plus a framework-dependent GUI ZIP) and Linux x64 (tar.gz), then a GitHub release. CLI archives are named `moist-cli-*`. Tags containing `-` are marked prerelease.
+- `ci.yml` — push/PR to `main`. **Pull requests from forks run on GitHub-hosted runners** (and
+  install FFmpeg there); only pushes and same-repo PRs use the self-hosted ones, because on a public
+  repo a fork PR is arbitrary code that would otherwise run on a maintainer's machine. Builds Debug + Release and runs tests on **self-hosted** runners (group `Default`, labels `Windows`/`Linux`). `DOTNET_INSTALL_DIR` is pinned into the workspace because the runners are self-hosted. A non-blocking step reports whether FFmpeg is present; if it isn't, the integration suite skips and CI still passes — install FFmpeg on the runners to actually exercise it. macOS jobs exist but are commented out.
+- `release.yml` — on `v*` tags. The Windows build runs on `windows-latest` because **SignPath
+  Foundation** (code signing for OSS) only signs GitHub-hosted builds; signing turns on when the
+  `SIGNPATH_ORGANIZATION_ID` variable and `SIGNPATH_API_TOKEN` secret exist (see `SECURITY.md`,
+  `.signpath/artifact-configuration.xml`) and fails the release if a shipped exe isn't validly signed.
+  Publishes `SHA256SUMS.txt`; third-party actions are pinned to commit SHAs. Self-contained single-file builds of both the GUI and the CLI for Windows x64 (ZIP, plus a framework-dependent GUI ZIP) and Linux x64 (tar.gz), then a GitHub release. CLI archives are named `moist-cli-*`. Tags containing `-` are marked prerelease.
 - `Dockerfile` (repo root) — a two-stage image that publishes **`Moist.Cli` only** and runs `moist serve` as a non-root user on port 7788. It installs Debian's `ffmpeg`, which has **no libsvtav1 or libvmaf**, so AV1 encoding and `--target-vmaf` are unavailable in the stock image — `moist tools` reports what the build actually has. The version is stamped once for the whole solution from `src/Directory.Build.props` (`<Version>`), not per-project.

@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  SignPath artifact configuration for moist's Windows release.
+
+  Upload this file to the SignPath project as its artifact configuration (Project ->
+  Artifact configurations). The release workflow submits a ZIP containing the three
+  publish folders below; SignPath signs the listed files in place and returns the ZIP.
+
+  Only moist's own binaries are signed. Third-party DLLs bundled by the framework-dependent
+  build (Avalonia, SkiaSharp, ...) are already signed by their publishers or are not ours to sign.
+-->
+<artifact-configuration xmlns="http://signpath.io/artifact-configuration/v1">
+  <zip-file>
+    <!-- Self-contained single-file GUI -->
+    <directory path="win-x64">
+      <pe-file path="Moist.App.exe">
+        <authenticode-sign />
+      </pe-file>
+    </directory>
+
+    <!-- Framework-dependent GUI: the apphost and moist's own assemblies -->
+    <directory path="win-x64-fdd">
+      <pe-file path="Moist.App.exe">
+        <authenticode-sign />
+      </pe-file>
+      <pe-file-set>
+        <include path="Moist.*.dll" min-matches="1" max-matches="unbounded" />
+        <for-each>
+          <authenticode-sign />
+        </for-each>
+      </pe-file-set>
+    </directory>
+
+    <!-- Self-contained single-file CLI -->
+    <directory path="win-x64-cli">
+      <pe-file path="moist.exe">
+        <authenticode-sign />
+      </pe-file>
+    </directory>
+  </zip-file>
+</artifact-configuration>

@@ -15,7 +15,7 @@ A cross-platform video encoder GUI built with C# / .NET 8 / [Avalonia UI](https:
 The heart of the operation. No shortcuts, no compromises.
 
 - **Video Codecs**: x264, x265, SVT-AV1, VP9, FFV1 — via FFmpeg or standalone CLI
-- **Hardware Encoding**: NVENC, Quick Sync, AMF, VideoToolbox and VA-API (H.264 / H.265 / AV1)
+- **Hardware Encoding**: NVENC, plus experimental Quick Sync, AMF, VideoToolbox and VA-API (H.264 / H.265 / AV1)
 - **Bit Depth**: 8, 10 or 12-bit, or Auto to follow the source — 10-bit HDR masters stay 10-bit
 - **Encoding Modes**: CRF, constant quality, single-pass bitrate, two-pass bitrate
 - **Full Preset & Tune Control**: Every x264/x265/SVT-AV1 preset and tune option exposed
@@ -229,10 +229,15 @@ Your GPU is sitting right there. Use it.
 | | H.264 | H.265 | AV1 |
 |---|---|---|---|
 | **NVIDIA NVENC** | ✓ | ✓ | ✓ (RTX 40+) |
-| **Intel Quick Sync** | ✓ | ✓ | ✓ (Arc / 12th gen+) |
-| **AMD AMF** | ✓ | ✓ | ✓ (RX 7000+) |
-| **Apple VideoToolbox** | ✓ | ✓ | — |
-| **VA-API (Linux)** | ✓ | ✓ | ✓ |
+| **Intel Quick Sync** ⚗️ | ✓ | ✓ | ✓ (Arc / 12th gen+) |
+| **AMD AMF** ⚗️ | ✓ | ✓ | ✓ (RX 7000+) |
+| **Apple VideoToolbox** ⚗️ | ✓ | ✓ | — |
+| **VA-API (Linux)** ⚗️ | ✓ | ✓ | ✓ |
+
+⚗️ **Experimental.** NVENC is verified end-to-end on real hardware. Quick Sync, AMF,
+VideoToolbox and VA-API are implemented from their documented FFmpeg interfaces and are
+correctly *detected* (offered only where a test encode succeeds), but their encode paths
+haven't been exercised on the actual hardware yet. Reports welcome.
 
 moist doesn't take FFmpeg's word for what your machine can do. `ffmpeg -encoders` lists
 everything the binary was *compiled* with — a stock Windows build claims NVENC, Quick
@@ -290,10 +295,16 @@ Detection doesn't trust the container's colour tags — Matroska often reports
 data too, which is where mastering display, content light level, HDR10+ and Dolby Vision
 actually live.
 
-**Honest limitation:** HDR10+ and Dolby Vision dynamic metadata are *detected and warned
-about* but not yet preserved through a re-encode. The static HDR10 base layer survives, so
-the result stays HDR; the per-scene tone mapping doesn't. Remux instead of re-encoding to
-keep it.
+**Dynamic HDR passthrough (experimental, opt-in).** By default HDR10+ and Dolby Vision
+dynamic metadata are *detected and warned about*: the static HDR10 base layer survives a
+re-encode, so the result stays HDR, but the per-scene tone mapping doesn't. With
+`--preserve-dynamic-hdr` (or the GUI toggle) moist extracts the metadata from the source with
+`hdr10plus_tool` / `dovi_tool`, re-injects it into the encode and remuxes with mkvmerge. It has
+been verified on synthetic Dolby Vision (profile 8.1) and HDR10+ test clips: every frame's
+metadata survived (1137/1137). It still carries the experimental label until it's been
+checked against commercial DV/HDR10+ masters. It needs both tools and MKVToolNix (all three
+install from Settings on Windows), and it never touches the encode unless the whole round-trip
+succeeds.
 
 ### Queue Survives a Crash
 
@@ -323,6 +334,10 @@ Ten built-in presets ready to ride, plus save your own:
 | **Restore SD to HD (vintage)** | x265 CRF 19, Medium, **10-bit** + restoration filter chain | Opus 192k | MKV |
 | **AI Upscale SD to HD (GPU)** | x265 CRF 19, Medium, **10-bit** + restore chain with a **GPU neural upscale** (needs Vulkan) | Opus 192k | MKV |
 | **AI Upscale SD to HD (Real-ESRGAN)** | x265 CRF 19, Medium, **10-bit** + **deep-model upscale** (needs the realesrgan tool; slow, for short/precious clips) | Opus 192k | MKV |
+| **Broadcast 720p60 Film - Faithful 720p (B&W / Colour)** | x265 CRF 17, Medium, **10-bit, tune=grain**: native 59.94p and size kept, crop 88 px pillarbars, grayscale on B&W, CAS 0.3, gentle contrast curve, +5% saturation on colour. No upscale, no denoise — the broadcast look, tightened | **AC3 passthrough** | MKV |
+| **Broadcast 720p60 Film - B&W to 1080p** | x265 CRF 18, Medium, **10-bit**: crop 88 px pillarbars → **inverse telecine** (bobbed 60p → 23.976) → grayscale → de-block → denoise → GPU neural upscale → CAS → deband. For MeTV-style over-the-air captures of film-sourced TV | Opus 160k | MKV |
+| **Broadcast 720p60 Film - Colour to 1080p** | Same chain without the grayscale step | Opus 160k | MKV |
+| **Broadcast 720p60 Film - … (Premium Real-ESRGAN)** | B&W and Colour variants with the **Real-ESRGAN deep-model upscale** in place of the GPU shader: sharpest texture, ~30× slower — for favourite episodes, not a whole library | Opus 160k | MKV |
 | Web - H.265 High Quality | x265 CRF 22, Slow | Opus 128k | MKV |
 | Web - H.264 Compatible | x264 CRF 20, Medium | AAC 192k | MP4 |
 | Archive - Lossless | FFV1 | FLAC | MKV |
@@ -361,6 +376,14 @@ moist encode input.mkv --profile "Web - H.265 High Quality"
 
 # one-click: restore an old SD tape to sharp 10-bit 1080p (filters + upscale from the profile)
 moist encode "UFC 01.avi" -o "UFC 01 - Restored.mkv" --profile "Restore SD to HD"
+
+# over-the-air captures of film-sourced TV (MeTV-style 720p59.94, bob-upconverted film, pillarboxed):
+# crop the bars, inverse-telecine back to 23.976, clean, upscale to 1080p. B&W seasons lose the chroma noise.
+moist batch "Gunsmoke/Season 10/*.ts" --output-dir restored --suffix "" --profile "Broadcast 720p60 Film - B&W to 1080p"
+moist batch "Gunsmoke/Season 12/*.ts" --output-dir restored --suffix "" --profile "Broadcast 720p60 Film - Colour to 1080p"
+# ...or keep the broadcast exactly as it moves and looks, just tightened (native 720p60, grain kept, AC3 untouched)
+moist batch "Gunsmoke/Season 12/*.ts" --output-dir faithful --suffix "" --profile "Broadcast 720p60 Film - Faithful 720p (Colour)"
+moist encode "S12E01.ts" -o "S12E01 - premium.mkv" --profile "Broadcast 720p60 Film - Colour to 1080p (Premium Real-ESRGAN)"
 moist encode input.mkv --audio-only --audio-encoder ffmpeg-audio-flac
 moist encode input.mkv --mode twopass --bitrate 8000 --container mp4
 moist encode input.mkv --filter resize:width=1920,height=1080 --filter unsharp:luma_amount=1.2

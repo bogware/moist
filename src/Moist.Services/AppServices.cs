@@ -75,6 +75,14 @@ public sealed class AppServices : IDisposable
     private VideoPreviewService? _previewService;
     private string _lastFfmpegPathPreview = string.Empty;
 
+    /// <summary>
+    /// Renders short preview snippets through the real encode pipeline (see
+    /// <see cref="SnippetPreviewService"/>). Holds no tool-path state of its own — it goes back
+    /// through <see cref="JobQueue"/> and the encoder factories, which are already late-bound.
+    /// </summary>
+    public SnippetPreviewService SnippetPreview => _snippetPreview ??= new SnippetPreviewService(this);
+    private SnippetPreviewService? _snippetPreview;
+
     /// <param name="minimumLogLevel">Console verbosity. The CLI raises this so logs don't mix into its output.</param>
     /// <param name="logToStandardError">
     /// Send log lines to stderr instead of stdout. Required for the CLI, whose stdout
@@ -83,21 +91,30 @@ public sealed class AppServices : IDisposable
     public AppServices(LogLevel minimumLogLevel = LogLevel.Debug, bool logToStandardError = false)
     {
         // Set up logging to both console and file
-        var logDir = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-            "moist", "logs");
-        Directory.CreateDirectory(logDir);
+        var logDir = MoistPaths.Sub("logs");
         LogFilePath = Path.Combine(logDir, $"moist_{DateTime.Now:yyyyMMdd_HHmmss}.log");
 
+        // The console's verbosity and the session file's detail are deliberately separate.
+        // minimumLogLevel is a CONSOLE concern (the CLI raises it so logs don't pollute its
+        // output); the file always gets full detail, because it is what you read after
+        // something went wrong. The global minimum must therefore be the lower of the two —
+        // a global threshold filters before any provider sees the line.
+        const LogLevel fileLevel = LogLevel.Debug;
         LoggerFactory = Microsoft.Extensions.Logging.LoggerFactory.Create(builder =>
         {
             builder
-                .SetMinimumLevel(minimumLogLevel)
+                .SetMinimumLevel(fileLevel < minimumLogLevel ? fileLevel : minimumLogLevel)
+                .AddFilter<Microsoft.Extensions.Logging.Console.ConsoleLoggerProvider>(level => level >= minimumLogLevel)
                 .AddSimpleConsole(options =>
                 {
                     options.TimestampFormat = "[yyyy-MM-dd HH:mm:ss] ";
                     options.SingleLine = true;
-                });
+                })
+                // Everything the app logs also goes to the session file. Previously only job
+                // output was written there, so a failure outside a queued job — a preview, a
+                // probe, a tool download — left no trace on disk once the console scrolled
+                // (and the GUI has no console at all).
+                .AddProvider(new Core.Diagnostics.FileLoggerProvider(LogFilePath, fileLevel));
 
             if (logToStandardError)
             {
@@ -117,6 +134,10 @@ public sealed class AppServices : IDisposable
         Encoders = new EncoderRegistry();
         Filters = new FilterRegistry();
         JobQueue = new JobQueue(Settings.MaxConcurrentJobs, LoggerFactory);
+        // The GUI is long-lived — a session can run hundreds of encodes, each retaining a job
+        // object and its rolling output-log buffer. Bound it so memory stays flat. (`moist serve`
+        // sets its own tighter cap; short-lived CLI commands don't need one.)
+        JobQueue.MaxCompletedJobsRetained = 500;
         ProfileManager = new ProfileManager();
         PluginSources = new PluginSourceManager();
         FilterPresets = new FilterPresetManager();
@@ -198,7 +219,7 @@ public sealed class AppServices : IDisposable
             Category = "Video",
             SettingsType = typeof(X265Settings),
             Description = "Direct x265 CLI for maximum control. Piped from FFmpeg.",
-        }, () => new X265CliProcessor(Settings.X265Path, Settings.FFmpegPath, Settings.FFprobePath));
+        }, () => new X265CliProcessor(Settings.X265Path, Settings.FFmpegPath, Settings.FFprobePath, Settings.MkvMergePath));
 
         // Audio encoders via FFmpeg
         RegisterAudioEncoder("ffmpeg-audio-opus", "Opus", "opus",
@@ -237,7 +258,15 @@ public sealed class AppServices : IDisposable
             SettingsType = typeof(object),
             Description = "Universal muxer via FFmpeg",
             OutputFormats = ["mkv", "mp4", "webm", "avi", "ts", "mov"],
-        }, () => new FFmpegMuxProcessor(Settings.FFmpegPath));
+        }, () => new FFmpegMuxProcessor(
+            Settings.FFmpegPath,
+            // Late-bound like the other tool paths (read per job). Empty -> null so the
+            // experimental HDR passthrough reports "tool missing" rather than shelling nothing.
+            string.IsNullOrWhiteSpace(Settings.DoviToolPath) ? null : Settings.DoviToolPath,
+            string.IsNullOrWhiteSpace(Settings.Hdr10PlusToolPath) ? null : Settings.Hdr10PlusToolPath,
+            LoggerFactory,
+            // mkvmerge rebuilds the timestamps of the enriched (untimed, B-frame) HEVC stream.
+            Settings.MkvMergePath));
     }
 
     private void RegisterVideoEncoder(string id, string name, string codec, Type settingsType, string desc)
@@ -283,11 +312,11 @@ public sealed class AppServices : IDisposable
         // real encoder (x265, …), so FFmpegVideoProcessor.CanProcess would also claim it — this must
         // be registered first so it wins via CanProcess (AiUpscaleModel set). Factory: per-job state.
         JobQueue.RegisterProcessorFactory(() => new RealEsrganVideoProcessor(
-            Settings.FFmpegPath, Settings.FFprobePath, Settings.RealEsrganPath, Settings.TempDirectory));
+            Settings.FFmpegPath, Settings.FFprobePath, Settings.RealEsrganPath, Settings.TempDirectory, LoggerFactory));
 
         // RIFE AI frame interpolation, likewise before the normal encoders (CanProcess: RifeTargetFps set).
         JobQueue.RegisterProcessorFactory(() => new RifeVideoProcessor(
-            Settings.FFmpegPath, Settings.FFprobePath, Settings.RifePath, Settings.TempDirectory));
+            Settings.FFmpegPath, Settings.FFprobePath, Settings.RifePath, Settings.TempDirectory, LoggerFactory));
 
         // VapourSynth jobs (FilterEngineId == "vapoursynth") are piped vspipe -> ffmpeg. This is the
         // seam that lets a .vpy (incl. vs-mlrt ML nodes) reach the encoder; the FFmpeg engine's -vf

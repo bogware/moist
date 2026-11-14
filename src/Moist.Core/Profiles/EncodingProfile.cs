@@ -3,6 +3,7 @@ using System.Text.Json.Serialization;
 using Moist.Core.Encoders.Audio;
 using Moist.Core.Encoders.Video;
 using Moist.Core.Muxers;
+using Moist.Core.Settings;
 
 namespace Moist.Core.Profiles;
 
@@ -77,10 +78,7 @@ public sealed class ProfileManager
 
     public ProfileManager()
     {
-        _profilesDir = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-            "moist", "profiles");
-        Directory.CreateDirectory(_profilesDir);
+        _profilesDir = MoistPaths.Sub("profiles");
 
         // Ensure built-in profiles exist
         EnsureBuiltInProfiles();
@@ -126,7 +124,11 @@ public sealed class ProfileManager
         var fileName = SanitizeFileName(profile.Name) + ".json";
         var path = Path.Combine(_profilesDir, fileName);
         var json = JsonSerializer.Serialize(profile, JsonOptions);
-        File.WriteAllText(path, json);
+        // Write to a temp file then move into place so an interrupted write
+        // can't truncate an existing profile (mirrors MoistSettings.Save).
+        var tmp = path + ".tmp";
+        File.WriteAllText(tmp, json);
+        File.Move(tmp, path, overwrite: true);
     }
 
     public async Task SaveAsync(EncodingProfile profile, CancellationToken ct = default)
@@ -135,7 +137,11 @@ public sealed class ProfileManager
         var fileName = SanitizeFileName(profile.Name) + ".json";
         var path = Path.Combine(_profilesDir, fileName);
         var json = JsonSerializer.Serialize(profile, JsonOptions);
-        await File.WriteAllTextAsync(path, json, ct);
+        // Write to a temp file then move into place so an interrupted write
+        // can't truncate an existing profile (mirrors MoistSettings.Save).
+        var tmp = path + ".tmp";
+        await File.WriteAllTextAsync(tmp, json, ct);
+        File.Move(tmp, path, overwrite: true);
     }
 
     public void Delete(string profileName)
@@ -172,8 +178,24 @@ public sealed class ProfileManager
         foreach (var profile in builtIns)
         {
             var path = Path.Combine(_profilesDir, SanitizeFileName(profile.Name) + ".json");
-            if (!File.Exists(path))
+            // Re-materialize a built-in when its file is absent OR present but
+            // corrupt (a truncated write survives on disk and would otherwise be
+            // silently skipped by GetAllProfiles and never re-created).
+            if (!File.Exists(path) || !IsReadableProfile(path))
                 Save(profile);
+        }
+    }
+
+    private static bool IsReadableProfile(string path)
+    {
+        try
+        {
+            var json = File.ReadAllText(path);
+            return JsonSerializer.Deserialize<EncodingProfile>(json, JsonOptions) is not null;
+        }
+        catch
+        {
+            return false;
         }
     }
 
@@ -255,6 +277,160 @@ public sealed class ProfileManager
             [
                 new() { FilterId = "deblock", Parameters = new() { ["quality"] = 3, ["strength"] = 4 } },
                 new() { FilterId = "hqdn3d",  Parameters = new() { ["luma_spatial"] = 2.0, ["chroma_spatial"] = 1.5, ["luma_temporal"] = 3.0 } },
+            ],
+        },
+        new()
+        {
+            // The faithful counterpart of the 1080p restore profiles below: no upscale, no denoise, no
+            // cadence change. The source is 24 fps film bob-upconverted to 59.94p and that motion is
+            // kept as broadcast; measured black levels already reach legal black (median darkest pixel
+            // 4-8 of 255), so "depth" is a gentle contrast curve, not a black-point fix. tune=grain stops
+            // x265 smoothing or strobing the film grain, which is the whole point of this profile.
+            // Adjust or remove the crop for a channel with different bars. Tuned on Gunsmoke.
+            Name = "Broadcast 720p60 Film - Faithful 720p (B&W)",
+            Description = "MeTV-style 720p59.94 broadcast capture of black-and-white film-sourced TV, kept at its native frame rate and size: crop the 88 px pillarbars, strip chroma noise, a touch of CAS sharpening and a gentle contrast curve; x265 10-bit tune=grain so the film grain survives; the original AC3 passed through untouched.",
+            VideoEncoderId = "ffmpeg-x265",
+            VideoMode = VideoEncodingMode.ConstantRateFactor,
+            VideoQuality = 17,
+            VideoPreset = VideoPreset.Medium,
+            VideoTune = VideoTune.Grain,
+            BitDepth = VideoBitDepth.Ten,
+            AudioEncoderId = "ffmpeg-audio-copy",
+            Container = ContainerFormat.Mkv,
+            FilterEngineId = "ffmpeg",
+            Filters =
+            [
+                new() { FilterId = "crop",      Parameters = new() { ["left"] = 88, ["right"] = 88 } },
+                new() { FilterId = "grayscale", Parameters = new() },
+                new() { FilterId = "cas",       Parameters = new() { ["strength"] = 0.3 } },
+                new() { FilterId = "eq",        Parameters = new() { ["contrast"] = 1.04, ["brightness"] = -0.01 } },
+            ],
+        },
+        new()
+        {
+            Name = "Broadcast 720p60 Film - Faithful 720p (Colour)",
+            Description = "MeTV-style 720p59.94 broadcast capture of colour film-sourced TV, kept at its native frame rate and size: crop the 88 px pillarbars, a touch of CAS sharpening and a gentle contrast curve, +5% saturation; x265 10-bit tune=grain so the film grain survives; the original AC3 passed through untouched.",
+            VideoEncoderId = "ffmpeg-x265",
+            VideoMode = VideoEncodingMode.ConstantRateFactor,
+            VideoQuality = 17,
+            VideoPreset = VideoPreset.Medium,
+            VideoTune = VideoTune.Grain,
+            BitDepth = VideoBitDepth.Ten,
+            AudioEncoderId = "ffmpeg-audio-copy",
+            Container = ContainerFormat.Mkv,
+            FilterEngineId = "ffmpeg",
+            Filters =
+            [
+                new() { FilterId = "crop",      Parameters = new() { ["left"] = 88, ["right"] = 88 } },
+                new() { FilterId = "cas",       Parameters = new() { ["strength"] = 0.3 } },
+                new() { FilterId = "eq",        Parameters = new() { ["contrast"] = 1.04, ["brightness"] = -0.01, ["saturation"] = 1.05 } },
+            ],
+        },
+        new()
+        {
+            // Over-the-air / DVR captures of film-sourced TV as broadcast by MeTV and similar
+            // channels: MPEG-2 1280x720p59.94, the 24 fps film bob-upconverted to 60p, the 4:3 frame
+            // pillarboxed with 88 px black bars. ivtc (bobbed) weaves the fields back and decimates
+            // to an exact 23.976; the crop drops the bars BEFORE the upscale so the 1080p output is
+            // all picture. Order is load-bearing: cadence and crop first (so every later filter sees
+            // 4 frames in 5 and no black), clean before enlarging, sharpen and deband after. B&W
+            // seasons strip the chroma, which on these captures is only MPEG-2 colour noise.
+            // Adjust or remove the crop for a channel with different bars. Tuned on Gunsmoke.
+            Name = "Broadcast 720p60 Film - B&W to 1080p",
+            Description = "MeTV-style 720p59.94 broadcast capture of black-and-white film-sourced TV to 1080p23.976 HEVC 10-bit: crop 88 px pillarbars, inverse telecine, strip chroma noise, de-block, denoise, GPU neural upscale (falls back to spline without a Vulkan GPU), sharpen, deband.",
+            VideoEncoderId = "ffmpeg-x265",
+            VideoMode = VideoEncodingMode.ConstantRateFactor,
+            VideoQuality = 18,
+            VideoPreset = VideoPreset.Medium,
+            BitDepth = VideoBitDepth.Ten,
+            AudioEncoderId = "ffmpeg-audio-opus",
+            AudioBitrate = 160,
+            Container = ContainerFormat.Mkv,
+            FilterEngineId = "ffmpeg",
+            Filters =
+            [
+                new() { FilterId = "crop",      Parameters = new() { ["left"] = 88, ["right"] = 88 } },
+                new() { FilterId = "ivtc",      Parameters = new() { ["bobbed"] = true, ["order"] = "tff" } },
+                new() { FilterId = "grayscale", Parameters = new() },
+                new() { FilterId = "deblock",   Parameters = new() { ["quality"] = 3, ["strength"] = 4 } },
+                new() { FilterId = "hqdn3d",    Parameters = new() { ["luma_spatial"] = 2.0, ["chroma_spatial"] = 1.5, ["luma_temporal"] = 3.0 } },
+                new() { FilterId = "superres",  Parameters = new() { ["model"] = "fsrcnnx", ["height"] = 1080 } },
+                new() { FilterId = "cas",       Parameters = new() { ["strength"] = 0.4 } },
+                new() { FilterId = "deband",    Parameters = new() { ["range"] = 16 } },
+            ],
+        },
+        new()
+        {
+            Name = "Broadcast 720p60 Film - Colour to 1080p",
+            Description = "MeTV-style 720p59.94 broadcast capture of colour film-sourced TV to 1080p23.976 HEVC 10-bit: crop 88 px pillarbars, inverse telecine, de-block, denoise, GPU neural upscale (falls back to spline without a Vulkan GPU), sharpen, deband.",
+            VideoEncoderId = "ffmpeg-x265",
+            VideoMode = VideoEncodingMode.ConstantRateFactor,
+            VideoQuality = 18,
+            VideoPreset = VideoPreset.Medium,
+            BitDepth = VideoBitDepth.Ten,
+            AudioEncoderId = "ffmpeg-audio-opus",
+            AudioBitrate = 160,
+            Container = ContainerFormat.Mkv,
+            FilterEngineId = "ffmpeg",
+            Filters =
+            [
+                new() { FilterId = "crop",      Parameters = new() { ["left"] = 88, ["right"] = 88 } },
+                new() { FilterId = "ivtc",      Parameters = new() { ["bobbed"] = true, ["order"] = "tff" } },
+                new() { FilterId = "deblock",   Parameters = new() { ["quality"] = 3, ["strength"] = 4 } },
+                new() { FilterId = "hqdn3d",    Parameters = new() { ["luma_spatial"] = 2.0, ["chroma_spatial"] = 1.5, ["luma_temporal"] = 3.0 } },
+                new() { FilterId = "superres",  Parameters = new() { ["model"] = "fsrcnnx", ["height"] = 1080 } },
+                new() { FilterId = "cas",       Parameters = new() { ["strength"] = 0.4 } },
+                new() { FilterId = "deband",    Parameters = new() { ["range"] = 16 } },
+            ],
+        },
+        new()
+        {
+            // Premium variant: Real-ESRGAN instead of the GPU shader. The Filters are only the
+            // pre-upscale chain; RealEsrganVideoProcessor adds the scale/CAS/deband finish. About
+            // 30x slower than the GPU profile - for favourite episodes, not a 400-episode batch.
+            Name = "Broadcast 720p60 Film - B&W to 1080p (Premium Real-ESRGAN)",
+            Description = "MeTV-style 720p59.94 broadcast capture of black-and-white film-sourced TV to 1080p23.976 HEVC 10-bit: crop 88 px pillarbars, inverse telecine, strip chroma noise, de-block, denoise, Real-ESRGAN deep-model upscale (needs the realesrgan tool; slow, for favourite episodes), sharpen, deband.",
+            VideoEncoderId = "ffmpeg-x265",
+            VideoMode = VideoEncodingMode.ConstantRateFactor,
+            VideoQuality = 18,
+            VideoPreset = VideoPreset.Medium,
+            BitDepth = VideoBitDepth.Ten,
+            AudioEncoderId = "ffmpeg-audio-opus",
+            AudioBitrate = 160,
+            Container = ContainerFormat.Mkv,
+            FilterEngineId = "ffmpeg",
+            AiUpscaleModel = "x4plus",
+            AiUpscaleHeight = 1080,
+            Filters =
+            [
+                new() { FilterId = "crop",      Parameters = new() { ["left"] = 88, ["right"] = 88 } },
+                new() { FilterId = "ivtc",      Parameters = new() { ["bobbed"] = true, ["order"] = "tff" } },
+                new() { FilterId = "grayscale", Parameters = new() },
+                new() { FilterId = "deblock",   Parameters = new() { ["quality"] = 3, ["strength"] = 4 } },
+                new() { FilterId = "hqdn3d",    Parameters = new() { ["luma_spatial"] = 2.0, ["chroma_spatial"] = 1.5, ["luma_temporal"] = 3.0 } },
+            ],
+        },
+        new()
+        {
+            Name = "Broadcast 720p60 Film - Colour to 1080p (Premium Real-ESRGAN)",
+            Description = "MeTV-style 720p59.94 broadcast capture of colour film-sourced TV to 1080p23.976 HEVC 10-bit: crop 88 px pillarbars, inverse telecine, de-block, denoise, Real-ESRGAN deep-model upscale (needs the realesrgan tool; slow, for favourite episodes), sharpen, deband.",
+            VideoEncoderId = "ffmpeg-x265",
+            VideoMode = VideoEncodingMode.ConstantRateFactor,
+            VideoQuality = 18,
+            VideoPreset = VideoPreset.Medium,
+            BitDepth = VideoBitDepth.Ten,
+            AudioEncoderId = "ffmpeg-audio-opus",
+            AudioBitrate = 160,
+            Container = ContainerFormat.Mkv,
+            FilterEngineId = "ffmpeg",
+            AiUpscaleModel = "x4plus",
+            AiUpscaleHeight = 1080,
+            Filters =
+            [
+                new() { FilterId = "crop",      Parameters = new() { ["left"] = 88, ["right"] = 88 } },
+                new() { FilterId = "ivtc",      Parameters = new() { ["bobbed"] = true, ["order"] = "tff" } },
+                new() { FilterId = "deblock",   Parameters = new() { ["quality"] = 3, ["strength"] = 4 } },
+                new() { FilterId = "hqdn3d",    Parameters = new() { ["luma_spatial"] = 2.0, ["chroma_spatial"] = 1.5, ["luma_temporal"] = 3.0 } },
             ],
         },
         new()
@@ -351,6 +527,9 @@ public sealed class ProfileManager
             return $"unnamed_{DateTime.UtcNow.Ticks}";
         var invalid = Path.GetInvalidFileNameChars();
         var sanitized = new string(name.Select(c => invalid.Contains(c) ? '_' : c).ToArray()).Trim();
-        return string.IsNullOrEmpty(sanitized) ? $"unnamed_{DateTime.UtcNow.Ticks}" : sanitized;
+        if (string.IsNullOrEmpty(sanitized))
+            return $"unnamed_{DateTime.UtcNow.Ticks}";
+        // Cap length so a long profile name can't overflow the path limit.
+        return sanitized.Length > 150 ? sanitized[..150] : sanitized;
     }
 }

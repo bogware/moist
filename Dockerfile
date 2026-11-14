@@ -52,15 +52,12 @@ RUN mkdir -p /config /media && chown -R moist:moist /config /media /app
 VOLUME ["/config", "/media"]
 
 # The entrypoint runs whatever subcommand it is given, so `docker run moist tools`
-# and `docker run moist health /media` work as well as serving. It only adds
-# --token when serving, since no other command takes one.
+# and `docker run moist health /media` work as well as serving. The token is NOT put
+# on the command line: `moist serve` reads MOIST_TOKEN itself, because argv is
+# visible to every process on the host (ps, /proc/<pid>/cmdline).
 RUN printf '%s\n' \
         '#!/bin/sh' \
         'set -e' \
-        'if [ "$1" = "serve" ] && [ -n "$MOIST_TOKEN" ]; then' \
-        '  shift' \
-        '  exec /app/moist serve --token "$MOIST_TOKEN" "$@"' \
-        'fi' \
         'exec /app/moist "$@"' \
         > /usr/local/bin/entrypoint.sh \
     && chmod +x /usr/local/bin/entrypoint.sh
@@ -73,4 +70,6 @@ EXPOSE 7788
 ENV MOIST_TOKEN=""
 
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
-CMD ["serve", "--host", "0.0.0.0", "--port", "7788"]
+# --root confines every request's input/output paths to the mounted media volume;
+# serving a non-loopback address refuses to start without one.
+CMD ["serve", "--host", "0.0.0.0", "--port", "7788", "--root", "/media"]

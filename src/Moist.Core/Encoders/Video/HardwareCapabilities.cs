@@ -176,8 +176,23 @@ public sealed class HardwareCapabilities(ILoggerFactory? loggerFactory = null)
             using var process = Process.Start(psi);
             if (process is null) return found;
 
-            var stdout = await process.StandardOutput.ReadToEndAsync(ct);
-            await process.WaitForExitAsync(ct);
+            // Bound the listing and drain stderr too (it's redirected): a wedged ffmpeg here
+            // would otherwise hang startup. No listing just means no hardware encoders offered.
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            timeout.CancelAfter(TimeSpan.FromSeconds(30));
+            string stdout;
+            try
+            {
+                var stderrTask = process.StandardError.ReadToEndAsync(timeout.Token);
+                stdout = await process.StandardOutput.ReadToEndAsync(timeout.Token);
+                await process.WaitForExitAsync(timeout.Token);
+                _ = await stderrTask;
+            }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+            {
+                try { if (!process.HasExited) process.Kill(entireProcessTree: true); } catch { /* best effort */ }
+                return found;
+            }
 
             foreach (var definition in Known)
             {

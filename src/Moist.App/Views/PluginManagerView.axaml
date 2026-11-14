@@ -133,6 +133,12 @@
                                Text="Loading catalog..."
                                HorizontalAlignment="Center" Opacity="0.5" Margin="0,0,0,8"/>
 
+                    <!-- Install Progress (status text carries the detail) -->
+                    <ProgressBar DockPanel.Dock="Top"
+                                 IsVisible="{Binding IsInstalling}"
+                                 IsIndeterminate="True"
+                                 Height="4" Margin="0,0,0,8"/>
+
                     <!-- Empty State -->
                     <StackPanel IsVisible="{Binding !FilteredCatalog.Count}"
                                 VerticalAlignment="Center" HorizontalAlignment="Center" Spacing="8">
@@ -156,15 +162,25 @@
                             <DataGridTextColumn Header="Category" Binding="{Binding Category}" Width="90"/>
                             <DataGridTextColumn Header="Author" Binding="{Binding Author}" Width="120"/>
                             <DataGridTextColumn Header="Description" Binding="{Binding Description}" Width="*"/>
-                            <DataGridTemplateColumn Header="" Width="90">
+                            <DataGridTemplateColumn Header="" Width="110">
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate x:DataType="vm:PluginPackageViewModel">
-                                        <Button Content="Install"
-                                                Command="{Binding $parent[DataGrid].((vm:PluginManagerViewModel)DataContext).InstallPluginCommand}"
-                                                CommandParameter="{Binding}"
-                                                IsEnabled="{Binding !IsInstalled}"
-                                                Padding="6,2" FontSize="11"
-                                                HorizontalAlignment="Center"/>
+                                        <Panel HorizontalAlignment="Center">
+                                            <!-- Direct download available -->
+                                            <Button Content="Install"
+                                                    IsVisible="{Binding HasDownloadUrl}"
+                                                    Command="{Binding $parent[DataGrid].((vm:PluginManagerViewModel)DataContext).InstallPluginCommand}"
+                                                    CommandParameter="{Binding}"
+                                                    IsEnabled="{Binding !IsInstalled}"
+                                                    Padding="6,2" FontSize="11"/>
+                                            <!-- Manual install: open the project page in the browser -->
+                                            <Button Content="Open page"
+                                                    IsVisible="{Binding !HasDownloadUrl}"
+                                                    Click="OpenPluginPage_Click"
+                                                    IsEnabled="{Binding HasWebsite}"
+                                                    Padding="6,2" FontSize="11"
+                                                    ToolTip.Tip="Manual install — opens the plugin's page. Download it, place the files in the plugins directory, then restart moist."/>
+                                        </Panel>
                                     </DataTemplate>
                                 </DataGridTemplateColumn.CellTemplate>
                             </DataGridTemplateColumn>

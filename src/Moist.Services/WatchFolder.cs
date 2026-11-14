@@ -58,6 +58,11 @@ public sealed record WatchedFile
     public long Size { get; init; }
     public long ModifiedTicks { get; init; }
     public bool Succeeded { get; init; }
+
+    /// <summary>Failed encode attempts so far, so a transient failure is retried but a
+    /// genuinely un-encodable file is eventually given up on rather than hammered.</summary>
+    public int Attempts { get; init; }
+
     public DateTime HandledUtc { get; init; }
 }
 
@@ -73,6 +78,9 @@ public sealed record WatchResult(string Input, string? Output, bool Success, str
 /// </summary>
 public sealed class WatchFolderService
 {
+    /// <summary>How many times a failing file is retried before it is given up on.</summary>
+    private const int MaxAttempts = 3;
+
     private readonly WatchFolderOptions _options;
     private readonly ILogger _logger;
     private readonly string _statePath;
@@ -110,10 +118,14 @@ public sealed class WatchFolderService
         {
             if (string.IsNullOrWhiteSpace(options.MoveTo))
                 throw new ArgumentException("moving handled files needs a destination directory.");
-            if (IsInside(options.MoveTo, options.Path) && options.Recursive)
+            // A move destination inside the watched folder feeds moved files back to the
+            // watcher: always when recursive, and even non-recursively when it is the
+            // watched folder itself (the moved-and-renamed file reappears at the top level
+            // and is re-encoded forever). A non-recursive move into a *sub*folder is fine.
+            if (IsInside(options.MoveTo, options.Path) && (options.Recursive || SamePath(options.MoveTo, options.Path)))
                 throw new ArgumentException(
-                    "the move destination is inside the watched folder and the watch is recursive, " +
-                    "so moved files would be found again.");
+                    "the move destination is inside the watched folder, so moved files would be found again. " +
+                    "Choose a destination outside it.");
         }
 
         return options;
@@ -127,6 +139,15 @@ public sealed class WatchFolderService
 
         return string.Equals(a, b, comparison)
                || a.StartsWith(b + Path.DirectorySeparatorChar, comparison);
+    }
+
+    private static bool SamePath(string a, string b)
+    {
+        var comparison = OperatingSystem.IsLinux() ? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase;
+        return string.Equals(
+            Path.GetFullPath(a).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar),
+            Path.GetFullPath(b).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar),
+            comparison);
     }
 
     /// <summary>
@@ -198,9 +219,13 @@ public sealed class WatchFolderService
             var size = info.Length;
             var ticks = info.LastWriteTimeUtc.Ticks;
 
-            // Already done — unless it has changed since, which makes it new work.
+            // Already dealt with, and unchanged since — unless a change makes it new work.
+            // Skip only a prior *success*, or a failure that has exhausted its retry
+            // budget: a transient failure (FFmpeg briefly missing, output locked, disk
+            // momentarily full) should be tried again, not written off as done.
             if (_handled.TryGetValue(file, out var previous)
-                && previous.Size == size && previous.ModifiedTicks == ticks)
+                && previous.Size == size && previous.ModifiedTicks == ticks
+                && (previous.Succeeded || previous.Attempts >= MaxAttempts))
             {
                 _pending.Remove(file);
                 continue;
@@ -229,15 +254,18 @@ public sealed class WatchFolderService
 
     private IEnumerable<string> Enumerate()
     {
-        IEnumerable<string> files;
+        List<string> files;
         try
         {
+            // Materialize inside the try: EnumerateFiles is lazy, so the directory reads
+            // happen while the result is iterated, not when it is called. Iterating it in
+            // the foreach below (outside this try) would leave a vanished share uncaught.
+            // A share that went away should not kill the watcher; the next scan may find it.
             files = Directory.EnumerateFiles(_options.Path, "*",
-                _options.Recursive ? SearchOption.AllDirectories : SearchOption.TopDirectoryOnly);
+                _options.Recursive ? SearchOption.AllDirectories : SearchOption.TopDirectoryOnly).ToList();
         }
         catch (Exception ex)
         {
-            // A share that went away should not kill the watcher; the next scan may find it.
             _logger.LogWarning("Watch: cannot list {Path} — {Error}", _options.Path, ex.Message);
             yield break;
         }
@@ -294,16 +322,24 @@ public sealed class WatchFolderService
         }
         catch { /* recorded with what we have */ }
 
+        // A failure carries the running attempt count forward so retries stay bounded;
+        // a success resets it (0), since the file is now done either way.
+        var attempts = (!succeeded && _handled.TryGetValue(file, out var prev)) ? prev.Attempts + 1 : 0;
+
         _handled[file] = new WatchedFile
         {
             Path = file,
             Size = size,
             ModifiedTicks = ticks,
             Succeeded = succeeded,
+            Attempts = attempts,
             HandledUtc = DateTime.UtcNow,
         };
 
         _pending.Remove(file);
+
+        if (!succeeded && attempts >= MaxAttempts)
+            _logger.LogError("Watch: giving up on {File} after {Attempts} failed attempts", file, attempts);
 
         if (note is not null) _logger.LogDebug("Watch: skipping {File} ({Note})", file, note);
     }

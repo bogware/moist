@@ -46,6 +46,34 @@ public partial class SettingsTabView : UserControl
         catch { /* File picker failure is non-critical */ }
     }
 
+    private async void BrowseToolRow_Click(object? sender, RoutedEventArgs e)
+    {
+        try
+        {
+            // The button lives inside the prerequisites ItemsControl DataTemplate, so its
+            // DataContext is the row's ToolStatusViewModel.
+            if (sender is not Button btn || btn.DataContext is not ToolStatusViewModel rowVm) return;
+
+            var topLevel = TopLevel.GetTopLevel(this);
+            if (topLevel is null) return;
+
+            var files = await topLevel.StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
+            {
+                Title = $"Select {rowVm.Name} executable",
+                AllowMultiple = false,
+                FileTypeFilter = [ExecutableType, new FilePickerFileType("All Files") { Patterns = ["*"] }],
+            });
+
+            if (files.Count > 0)
+            {
+                var path = files[0].TryGetLocalPath();
+                if (path is not null)
+                    await rowVm.SetManualPathAsync(path);
+            }
+        }
+        catch { /* File picker failure is non-critical */ }
+    }
+
     private async void BrowseFolder_Click(object? sender, RoutedEventArgs e)
     {
         try

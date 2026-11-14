@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Text.Json;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Moist.Services;
@@ -181,8 +182,17 @@ public partial class FilterTabViewModel : ViewModelBase
     private void ApplyPreset(FilterPreset? preset)
     {
         if (preset is null) return;
+        LoadChain(preset.EngineId, preset.Filters.Select(pf => (pf.FilterId, pf.Parameters)).ToList());
+    }
 
-        var engine = Engines.FirstOrDefault(e => e.Id == preset.EngineId) ?? SelectedEngine;
+    /// <summary>
+    /// Replace the current chain with the given engine + filters, keeping the model (<see cref="Chain"/>)
+    /// and the UI mirror (<see cref="AppliedFilters"/>) in sync. Shared by preset-apply and
+    /// profile-apply so neither silently populates only one of the two.
+    /// </summary>
+    public void LoadChain(string? engineId, IReadOnlyList<(string FilterId, Dictionary<string, object> Parameters)> filters)
+    {
+        var engine = Engines.FirstOrDefault(e => e.Id == engineId) ?? SelectedEngine;
         if (engine is null) return;
 
         if (SelectedEngine?.Id != engine.Id)
@@ -191,15 +201,21 @@ public partial class FilterTabViewModel : ViewModelBase
         ClearFilters();
 
         var engineFilters = engine.GetAvailableFilters();
-        foreach (var pf in preset.Filters)
+        foreach (var (filterId, parameters) in filters)
         {
-            var filterDef = engineFilters.FirstOrDefault(f => f.Id == pf.FilterId);
+            var filterDef = engineFilters.FirstOrDefault(f => f.Id == filterId);
             if (filterDef is null) continue;
 
-            var paramValues = new Dictionary<string, object>(pf.Parameters);
+            // Values loaded from a saved profile/preset arrive as System.Text.Json JsonElements
+            // (the dict is object-typed). Coerce each to the parameter's declared CLR type so
+            // downstream Convert.ToXxx (param VMs, FilterChain.Validate) and script generation
+            // don't choke on a JsonElement that isn't IConvertible.
+            var paramValues = new Dictionary<string, object>();
             foreach (var (key, param) in filterDef.Parameters)
             {
-                if (!paramValues.ContainsKey(key) && param.DefaultValue is not null)
+                if (parameters.TryGetValue(key, out var raw))
+                    paramValues[key] = FilterParamCoercion.Coerce(raw, param);
+                else if (param.DefaultValue is not null)
                     paramValues[key] = param.DefaultValue;
             }
 
@@ -265,10 +281,38 @@ public partial class FilterTabViewModel : ViewModelBase
         UpdateScriptPreview();
     }
 
+    /// <summary>Bumped on every preview request so a stale off-thread result is discarded.</summary>
+    private int _previewGeneration;
+
     private void UpdateScriptPreview()
     {
         if (SelectedEngine is null) return;
-        ScriptPreview = SelectedEngine.GenerateScript(Chain, "<input_file>");
+
+        // GenerateScript can block: a chain containing the GPU "superres" filter triggers the
+        // one-time SuperResDetector Vulkan probe (an ffmpeg spawn + WaitForExit of up to 20 s) on
+        // the first, uncached call. Running that on the UI thread freezes the Filters tab, so
+        // generate off-thread and marshal the result back. Snapshot the chain on the UI thread
+        // first — the background task must not enumerate the live chain while the user keeps
+        // editing it.
+        var engine = SelectedEngine;
+        var snapshot = new FilterChain();
+        foreach (var f in Chain.Filters)
+            snapshot.Add(f.Filter, new Dictionary<string, object>(f.ParameterValues));
+
+        var generation = ++_previewGeneration;
+        _ = Task.Run(() =>
+        {
+            string script;
+            try { script = engine.GenerateScript(snapshot, "<input_file>"); }
+            catch (Exception ex) { script = $"// preview unavailable: {ex.Message}"; }
+
+            Avalonia.Threading.Dispatcher.UIThread.Post(() =>
+            {
+                // Latest-wins: drop this result if a newer edit already superseded it.
+                if (generation == _previewGeneration)
+                    ScriptPreview = script;
+            });
+        });
     }
 }
 
@@ -336,6 +380,9 @@ public partial class FilterParameterViewModel : ObservableObject
         MinValue = paramDef.MinValue;
         MaxValue = paramDef.MaxValue;
         Options = paramDef.Options;
+        // Defensive: a JsonElement here (e.g. a value that bypassed LoadChain) would throw in the
+        // Convert.ToXxx calls below, since JsonElement isn't IConvertible.
+        value = FilterParamCoercion.Unwrap(value);
         _value = value;
 
         switch (Type)
@@ -363,4 +410,49 @@ public partial class FilterParameterViewModel : ObservableObject
     partial void OnBoolValueChanged(bool value) => Value = value;
     partial void OnStringValueChanged(string value) => Value = value;
     partial void OnSelectedOptionChanged(string? value) { if (value is not null) Value = value; }
+}
+
+/// <summary>
+/// Coerces filter-parameter values loaded from JSON into the CLR primitives the rest of the app
+/// expects. System.Text.Json deserializes object-typed dictionary entries as <see cref="JsonElement"/>,
+/// which is not IConvertible — passing one to Convert.ToInt32/ToDouble/ToBoolean throws
+/// "Object must implement IConvertible", which is what bombed profile-apply for filter profiles.
+/// </summary>
+internal static class FilterParamCoercion
+{
+    /// <summary>Unwrap a <see cref="JsonElement"/> to a CLR primitive; pass anything else through.</summary>
+    public static object? Unwrap(object? value) => value switch
+    {
+        JsonElement e => e.ValueKind switch
+        {
+            JsonValueKind.Number => e.TryGetInt64(out var l) ? l : e.GetDouble(),
+            JsonValueKind.String => e.GetString(),
+            JsonValueKind.True => true,
+            JsonValueKind.False => false,
+            JsonValueKind.Null => null,
+            _ => e.ToString(),
+        },
+        _ => value,
+    };
+
+    /// <summary>Unwrap and convert to the parameter's declared type, falling back to its default.</summary>
+    public static object Coerce(object? raw, FilterParameter def)
+    {
+        var v = Unwrap(raw) ?? def.DefaultValue;
+        if (v is null) return def.DefaultValue ?? string.Empty;
+        try
+        {
+            return def.Type switch
+            {
+                FilterParameterType.Int => Convert.ToInt32(v),
+                FilterParameterType.Double => Convert.ToDouble(v),
+                FilterParameterType.Bool => Convert.ToBoolean(v),
+                _ => v.ToString() ?? string.Empty,
+            };
+        }
+        catch
+        {
+            return def.DefaultValue ?? v;
+        }
+    }
 }

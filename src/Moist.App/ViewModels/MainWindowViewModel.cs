@@ -1,4 +1,5 @@
 using System;
+using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using Moist.Services;
 using Moist.Core.Tools;
@@ -15,6 +16,10 @@ public partial class MainWindowViewModel : ViewModelBase
     public PluginManagerViewModel PluginManager { get; }
     public SettingsTabViewModel SettingsTab { get; }
 
+    /// <summary>Tab order: Encode=0, Batch=1, Filters=2, Plugins=3, Queue=4, Settings=5.</summary>
+    public const int QueueTabIndex = 4;
+    public const int SettingsTabIndex = 5;
+
     [ObservableProperty]
     private int _selectedTabIndex;
 
@@ -29,6 +34,11 @@ public partial class MainWindowViewModel : ViewModelBase
     private string _startupError = string.Empty;
 
     public bool HasStartupError => !string.IsNullOrEmpty(StartupError);
+
+    /// <summary>Set once the "restored interrupted encodes" notice is on the status bar, so the
+    /// concurrent tool-check can't silently overwrite it with the generic "Ready" line. Both
+    /// startup tasks resume their continuations on the UI thread, so this needs no locking.</summary>
+    private bool _restoreNoticePosted;
 
     /// <summary>
     /// Raised when required tools are missing at startup. The view subscribes
@@ -64,8 +74,14 @@ public partial class MainWindowViewModel : ViewModelBase
         PluginManager = new PluginManagerViewModel(Services);
         SettingsTab = new SettingsTabViewModel(Services);
 
-        // Wire up queue status to main status bar and window title
-        Services.JobQueue.JobStatusChanged += (_, job) =>
+        // After a single-file enqueue, jump to the Queue tab so the new job is visible.
+        EncodeTab.JobQueued = () => SelectedTabIndex = QueueTabIndex;
+
+        // Wire up queue status to main status bar and window title.
+        // JobQueue raises these from background job threads for every job after the first, so the
+        // property writes MUST be marshaled to the UI thread — otherwise Avalonia throws a
+        // cross-thread exception that JobQueue swallows, and the status bar/title freeze.
+        Services.JobQueue.JobStatusChanged += (_, job) => Dispatcher.UIThread.Post(() =>
         {
             var running = Services.JobQueue.Jobs.Values.Count(j => j.Status == Core.Jobs.JobStatus.Running);
             var queued = Services.JobQueue.Jobs.Values.Count(j => j.Status == Core.Jobs.JobStatus.Queued);
@@ -74,13 +90,13 @@ public partial class MainWindowViewModel : ViewModelBase
                 : queued > 0 ? $"{queued} job(s) queued" : "Ready";
             if (running == 0)
                 WindowTitle = "moist";
-        };
+        });
 
-        Services.JobQueue.JobProgressUpdated += (_, args) =>
+        Services.JobQueue.JobProgressUpdated += (_, args) => Dispatcher.UIThread.Post(() =>
         {
             if (args.Progress.Percentage > 0)
                 WindowTitle = $"moist [{args.Progress.Percentage:F0}%] {args.Job.Name}";
-        };
+        });
 
         // Write job logs to file when jobs complete or fail
         Services.JobQueue.JobStatusChanged += (_, job) =>
@@ -115,6 +131,7 @@ public partial class MainWindowViewModel : ViewModelBase
             var reusedChunks = restored.Sum(r => r.ReusedChunks);
             var chunkNote = reusedChunks > 0 ? $", reusing {reusedChunks} finished chunk(s)" : "";
 
+            _restoreNoticePosted = true;
             StatusText = $"Restored {restored.Count} interrupted encode(s) from the previous session{chunkNote} — press Run to continue";
         }
         catch
@@ -144,13 +161,17 @@ public partial class MainWindowViewModel : ViewModelBase
             }
             else
             {
+                // Don't clobber a "restored interrupted encodes" notice with the generic ready
+                // line — the two startup tasks race and whichever finishes last would win.
                 var found = results.Count(s => s.IsAvailable);
-                StatusText = $"Ready — {found}/{results.Count} tools available";
+                if (!_restoreNoticePosted)
+                    StatusText = $"Ready — {found}/{results.Count} tools available";
             }
         }
         catch
         {
-            StatusText = "Ready";
+            if (!_restoreNoticePosted)
+                StatusText = "Ready";
         }
     }
 

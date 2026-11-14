@@ -1,3 +1,4 @@
+using Moist.Core.Diagnostics;
 namespace Moist.Cli;
 
 public static class Program
@@ -9,6 +10,9 @@ public static class Program
 
     public static async Task<int> Main(string[] argv)
     {
+        // Last-resort crash capture to %AppData%/moist/logs/crash_*.log (see CrashLog).
+        CrashLog.InstallGlobalHandlers("cli");
+
         Console.OutputEncoding = System.Text.Encoding.UTF8;
 
         if (argv.Length == 0)

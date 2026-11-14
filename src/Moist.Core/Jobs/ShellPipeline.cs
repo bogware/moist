@@ -16,9 +16,19 @@ public static class ShellPipeline
 {
     /// <summary>Quote a path or argument for interpolation into a pipeline.</summary>
     public static string Escape(string value)
-        => OperatingSystem.IsWindows()
-            ? "\"" + value.Replace("\"", "\\\"") + "\""
-            : "'" + value.Replace("'", "'\\''") + "'";
+    {
+        if (!OperatingSystem.IsWindows())
+            return "'" + value.Replace("'", "'\\''") + "'";
+
+        // cmd.exe has no escape for a double quote inside a quoted argument (\" is a C-runtime
+        // convention cmd itself ignores), so one would end the quoting and let the rest of the
+        // value run as shell syntax. Windows paths can't contain '"', and validated filter
+        // values can't either, so refusing it costs nothing legitimate. Newlines would end the
+        // command outright.
+        if (value.IndexOfAny(['"', '\r', '\n']) >= 0)
+            throw new ArgumentException($"refusing to pass a value containing a double quote or newline through cmd.exe: {value}");
+        return "\"" + value + "\"";
+    }
 
     /// <summary>
     /// Point a <see cref="ProcessStartInfo"/> at a shell that will run <paramref name="command"/>.
@@ -65,9 +75,12 @@ public static class ShellPipeline
     {
         var parts = new List<string> { Escape(ffmpegPath), "-y", "-hide_banner" };
 
-        // Before -i, so FFmpeg seeks instead of decoding and discarding.
+        // Before -i, so FFmpeg seeks instead of decoding and discarding. F6, not F3: chunk
+        // starts are frame boundaries and at odd rates (23.976 fps) millisecond rounding seeks
+        // to the wrong frame, so the boundary frame is dropped from this chunk and duplicated in
+        // the next — invisible to the total frame-count check.
         if (vj.TrimStart is { } start)
-            parts.AddRange(["-ss", start.TotalSeconds.ToString("F3", CultureInfo.InvariantCulture)]);
+            parts.AddRange(["-ss", start.TotalSeconds.ToString("F6", CultureInfo.InvariantCulture)]);
 
         parts.AddRange(["-i", Escape(vj.InputFile)]);
 

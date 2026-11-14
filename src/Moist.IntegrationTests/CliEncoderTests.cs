@@ -139,6 +139,20 @@ public sealed class CliEncoderTests(MediaFixture media) : PipelineTestBase(media
         Assert.Contains("--no-cabac", arguments);
     }
 
+    [X264Fact]
+    public async Task X264TwoPassProducesTheWholeClip()
+    {
+        // Standalone-CLI two-pass has its own path: TwoPassProcessor injects --pass/--stats
+        // through CustomArgs into the shell pipeline, and pass 1 writes to the null device.
+        // Only ffmpeg-x264 two-pass was ever covered, so this whole path shipped untested.
+        using var services = CreateCliServices();
+        var output = await EncodeAsync(services, "cli-x264", Media.SampleVideo, "cli_x264_2pass.mkv",
+            b => { b.Mode = VideoEncodingMode.TwoPassBitrate; b.Bitrate = 500; });
+
+        Assert.Equal("h264", Ffmpeg.VideoCodec(output));
+        Assert.Equal(Ffmpeg.FrameCount(Media.SampleVideo), Ffmpeg.FrameCount(output));
+    }
+
     // ---------------- x265 ----------------
 
     [X265Fact]
@@ -161,12 +175,82 @@ public sealed class CliEncoderTests(MediaFixture media) : PipelineTestBase(media
         var output = await EncodeAsync(services, "cli-x265", Media.NtscVideo, "cli_x265_ntsc.mkv");
 
         Assert.Equal("24000/1001", Ffmpeg.FrameRate(output));
-        Assert.Equal(Ffmpeg.FrameCount(Media.NtscVideo), Ffmpeg.FrameCount(output));
 
-        // One decimal is loose enough to ignore how containers round their own duration,
-        // and tight enough to catch the failure this guards: the same frames timed at an
-        // assumed 25 fps come out ~4% short.
-        Assert.Equal(Ffmpeg.Duration(Media.NtscVideo), Ffmpeg.Duration(output), 1);
+        // FFmpeg before 7 (Debian 12's 5.1, Ubuntu 24.04's 6.1) duplicates the final frame when
+        // it converts to the constant rate a y4m pipe requires: one repeated 42 ms frame at the very
+        // end. CFR conversion is still right — it is what keeps a variable-rate source in sync once
+        // x265's untimed stream is wrapped at the nominal rate — and chunks/trims are capped by
+        // -frames:v, so only a whole-file encode on an old FFmpeg sees it. Exact on 7+.
+        var expected = Ffmpeg.FrameCount(Media.NtscVideo);
+        if (Ffmpeg.MajorVersion >= 7) Assert.Equal(expected, Ffmpeg.FrameCount(output));
+        else Assert.InRange(Ffmpeg.FrameCount(output), expected, expected + 1);
+
+        // Within 60 ms: one frame (FFmpeg < 7's trailing CFR duplicate, above) plus container
+        // rounding — and still far tighter than the failure this guards: the same frames timed at an
+        // assumed 25 fps come out ~4% (130 ms here) short. Not "to one decimal place": 3.023 vs
+        // 3.067 straddles a rounding boundary and failed although they differ by a single frame.
+        AssertDurationMatches(Ffmpeg.Duration(Media.NtscVideo), Ffmpeg.Duration(output));
+    }
+
+    /// <summary>
+    /// The bug the frame-count and duration checks above could not see: with B-frames, the
+    /// FFmpeg wrap numbered packets in decode order, so the presentation timestamps ran
+    /// 0, .042, .167, .125, .209, .083… — right frames, wrong times. Every wrap mode must give
+    /// strictly increasing, evenly spaced presentation timestamps.
+    /// </summary>
+    [X265Fact]
+    public async Task X265_DefaultWrap_GivesMonotonicEvenlySpacedTimestamps()
+    {
+        using var services = CreateCliServices();
+        var output = await EncodeAsync(services, "cli-x265", Media.NtscVideo, "cli_x265_order.mkv");
+        AssertMonotonicEven(output);
+    }
+
+    [X265Fact]
+    public async Task X265_MkvmergeWrap_KeepsBFrames_WithCorrectTimestamps()
+    {
+        var mkvmerge = FindMkvmerge();
+        if (mkvmerge is null) return;   // MKVToolNix not installed here: nothing to prove
+        using var services = CreateCliServices();
+        services.Settings.MkvMergePath = mkvmerge;
+        var output = await EncodeAsync(services, "cli-x265", Media.NtscVideo, "cli_x265_mkvmerge.mkv",
+            b => b.X265StreamWrap = X265StreamWrap.Mkvmerge);
+        AssertMonotonicEven(output);
+        AssertDurationMatches(Ffmpeg.Duration(Media.NtscVideo), Ffmpeg.Duration(output));
+    }
+
+    private static void AssertDurationMatches(double expected, double actual)
+        => Assert.True(Math.Abs(expected - actual) <= 0.060, $"duration {actual:F3}s vs source {expected:F3}s");
+
+    private static void AssertMonotonicEven(string file)
+    {
+        var pts = Ffmpeg.Probe("-v error -select_streams v:0 -show_entries frame=pts_time -of csv=p=0", file)
+            .Split('\n').Select(l => l.Trim().Trim(',')).Where(l => l.Length > 0)
+            .Select(l => double.Parse(l, System.Globalization.CultureInfo.InvariantCulture)).ToList();
+        Assert.True(pts.Count > 10, $"only {pts.Count} frames probed");
+        for (var i = 1; i < pts.Count; i++)
+        {
+            Assert.True(pts[i] > pts[i - 1], $"timestamps go backwards at frame {i}: {pts[i - 1]:F3} -> {pts[i]:F3}");
+            Assert.InRange(pts[i] - pts[i - 1], 0.035, 0.050);   // 24000/1001 ≈ 41.7 ms (Matroska ms rounding)
+        }
+    }
+
+    private static string? FindMkvmerge()
+    {
+        foreach (var candidate in new[] { "mkvmerge", @"C:\Program Files\MKVToolNix\mkvmerge.exe" })
+        {
+            try
+            {
+                using var p = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(candidate, "--version")
+                { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true });
+                if (p is null) continue;
+                p.StandardOutput.ReadToEnd();
+                p.WaitForExit(10_000);
+                if (p.ExitCode == 0) return candidate;
+            }
+            catch { /* not here */ }
+        }
+        return null;
     }
 
     [X265Fact]
@@ -187,6 +271,21 @@ public sealed class CliEncoderTests(MediaFixture media) : PipelineTestBase(media
 
         Assert.Empty(Directory.GetFiles(Media.TempDir, "*.hevc"));
         Assert.Empty(Directory.GetFiles(Path.GetDirectoryName(output)!, "*.hevc"));
+    }
+
+    [X265Fact]
+    public async Task X265TwoPassProducesTheWholeClip()
+    {
+        // The raw-stream wrap in OnAfterSuccessAsync runs after every successful run, including
+        // pass 1, whose output is the null device. Before the fix it threw ("wrote no bitstream"
+        // / "Unable to choose an output format") and the whole two-pass job failed after the full
+        // first-pass encode. This exercises pass 1 -> null-device wrap skip -> pass 2 -> real wrap.
+        using var services = CreateCliServices();
+        var output = await EncodeAsync(services, "cli-x265", Media.SampleVideo, "cli_x265_2pass.mkv",
+            b => { b.Mode = VideoEncodingMode.TwoPassBitrate; b.Bitrate = 500; });
+
+        Assert.Equal("hevc", Ffmpeg.VideoCodec(output));
+        Assert.Equal(Ffmpeg.FrameCount(Media.SampleVideo), Ffmpeg.FrameCount(output));
     }
 
     /// <summary>Exposes the argument builder so a test can read what x264 is actually sent.</summary>

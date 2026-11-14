@@ -309,6 +309,33 @@ public sealed class PipelineTests(MediaFixture media) : PipelineTestBase(media)
         Assert.True(File.Exists(request.OutputFile));
     }
 
+    /// <summary>
+    /// Cleanup used to delete any directory it left empty — including the temp directory itself.
+    /// A batch builds every job up front, so when the first finished in a dedicated (otherwise
+    /// empty) temp folder, the folder vanished and the next job wrote into nothing.
+    /// </summary>
+    [FfmpegFact]
+    public async Task CleanupNeverDeletesTheTempDirectoryItself()
+    {
+        using var services = CreateServices();
+        var info = await services.MediaAnalyzer.AnalyzeAsync(Media.SampleVideo, CancellationToken.None);
+        var dedicated = Path.Combine(Media.Root, "dedicated_tmp_" + Guid.NewGuid().ToString("N")[..6]);
+
+        EncodeRequest Req(string name) => new EncodeRequestBuilder
+        {
+            InputFile = Media.SampleVideo, OutputFile = Media.Output(name), TempDirectory = dedicated,
+            VideoEncoderId = "ffmpeg-x264", AudioEncoderId = "ffmpeg-audio-aac", Quality = 40,
+        }.Build();
+
+        // Both built before either runs — exactly what a batch does.
+        var jobs = EncodeJobBuilder.Build(Req("batch_a.mkv"), info).AllJobs
+            .Concat(EncodeJobBuilder.Build(Req("batch_b.mkv"), info).AllJobs).ToList();
+
+        Assert.True(await RunAsync(services, jobs), Failure(jobs));
+        Assert.True(File.Exists(Media.Output("batch_b.mkv")));
+        Assert.True(Directory.Exists(dedicated), "the temp directory was deleted by cleanup");
+    }
+
     [FfmpegFact]
     public async Task MissingTool_FailsWithAnActionableMessage()
     {
@@ -370,6 +397,7 @@ public sealed class EncodeRequestBuilder
     public string? ExternalSubtitleFile { get; set; }
     public string? FilterScript { get; set; }
     public string? FilterEngineId { get; set; }
+    public X265StreamWrap X265StreamWrap { get; set; } = X265StreamWrap.NoBFrames;
 
     public EncodeRequest Build() => new()
     {
@@ -388,6 +416,7 @@ public sealed class EncodeRequestBuilder
         ExternalSubtitleFile = ExternalSubtitleFile,
         FilterScript = FilterScript,
         FilterEngineId = FilterEngineId,
+        X265StreamWrap = X265StreamWrap,
         AudioBitrate = 96,
     };
 }

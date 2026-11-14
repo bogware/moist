@@ -1,7 +1,9 @@
 using System.Diagnostics;
 using System.Globalization;
 using System.Text.RegularExpressions;
+using Microsoft.Extensions.Logging;
 using Moist.Core.Jobs;
+using Moist.Core.Media;
 
 namespace Moist.Core.Muxers;
 
@@ -11,19 +13,63 @@ namespace Moist.Core.Muxers;
 public sealed partial class FFmpegMuxProcessor : CommandLineProcessor
 {
     private readonly string _ffmpegPath;
+    private readonly string? _doviToolPath;
+    private readonly string? _hdr10PlusToolPath;
+    private readonly string? _mkvmergePath;
+    private readonly ILoggerFactory? _loggerFactory;
     private readonly Stopwatch _stopwatch = new();
 
     public override string Id => "ffmpeg-mux";
     public override string DisplayName => "FFmpeg Muxer";
 
-    public FFmpegMuxProcessor(string ffmpegPath)
+    public FFmpegMuxProcessor(
+        string ffmpegPath,
+        string? doviToolPath = null,
+        string? hdr10plusToolPath = null,
+        ILoggerFactory? loggerFactory = null,
+        string? mkvmergePath = null)
     {
         _ffmpegPath = ffmpegPath;
+        _doviToolPath = doviToolPath;
+        _hdr10PlusToolPath = hdr10plusToolPath;
+        _loggerFactory = loggerFactory;
+        _mkvmergePath = string.IsNullOrWhiteSpace(mkvmergePath) ? null : mkvmergePath;
     }
 
     public override bool CanProcess(Job job) => job is MuxJob;
 
     protected override string GetExecutablePath(Job job) => _ffmpegPath;
+
+    /// <summary>
+    /// Runs just before the mux command, i.e. after the video encode has produced VideoInput and
+    /// before we combine streams. That is the one point where we can enrich the encoded video with
+    /// the source's dynamic HDR metadata (opt-in, experimental). It replaces VideoInput in place, so
+    /// the mux command built above still points at the right path. Fully guarded: the preserver
+    /// never throws and never corrupts the file, and any problem is logged and skipped so the mux
+    /// proceeds normally.
+    /// </summary>
+    protected override void OnBeforeStart(ProcessStartInfo psi, Job job)
+    {
+        if (job is not MuxJob { PreserveDynamicHdr: true } mj) return;
+        if (!mj.SourceHasDolbyVision && !mj.SourceHasHdr10Plus) return;
+        if (mj.VideoInput is null || mj.SourceFile is null) return;
+
+        try
+        {
+            var preserver = new DynamicHdrPreserver(_ffmpegPath, _doviToolPath, _hdr10PlusToolPath, _loggerFactory, _mkvmergePath);
+            // The mux runs on a background job worker (no sync context), so blocking here is safe.
+            var result = preserver
+                .PreserveAsync(mj.SourceFile, mj.VideoInput, mj.SourceHasDolbyVision, mj.SourceHasHdr10Plus)
+                .GetAwaiter().GetResult();
+            Logger.LogInformation("Dynamic-HDR passthrough: {Outcome} — {Message}", result.Outcome, result.Message);
+        }
+        catch (Exception ex)
+        {
+            // Belt-and-suspenders: the preserver is contracted never to throw, but never let an
+            // experimental step break a normal mux.
+            Logger.LogWarning(ex, "Dynamic-HDR passthrough threw unexpectedly; muxing without it.");
+        }
+    }
 
     protected override string BuildArguments(Job job)
     {
@@ -72,6 +118,14 @@ public sealed partial class FFmpegMuxProcessor : CommandLineProcessor
         if (wantsSource)
             RegisterInput(mj.SourceFile!);
 
+        // An explicit chapter file is a real input and must be registered here, among the other
+        // inputs, so its -i lands BEFORE the output-side options. Appending "-i chapters" after
+        // -map/-c/-f (as the old code did) bound those output options to the chapter input and
+        // FFmpeg rejected -map as an input option.
+        var hasChapterFile = mj.ChapterFile is not null && File.Exists(mj.ChapterFile);
+        if (hasChapterFile)
+            RegisterInput(mj.ChapterFile!);
+
         // Add -i arguments with -itsoffset before inputs that need delay
         foreach (var file in inputFiles)
         {
@@ -91,14 +145,21 @@ public sealed partial class FFmpegMuxProcessor : CommandLineProcessor
             args.AddRange(["-map", $"{idx}:a"]);
         }
 
-        // Map subtitles — if they come from the source file, map each stream
-        if (mj.SubtitleInputs.Count > 0)
+        // Map subtitles. Each SubtitleTrackInput maps to exactly one output stream: source subs
+        // by their subtitle-relative index (so a subset selection maps only the chosen streams
+        // instead of every subtitle in the file), external files by their single stream. Skip
+        // entirely for containers that can't carry text subtitles (AVI, MPEG-TS) — mapping them
+        // there fails the whole mux.
+        var subCodec = SubtitleCodecFor(mj.Container);
+        var mappedSubs = new List<SubtitleTrackInput>();
+        if (subCodec is not null)
         {
-            var subsByFile = mj.SubtitleInputs.GroupBy(s => s.FilePath, StringComparer.OrdinalIgnoreCase);
-            foreach (var group in subsByFile)
+            foreach (var sub in mj.SubtitleInputs)
             {
-                var idx = fileIndexMap[group.Key];
-                args.AddRange(["-map", $"{idx}:s?"]);
+                var idx = fileIndexMap[sub.FilePath];
+                args.Add("-map");
+                args.Add(sub.SourceStreamIndex is int si ? $"{idx}:s:{si}?" : $"{idx}:s?");
+                mappedSubs.Add(sub);
             }
         }
 
@@ -109,6 +170,14 @@ public sealed partial class FFmpegMuxProcessor : CommandLineProcessor
 
         // Copy all streams (muxing, not re-encoding)
         args.AddRange(["-c", "copy"]);
+
+        // Subtitle codec must be container-aware: text subs (subrip/ass) cannot be stream-copied
+        // into MP4/MOV/WebM, so FFmpeg aborts the whole mux under a blanket "-c copy". Override the
+        // subtitle codec for those containers (mov_text / webvtt); Matroska copies as-is. This
+        // "-c:s" overrides "-c copy" for subtitle streams only. (Image subs like PGS can't convert
+        // to mov_text/webvtt; EncodeJobBuilder warns about that combination up front.)
+        if (mappedSubs.Count > 0 && subCodec is not null)
+            args.AddRange(["-c:s", subCodec]);
 
         // Some containers (AVI, MPEG-TS) need H.264/H.265 in Annex-B form, but our
         // intermediate file is Matroska, which stores it length-prefixed. Without this
@@ -128,9 +197,25 @@ public sealed partial class FFmpegMuxProcessor : CommandLineProcessor
             if (audio.Language is not null)
                 args.AddRange([$"-metadata:s:a:{i}", $"language={audio.Language}"]);
             if (audio.TrackName is not null)
-                args.AddRange([$"-metadata:s:a:{i}", $"title={Quote(audio.TrackName)}"]);
+                args.AddRange([$"-metadata:s:a:{i}", $"title={Quote(EscapeArgValue(audio.TrackName))}"]);
             if (audio.IsDefault)
                 args.AddRange([$"-disposition:a:{i}", "default"]);
+        }
+
+        // Per-subtitle metadata + disposition, indexed s:s:N by output subtitle stream. Because
+        // each SubtitleTrackInput now maps to exactly one output stream, N lines up with mappedSubs.
+        // For source subs this restores the language/forced flags that a subset selection would
+        // otherwise lose; for an external sub it's the only way its default/forced flag is set.
+        for (var n = 0; n < mappedSubs.Count; n++)
+        {
+            var sub = mappedSubs[n];
+            if (sub.Language is not null)
+                args.AddRange([$"-metadata:s:s:{n}", $"language={sub.Language}"]);
+            if (sub.TrackName is not null)
+                args.AddRange([$"-metadata:s:s:{n}", $"title={Quote(EscapeArgValue(sub.TrackName))}"]);
+            var disposition = SubtitleDisposition(sub.IsDefault, sub.IsForced);
+            if (disposition is not null)
+                args.AddRange([$"-disposition:s:{n}", disposition]);
         }
 
         // Chapters: an explicit chapter file wins, otherwise take them from the source.
@@ -138,10 +223,12 @@ public sealed partial class FFmpegMuxProcessor : CommandLineProcessor
         // supported is a no-op at best.
         var containerHasChapters = mj.Container is ContainerFormat.Mkv or ContainerFormat.Mp4 or ContainerFormat.Mov;
 
-        if (mj.ChapterFile is not null)
+        if (hasChapterFile)
         {
-            var chapterIdx = inputFiles.Count;
-            args.AddRange(["-i", Quote(mj.ChapterFile), "-map_chapters", chapterIdx.ToString()]);
+            // The chapter file was registered as a normal input above; reference it by index.
+            // Its streams are never -map'd, so -c copy is a no-op for it — only its chapters
+            // are taken via -map_chapters.
+            args.AddRange(["-map_chapters", fileIndexMap[mj.ChapterFile!].ToString()]);
         }
         else if (wantsSource && mj.CopyChapters && containerHasChapters)
         {
@@ -201,6 +288,38 @@ public sealed partial class FFmpegMuxProcessor : CommandLineProcessor
         }
         return null;
     }
+
+    /// <summary>
+    /// The subtitle codec to use for a container, or null when the container can't carry
+    /// (text) subtitles. Matroska copies srt/ass/pgs as-is; MP4/MOV need mov_text and WebM
+    /// needs webvtt because text subs can't be stream-copied into them; AVI and MPEG-TS get
+    /// no subtitle streams at all.
+    /// </summary>
+    private static string? SubtitleCodecFor(ContainerFormat container) => container switch
+    {
+        ContainerFormat.Mkv => "copy",
+        ContainerFormat.Mp4 or ContainerFormat.Mov => "mov_text",
+        ContainerFormat.Webm => "webvtt",
+        _ => null,
+    };
+
+    /// <summary>FFmpeg -disposition value for a subtitle, or null when neither flag is set.</summary>
+    private static string? SubtitleDisposition(bool isDefault, bool isForced) => (isDefault, isForced) switch
+    {
+        (true, true) => "default+forced",
+        (true, false) => "default",
+        (false, true) => "forced",
+        _ => null,
+    };
+
+    /// <summary>
+    /// Escape a metadata value that will be wrapped in double quotes and passed through
+    /// ProcessStartInfo.Arguments (which is re-parsed by the OS). Track titles come from source
+    /// metadata, so a title containing a quote would otherwise corrupt the argument split. Only
+    /// for values, never for paths — <see cref="CommandLineProcessor.Quote"/> keeps paths intact.
+    /// </summary>
+    private static string EscapeArgValue(string value) =>
+        value.Replace("\\", "\\\\").Replace("\"", "\\\"");
 
     [GeneratedRegex(@"size=\s*(\d+)kB")]
     private static partial Regex SizeRegex();

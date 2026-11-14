@@ -150,9 +150,12 @@ public sealed class LibraryHealthChecker(
             issues.Add(new LibraryIssue(file, LibraryIssueKind.DecodeErrors, Summarize(decodeErrors)));
 
         // A container's frame count is a claim, not a measurement. Trusting it is how a
-        // truncated file passes as healthy.
+        // truncated file passes as healthy — but only trust the *heuristic* when the claim
+        // is itself a real measurement (nb_frames). For VFR/estimate content TotalFrames is
+        // duration*r_frame_rate, which overshoots the true count and would flag clean files.
         var claimed = info.Video?.TotalFrames ?? 0;
-        if (claimed > 0 && framesDecoded > 0 && framesDecoded < claimed * 0.995)
+        if (info.Video?.FrameCountIsExact == true && claimed > 0 && framesDecoded > 0 &&
+            framesDecoded < claimed * 0.995)
             issues.Add(new LibraryIssue(file, LibraryIssueKind.Truncated,
                 $"decoded {framesDecoded:N0} frames but the container claims {claimed:N0}"));
 
@@ -209,8 +212,10 @@ public sealed class LibraryHealthChecker(
 
     private async Task<long> CountFramesAsync(string file, CancellationToken ct)
     {
-        var probe = Path.Combine(Path.GetDirectoryName(ffmpegPath) ?? "", "ffprobe");
-        if (!File.Exists(probe) && !File.Exists(probe + ".exe")) probe = "ffprobe";
+        // Use the ffprobe the checker was already handed via the analyzer, which knows the
+        // configured location. Deriving it from the ffmpeg directory fails silently when the
+        // user has ffprobe configured somewhere else, skipping the truncation check entirely.
+        var probe = analyzer.FfprobePath;
 
         using var process = new Process
         {
@@ -240,15 +245,22 @@ public sealed class LibraryHealthChecker(
             await stderr;
 
             var output = await stdout;
-            return long.TryParse(output.Trim().Trim(',').Split('\n')[0].Trim(), out var frames) ? frames : 0;
+            // Shared parser: an MPEG-TS prints "N," twice (once per program) and the old first-line
+            // parse choked on the trailing comma, reporting 0 frames for every broadcast capture.
+            return Math.Max(0, Moist.Core.Chunking.FFmpegConcatProcessor.ParseFrameCount(output));
         }
         catch (OperationCanceledException)
         {
             if (!process.HasExited) process.Kill(entireProcessTree: true);
             throw;
         }
-        catch
+        catch (Exception ex)
         {
+            // Surface the failure: returning 0 silently skips the truncation check, so a
+            // truncated file would be reported healthy with no trace of why.
+            _logger.LogWarning(
+                "Health: frame count failed for {File} — truncation check skipped: {Error}",
+                file, ex.Message);
             return 0;
         }
     }

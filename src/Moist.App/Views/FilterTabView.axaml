@@ -35,33 +35,49 @@
                         Padding="8,4"/>
             </StackPanel>
 
-            <!-- Presets Section -->
+            <!-- Filter Presets Section -->
             <Border DockPanel.Dock="Bottom"
-                    Classes="section" Padding="8" Margin="0,8,0,0"
-                    Height="180">
-                <DockPanel>
-                    <TextBlock DockPanel.Dock="Top" Text="Presets" FontWeight="SemiBold"
-                               Margin="0,0,0,4" FontSize="13"/>
-                    <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" Spacing="4" Margin="0,4,0,0">
+                    Classes="section" Padding="8" Margin="0,8,0,0">
+                <StackPanel Spacing="6">
+                    <TextBlock Text="Filter Presets" FontWeight="SemiBold"
+                               Margin="0,0,0,0" FontSize="13"/>
+                    <TextBlock Text="Saved filter chains. Applying one loads its filters into the chain."
+                               FontSize="10" Opacity="0.5" TextWrapping="Wrap" Margin="0,0,0,2"/>
+                    <!-- Fixed item Width keeps every row the same size so the closed box / popup
+                         don't resize as you scroll. -->
+                    <ComboBox ItemsSource="{Binding FilteredPresets}"
+                              SelectedItem="{Binding SelectedPreset}"
+                              PlaceholderText="Select a filter preset..."
+                              HorizontalAlignment="Stretch"
+                              MaxDropDownHeight="420">
+                        <ComboBox.ItemTemplate>
+                            <DataTemplate x:DataType="filters:FilterPreset">
+                                <StackPanel Spacing="1" Width="224">
+                                    <Grid ColumnDefinitions="*,Auto">
+                                        <TextBlock Text="{Binding Name}" FontWeight="SemiBold" FontSize="12"
+                                                   TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
+                                        <Border Grid.Column="1" Background="#44888888" CornerRadius="3"
+                                                Padding="4,1" Margin="6,0,0,0" VerticalAlignment="Center">
+                                            <TextBlock Text="{Binding Category}" FontSize="9" Opacity="0.7"/>
+                                        </Border>
+                                    </Grid>
+                                    <TextBlock Text="{Binding Description}" FontSize="10" Opacity="0.5"
+                                               TextTrimming="CharacterEllipsis" MaxLines="1"/>
+                                </StackPanel>
+                            </DataTemplate>
+                        </ComboBox.ItemTemplate>
+                    </ComboBox>
+                    <StackPanel Orientation="Horizontal" Spacing="4">
                         <Button Content="Apply" Command="{Binding ApplyPresetCommand}"
-                                CommandParameter="{Binding SelectedPreset}" Padding="8,4"/>
+                                CommandParameter="{Binding SelectedPreset}" Padding="8,4"
+                                ToolTip.Tip="Load this preset's filters into the chain"/>
                         <Button Content="Save Current..." Name="SavePresetButton"
-                                Click="SavePreset_Click" Padding="8,4"/>
+                                Click="SavePreset_Click" Padding="8,4"
+                                ToolTip.Tip="Save the current filter chain as a new preset"/>
                         <Button Content="Delete" Command="{Binding DeletePresetCommand}"
                                 CommandParameter="{Binding SelectedPreset}" Padding="8,4"/>
                     </StackPanel>
-                    <ListBox ItemsSource="{Binding FilteredPresets}"
-                             SelectedItem="{Binding SelectedPreset}">
-                        <ListBox.ItemTemplate>
-                            <DataTemplate x:DataType="filters:FilterPreset">
-                                <StackPanel Spacing="1">
-                                    <TextBlock Text="{Binding Name}" FontWeight="SemiBold" FontSize="12"/>
-                                    <TextBlock Text="{Binding Category}" FontSize="10" Opacity="0.5"/>
-                                </StackPanel>
-                            </DataTemplate>
-                        </ListBox.ItemTemplate>
-                    </ListBox>
-                </DockPanel>
+                </StackPanel>
             </Border>
 
             <!-- Available Filters List -->

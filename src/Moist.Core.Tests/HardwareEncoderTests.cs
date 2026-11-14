@@ -144,6 +144,17 @@ public class HardwareEncoderTests
     public void VideoToolboxQuality_InvertsTheQpScale(int qp, int expected)
         => Assert.Equal(expected, FFmpegHardwareVideoProcessor.QpToVideoToolboxQuality(qp));
 
+    [Theory]
+    // The GPU encoders reject the software (libx264/libx265) planar names; forcing 10/12-bit
+    // must reach them as a vendor surface format, not "yuv420p10le".
+    [InlineData("yuv420p", "nv12")]
+    [InlineData("yuv420p10le", "p010le")]
+    [InlineData("yuv420p12le", "p016le")]
+    [InlineData("yuv444p10le", "yuv444p16le")]
+    [InlineData("yuv444p", "yuv444p")]   // passes through unchanged
+    public void HardwarePixelFormat_TranslatesSoftwareNamesToVendorSurfaces(string software, string hardware)
+        => Assert.Equal(hardware, FFmpegHardwareVideoProcessor.ToHardwarePixelFormat(software));
+
     [Fact]
     public void FailureSummary_PrefersTheCauseOverTheConsequence()
     {

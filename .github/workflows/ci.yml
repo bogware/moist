@@ -6,15 +6,22 @@ on:
   pull_request:
     branches: [main]
 
+# Self-hosted runners are scarce; superseded pushes to the same ref should not
+# tie up a runner running a build nobody is waiting on.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
 jobs:
   build-and-test-windows:
     name: Build & Test (Windows)
-    runs-on:
-      group: Default
-      labels: [Windows]
+    # Pull requests from forks run on GitHub-hosted runners, never on ours: on a public repo a
+    # fork PR is arbitrary code (MSBuild targets, tests), and a self-hosted runner would execute
+    # it on our machine. Pushes and same-repo PRs need write access, so they stay self-hosted.
+    runs-on: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) && 'windows-latest' || fromJSON('{"group":"Default","labels":["Windows"]}') }}
 
     env:
       DOTNET_INSTALL_DIR: ${{ github.workspace }}\.dotnet
@@ -26,6 +33,11 @@ jobs:
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 8.0.x
+
+      # GitHub-hosted runners have no FFmpeg; without it the integration suite skips itself.
+      - name: Install FFmpeg (GitHub-hosted)
+        if: runner.environment == 'github-hosted'
+        run: choco install ffmpeg -y --no-progress
 
       - name: Restore dependencies
         working-directory: src
@@ -70,9 +82,8 @@ jobs:
 
   build-and-test-linux:
     name: Build & Test (Linux)
-    runs-on:
-      group: Default
-      labels: [Linux]
+    # See the Windows job: fork PRs run on GitHub-hosted runners only.
+    runs-on: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) && 'ubuntu-latest' || fromJSON('{"group":"Default","labels":["Linux"]}') }}
 
     env:
       DOTNET_INSTALL_DIR: ${{ github.workspace }}/.dotnet
@@ -84,6 +95,10 @@ jobs:
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 8.0.x
+
+      - name: Install FFmpeg (GitHub-hosted)
+        if: runner.environment == 'github-hosted'
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg x264 x265 mkvtoolnix
 
       - name: Restore dependencies
         working-directory: src

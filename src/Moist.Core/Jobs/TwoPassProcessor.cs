@@ -105,8 +105,11 @@ public sealed class TwoPassProcessor : IJobProcessor
         string passArgs;
         if (isCli)
         {
-            // x264/x265 CLI accept NUL and /dev/null as an output path directly.
-            passArgs = $"--pass {pass} --stats \"{passLogFile}\"";
+            // The cli-* args are interpolated into a shell pipeline (ShellPipeline.Apply),
+            // where double quotes still let sh expand '$' and backticks in the path. Escape
+            // yields single quotes on Unix (no expansion) and double quotes on Windows —
+            // matching how every other path in the pipeline is quoted.
+            passArgs = $"--pass {pass} --stats {ShellPipeline.Escape(passLogFile)}";
         }
         else
         {

@@ -3,6 +3,7 @@ using System.Text.Json.Serialization;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moist.Core.Chunking;
+using Moist.Core.Settings;
 
 namespace Moist.Services;
 
@@ -53,9 +54,7 @@ public sealed class EncodeQueueStore(ILoggerFactory? loggerFactory = null)
 
     public static string GetQueueFilePath()
     {
-        var dir = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "moist");
-        Directory.CreateDirectory(dir);
+        var dir = MoistPaths.EnsureRoot();
         return Path.Combine(dir, "queue.json");
     }
 
@@ -146,7 +145,9 @@ public sealed class EncodeQueueStore(ILoggerFactory? loggerFactory = null)
             {
                 _logger.LogInformation("Discarding {Count} queued encode(s) whose source no longer exists",
                     all.Count - usable.Count);
-                Write(usable);
+                // A write failure while pruning must not propagate out of the restore path.
+                try { Write(usable); }
+                catch (Exception ex) { _logger.LogWarning(ex, "Could not prune queued encodes"); }
             }
 
             return usable;
@@ -195,7 +196,10 @@ public sealed class EncodeQueueStore(ILoggerFactory? loggerFactory = null)
             return;
         }
 
-        var tmp = path + ".tmp";
+        // A unique temp name keeps a concurrent moist process (GUI + `moist serve`
+        // share one queue.json) from clobbering our temp file mid-write, so the atomic
+        // move can't hit a missing or half-written file.
+        var tmp = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
         File.WriteAllText(tmp, JsonSerializer.Serialize(entries, JsonOptions));
         File.Move(tmp, path, overwrite: true);
     }

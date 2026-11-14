@@ -67,6 +67,20 @@ public sealed class ChunkedEncode(AppServices services, ILoggerFactory? loggerFa
     public async Task<ChunkPlan?> PlanAsync(
         EncodeRequest request, MediaFileInfo info, ChunkingOptions options, CancellationToken ct = default)
     {
+        // AI upscale (Real-ESRGAN) and RIFE interpolation are whole-file, frame-based passes:
+        // their processors own the entire VideoJob and extract frames with no trim range, so a
+        // chunk's slice can't be expressed and chunk jobs would silently fall back to a plain
+        // encode (dropping the upscale/interpolation). Chunking is only a CPU-recovery
+        // optimisation, whereas AI upscale/RIFE is the user's actual intent — so decline
+        // chunking and let Build take the single-job path, which sets AiUpscaleModel/RifeTargetFps
+        // and selects the correct processor.
+        if (!string.IsNullOrWhiteSpace(request.AiUpscaleModel) || request.RifeTargetFps > 0)
+        {
+            _logger.LogInformation(
+                "AI upscale (Real-ESRGAN) / RIFE are whole-file passes; encoding without chunking.");
+            return null;
+        }
+
         var video = info.Video;
         if (video is null || video.Framerate <= 0)
         {
@@ -77,6 +91,37 @@ public sealed class ChunkedEncode(AppServices services, ILoggerFactory? loggerFa
         var totalFrames = video.TotalFrames > 0
             ? video.TotalFrames
             : (long)Math.Round(info.Duration.TotalSeconds * video.Framerate);
+
+        // A plan must tile the source exactly, and the join verifies it by decoding. When the
+        // container records no frame count (MPEG-TS, most broadcast captures) TotalFrames is only
+        // duration × rate — and the container duration includes the audio's head start, so a MeTV
+        // capture "had" 4509 frames that decoded to 4462 and every chunked encode failed its join.
+        // Count by decoding instead: the same measure the verification uses, so the two agree.
+        if (!video.FrameCountIsExact && ChunkPlanner.IsWorthwhile(totalFrames, video.Framerate, options))
+        {
+            _logger.LogInformation(
+                "The container records no frame count; counting frames by decoding so the chunks tile exactly");
+            try
+            {
+                var counted = await FFmpegConcatProcessor.CountFramesAsync(services.Settings.FFprobePath, request.InputFile, ct);
+                if (counted <= 0)
+                {
+                    // Keeping the estimate would only fail the join at the very end, after all the work.
+                    _logger.LogWarning("Could not count frames exactly; encoding without chunking");
+                    return null;
+                }
+                if (counted != totalFrames)
+                    _logger.LogInformation("Frame count: {Counted} decoded (the duration estimate said {Estimate})",
+                        counted, totalFrames);
+                totalFrames = counted;
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                // Without an exact count the join could only fail at the end, after all the work.
+                _logger.LogWarning(ex, "Could not count frames exactly; encoding without chunking");
+                return null;
+            }
+        }
 
         if (!ChunkPlanner.IsWorthwhile(totalFrames, video.Framerate, options))
         {
@@ -220,6 +265,14 @@ public sealed class ChunkedEncode(AppServices services, ILoggerFactory? loggerFa
                 .Append(request.Tune).Append('|')
                 .Append(request.SvtAv1Preset).Append('|')
                 .Append(request.BitDepth).Append('|')
+                // Chroma feeds -pix_fmt and the SVT-AV1 knobs change the encode, so all of them
+                // shape a chunk's bytes and must be in the fingerprint or a resume could splice
+                // mismatched chunks.
+                .Append(request.Chroma).Append('|')
+                .Append(request.SvtAv1Tune?.ToString() ?? "").Append('|')
+                .Append(request.SvtAv1FilmGrain).Append('|')
+                .Append(request.SvtAv1TileRows).Append('x').Append(request.SvtAv1TileColumns).Append('|')
+                .Append(request.SvtAv1KeyframeInterval).Append('|')
                 .Append(request.VideoCustomArgs).Append('|')
                 .Append(request.FilterScript ?? "").Append('|')
                 .Append(options.Mode).Append('|')

@@ -2,8 +2,192 @@
 
 All notable changes to moist are recorded here.
 
-This project follows [Semantic Versioning](https://semver.org/). Until 1.0 the
-minor version carries breaking changes.
+This project follows [Semantic Versioning](https://semver.org/). From 1.0 onwards,
+breaking changes bump the major version.
+
+---
+
+## [1.0.0] — unreleased
+
+The first stable release: a release-hardening pass over the whole codebase (a full audit:
+80 confirmed issues, 0 critical, all addressed), a pre-publication security and privacy
+review, and a set of enhancements.
+
+### Breaking changes
+
+- **`moist serve` on a non-loopback address now requires `--root <dir>`** (repeatable).
+  Every input, output, external-subtitle and probe path must resolve under a root, and moist's
+  configuration folder is always refused. The Docker image passes `--root /media`.
+- **`moist serve` accepts an allow-list of encode options.** Tool paths (`ffmpeg`, `ffprobe`), raw
+  encoder arguments (`video-args`, `audio-args`), `temp-dir`, `output-dir`, `suffix` and
+  `filter-engine` are refused with a 400 that says why.
+- **Standalone x265 (`cli-x265`) encodes without B-frames by default.** See *Fixed*; choose
+  `--x265-wrap mkvmerge` (or Auto in the GUI) to keep B-frames.
+- **Filter parameters given on the command line or over the API are validated** (ranges and
+  choices, and free text may not contain `; [ ] ' " \``). Values the GUI could never produce now
+  fail with a usage error instead of reaching the filter graph.
+
+### Security
+
+- **Remote code execution through `moist serve` closed.** A token holder could previously name
+  the FFmpeg binary to run (`--ffmpeg`), append shell syntax to the standalone encoders' pipeline
+  (`--video-args`), inject Python into a generated VapourSynth script (`vs_resize` kernel), open a
+  second FFmpeg filtergraph through free-text filter values, and read or write any path the
+  service user could. All are closed: option allow-list, `--root` confinement, filter validation,
+  the VapourSynth kernel mapped from known names, and Windows `cmd` quoting that refuses `"`
+  instead of mis-escaping it.
+- **The serve token can come from `MOIST_TOKEN`**, and the Docker entrypoint no longer puts it on
+  the command line, where any user on the host could read it from the process list.
+- **Every tool download is verified.** SHA-256 hashes are now recorded for all auto-downloaded
+  tools (FFmpeg, MKVToolNix, dovi_tool, hdr10plus_tool, Real-ESRGAN, RIFE), so a tampered or
+  corrupted download is rejected before extraction. The Linux FFmpeg URL pointed at a BtbN daily
+  build that had been deleted (404). It now pins a month-end build, which BtbN keeps.
+- **CI no longer runs pull requests from forks on self-hosted runners**, which would execute
+  untrusted code on the maintainers' machines once the repository is public. Fork PRs run on
+  GitHub-hosted runners.
+- **Release signing and checksums.** Windows binaries are signed through SignPath Foundation once
+  the project is enrolled, and fail the release if a shipped executable isn't validly signed. Every
+  release publishes `SHA256SUMS.txt`. Third-party actions are pinned to commit SHAs, and the tag
+  name is no longer interpolated into release scripts.
+- **Vulnerable dependencies updated.** Tmds.DBus.Protocol 0.21.2 → 0.21.3 (GHSA-xrw6-gwf8-vvr9,
+  shipped in the Linux GUI) through Avalonia 11.3.23. Test-only System.Net.Http and
+  System.Text.RegularExpressions 4.3.0 are gone with xunit 2.9.3.
+- `SECURITY.md` describes how to report a vulnerability and the security model.
+
+### Added
+
+**Preview overhaul.** The Encode-tab preview panel is now **resizable** (drag the divider)
+and shows **source and output together** — the output rendered through the *entire* pipeline
+(filters, encoder, bit depth, chroma, AI upscale / RIFE), on demand, so it's a true
+before/after rather than just the filter chain. A separate resizable **Full Preview** window
+adds snippet scrubbing, a bigger side-by-side, and **Open in player** for motion.
+
+**Every prerequisite is installable in-app.** Settings → Prerequisites now offers, for each
+tool, one-click **Install** (auto-download) or **Get** (opens its download page), plus a
+**Browse…** to locate an existing binary — and the list **re-scans automatically** after any
+of them, so it's seamless. `dovi_tool` and `hdr10plus_tool` gained auto-download.
+
+**Plugin discovery.** The Plugins tab browses a curated online catalog (search + engine /
+category filters) and installs plugins directly (https-only download into the plugins folder),
+or opens the plugin's page when there's no direct link.
+
+**SVT-AV1 controls.** Film-grain synthesis, tile rows/columns and keyframe interval are now
+exposed (`--av1-film-grain`, `--av1-tile-rows`, `--av1-tile-columns`, `--av1-keyint`, and in
+the GUI). They also feed the chunk-resume fingerprint so a resume can't mix settings.
+
+**Experimental Dolby Vision / HDR10+ passthrough.** Opt-in `--preserve-dynamic-hdr` (and a
+GUI toggle) attempts to carry the source's dynamic HDR metadata across the re-encode via
+`dovi_tool` / `hdr10plus_tool`. **Unverified** — it degrades to a warning and never corrupts
+the output; always check the result plays correctly.
+
+**Download integrity.** Auto-downloaded tools are now SHA-256 verified against pinned
+release URLs; an unverified download is loudly flagged rather than trusted silently.
+
+**GUI parity.** RIFE fps, AV1 tune, subtitle-track selection, allow-long AI upscale and
+disable-metadata are now reachable from the GUI, matching the CLI.
+
+**Telecine-aware filters.** `ivtc` recovers the original ~24 fps film frames from telecined
+video — including broadcasts that were bob-deinterlaced to 60p (it weaves frame pairs back
+to 30i first, then `fieldmatch,decimate`), reuniting the real fields with nothing interpolated:
+judder-free and 2.5× fewer frames to encode. Also `mpdecimate` (generic duplicate-frame
+dropping) and `grayscale` (strips broadcast chroma noise from B&W sources). The cadence
+filters are flagged as incompatible with chunked encoding.
+
+**Observability.** Everything the app logs now reaches the session log file (it used to get
+only queued-job output, so a failing preview or probe left no trace), console verbosity no
+longer throttles it, and any unhandled exception or unobserved task fault writes a
+`crash_*.log`. Settings gained an **Open Log Folder** button.
+
+**Faithful native-720p60 profiles for the same captures.** *Broadcast 720p60 Film - Faithful 720p (B&W)* and *(Colour)* keep the broadcast's own frame rate, size and grain: crop the bars, strip chroma on B&W, CAS 0.3, a gentle contrast curve (1.04×, -0.01 brightness, +5% saturation on colour), x265 CRF 17 10-bit with `tune=grain`, and the original AC3 passed through. Built after side-by-side review showed the upscale/denoise chain trading the film's texture and motion for smoothness.
+
+**Built-in profiles for over-the-air captures of film-sourced TV.** *Broadcast 720p60 Film -
+B&W to 1080p* and *- Colour to 1080p* turn a MeTV-style MPEG-2 1280×720p59.94 recording (24 fps film
+bob-upconverted to 60p, 4:3 picture pillarboxed with 88 px black bars) into 1080p23.976 HEVC 10-bit:
+crop the bars, `ivtc` the bobbed fields back to an exact film cadence, strip the chroma noise on the
+B&W era, de-block, denoise, GPU neural upscale (FSRCNNX via libplacebo; spline without a Vulkan GPU),
+CAS and deband. *Premium Real-ESRGAN* variants of both swap in the deep-model upscale — the sharpest
+result of the three upscalers compared, at roughly thirty times the encode time. Tuned on Gunsmoke
+captures from four seasons and judged frame-by-frame against spline; the recipe is in the README.
+
+**Resiliency.** A stall watchdog kills an encode tool that goes silent (15 min, per
+processor) and fails the job with a clear reason instead of hanging an unattended batch
+forever. It covers every tool moist launches, including the frame-based Real-ESRGAN and RIFE
+steps, which previously had no timeout at all; `ffprobe` analysis and the hardware-encoder
+listing are bounded by timeouts; the chunk frame-counter drains stderr (a corrupt chunk
+could deadlock it). The AI processors also log each step (extract/upscale/encode/concat,
+window progress, resume reuse, tool failures with the output tail) to the session log, and
+frame extraction — minutes on a long source — now reports a frame count instead of sitting
+at 2%.
+
+### Fixed
+
+- **Dolby Vision / HDR10+ passthrough never actually worked.** The metadata was extracted and
+  re-injected correctly, but the enriched raw HEVC couldn't be put back in a container: FFmpeg 8
+  refuses untimed packets, and libx265's B-frames rule out numbering them. The step failed safely
+  every time, keeping the plain encode. It now remuxes with mkvmerge, timed from the encoded
+  file's own frame duration, and is verified end-to-end on synthetic DV 8.1 and HDR10+ clips
+  (every frame's metadata preserved). Its scratch files also moved from the system temp folder
+  to moist's temp directory.
+- **Chunked encoding failed on every broadcast capture.** MPEG-TS records no frame count, so the
+  plan used duration × rate, and the container duration includes the audio's head start. A MeTV
+  clip was planned as 4509 frames, decoded to 4462, and the join's verification refused the
+  result. The frame count is now decoded when the container has none.
+- **Frame counts of MPEG-TS files read as unknown.** ffprobe lists a TS stream twice (once under
+  its program) with trailing commas. The parse rejected that, which silently disabled the
+  decoded count above and made `health --deep` report 0 frames for every `.ts` file.
+- **A batch could lose its temp folder mid-run.** Cleanup removed any directory it left empty,
+  including the temp directory itself. The jobs a batch had already built then wrote into a
+  folder that no longer existed. Only per-run `chunks/<hash>/` folders are removed now.
+- `moist serve` help: the `queue/start` example now sends `-d ""`, since a bodiless POST gets
+  *411 Length Required* from Windows' HTTP stack.
+- **Standalone x265 output had scrambled timestamps.** x265 writes an untimed HEVC stream, and
+  the FFmpeg wrap numbered its packets in decode order. With B-frames that put presentation
+  timestamps out of order (0, .042, .167, .125, …). The frames decoded correctly, but players and
+  remuxes that trust timestamps stuttered or dropped frames. On FFmpeg 5/6 the wrap was also off
+  scale (2 s of video labelled 0.09 s). The new **stream wrap** setting (`--x265-wrap`, GUI "Wrap")
+  offers: **No B-frames** (default, works everywhere, ~10–20% larger files), **mkvmerge** (keeps
+  B-frames; MKVToolNix reads the picture order), and **Auto**. Every wrap is now verified
+  (duration = frames ÷ rate), with a millisecond fallback for older FFmpeg. MKVToolNix
+  auto-downloads on Windows (7z unpacked in-process, hash-verified).
+- **Real-ESRGAN / RIFE frame rate after `ivtc` on FFmpeg 5.x/6.x.** Older FFmpeg's `decimate` drops one frame in five but leaves the survivors on the 30i timestamp grid, so the rate probe read 29.97 instead of 23.976 — on Debian 12 and the Docker image that would have played AI-upscaled film fast. The probe now detects uneven spacing, averages over 48 frames and snaps to a simple multiple of the source rate.
+- **Stall watchdog on Linux/macOS.** A killed tool is now waited for (bounded) before the job fails, since `Kill` only signals on Unix; cleanup could otherwise race a tool that was still alive.
+- **Configuration written to the working directory on Linux/macOS.** On an account without `~/.config` (fresh installs, CI runners, service users) the platform config folder resolved to an empty string and settings, logs and profiles went to a relative `moist/` folder — which collides with the `moist` executable and failed every write. All config paths now go through one resolver that creates the folder, falls back through `$XDG_CONFIG_HOME` and `$HOME/.config`, and accepts a `MOIST_CONFIG_DIR` override.
+- **Audio/video drift after reception dropouts with `ivtc`.** A broadcast capture with signal
+  dropouts carries timestamp gaps in both streams. `decimate` rewrote the video timestamps as if
+  the input were continuous, so every gap vanished from the picture while the audio kept it; the
+  picture led the sound by 1.8 s by the end of a one-hour episode. The `ivtc` filter now opens with
+  `fps=source_fps`, which fills each gap with duplicate frames so a dropout is a brief freeze over
+  silent audio, in sync, rather than a growing lead.
+- **Real-ESRGAN / RIFE output speed after a cadence filter.** The frame-based AI processors
+  encoded the extracted frames at the *source* frame rate, so an ivtc'd 59.94 broadcast capture
+  came out as 23.976 frames played at 59.94 — 2.5× speed, 30 s of picture against 75 s of sound.
+  The rate is now measured through the pre-clean chain (`settb=AVTB,showinfo` on a dozen frames)
+  and snapped to the exact rational, so 23.976 is `24000/1001`, not a rounded decimal. The same
+  processors also ignored trims, so a 3-second snippet preview upscaled the entire file and left a
+  scratch the full encode would have "resumed" from; trims are now applied to extraction and are
+  part of the scratch key.
+- **Audio/video sync on broadcast captures and stream-copied cuts.** When a source's video
+  starts later than its audio (the norm for DVR/OTA recordings — the first keyframe lands ~1 s
+  after the first audio packet), the separately-encoded streams were muxed from 0 and the
+  picture ran ahead of the sound by the whole stagger. Each stream's `start_time` is now read
+  and every audio track is anchored to the first video frame (a lead is trimmed, a lag is
+  delayed in the mux). Covered by a staggered-fixture integration test.
+- **Subtitle muxing into MP4/MOV/WebM** no longer fails the whole mux — text subs transcode
+  to `mov_text`/`webvtt`; subset selection maps only the chosen streams with correct
+  language/forced/default; container-incompatible subs are dropped with an up-front warning.
+- **Preview and probe helpers** (preview extraction, ffprobe/Real-ESRGAN/RIFE/quality) no
+  longer deadlock on chatty or corrupt inputs — both output pipes are drained concurrently.
+- **VP9 CRF** now enters true constant-quality mode (`-b:v 0`); was silently ~256 kbps.
+- **Watch folders** survive an I/O error mid-scan, retry failed encodes (bounded), preserve
+  the source subtree on recursive output, and never loop output back into the watch folder.
+- **Encoder guards:** invalid tune/codec pairs (x264-only tunes on x265, non-psnr/ssim on
+  vp9), and AI-upscale/RIFE combined with chunking, are caught before the encode instead of
+  producing a wrong or failed result.
+- **`moist serve`** hardened: header-only bearer token, DNS-rebinding `Host` guard and JSON
+  content-type check on loopback, bounded request body, and bounded job retention.
+- **Quality metrics** parse `inf`/`nan`, so a lossless frame no longer crashes the measurer.
+- Audio `S24` sample format, Opus/MP3/Vorbis rate-control flags, theme toggle, cross-thread
+  queue events, atomic profile writes, and many smaller correctness and resource fixes.
 
 ---
 

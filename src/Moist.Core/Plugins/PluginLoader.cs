@@ -3,6 +3,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moist.Core.Encoders;
 using Moist.Core.Jobs;
+using Moist.Core.Settings;
 
 namespace Moist.Core.Plugins;
 
@@ -19,11 +20,7 @@ public sealed class PluginLoader
 
     public static string GetPluginsDirectory()
     {
-        var dir = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-            "moist", "plugins");
-        Directory.CreateDirectory(dir);
-        return dir;
+        return MoistPaths.Sub("plugins");
     }
 
     public PluginLoader(ILoggerFactory? loggerFactory = null)
@@ -68,19 +65,22 @@ public sealed class PluginLoader
 
         foreach (var type in pluginTypes)
         {
-            var plugin = (IPlugin)Activator.CreateInstance(type)!;
-            _logger.LogInformation("Loading plugin: {Name} v{Version} ({Id})",
-                plugin.Name, plugin.Version, plugin.Id);
-
             try
             {
+                var plugin = (IPlugin)Activator.CreateInstance(type)!;
+                _logger.LogInformation("Loading plugin: {Name} v{Version} ({Id})",
+                    plugin.Name, plugin.Version, plugin.Id);
+
                 plugin.Register(encoders, jobQueue);
                 _loadedPlugins.Add(plugin);
                 _logger.LogInformation("Plugin registered successfully: {Name}", plugin.Name);
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Plugin {Name} failed during registration", plugin.Name);
+                // Isolate a single plugin's construction/registration failure so
+                // sibling plugins in the same assembly still load. Use type.FullName
+                // since plugin.Name may be unreachable when the ctor itself threw.
+                _logger.LogError(ex, "Plugin type {Type} failed to load", type.FullName);
             }
         }
     }

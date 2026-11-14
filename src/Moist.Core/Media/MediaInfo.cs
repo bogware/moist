@@ -18,6 +18,22 @@ public sealed class VideoStreamInfo
     public int Height { get; init; }
     public double Framerate { get; init; }
     public long TotalFrames { get; init; }
+
+    /// <summary>
+    /// Timestamp of the first video frame. In a broadcast capture or a stream-copied cut this
+    /// is typically ~1 s after the first audio packet (the recording starts mid-GOP), and the
+    /// builder uses the difference to keep audio and video in sync.
+    /// </summary>
+    public TimeSpan StartTime { get; init; }
+
+    /// <summary>
+    /// True only when <see cref="TotalFrames"/> is a real container measurement (nb_frames),
+    /// false when it is the duration*r_frame_rate estimate. The estimate overshoots badly for
+    /// variable-frame-rate content, so callers checking for truncation must trust it only when
+    /// this is set.
+    /// </summary>
+    public bool FrameCountIsExact { get; init; }
+
     public int BitDepth { get; init; } = 8;
     public string PixelFormat { get; init; } = string.Empty;
     public string? DisplayAspectRatio { get; init; }
@@ -59,6 +75,9 @@ public sealed class AudioStreamInfo
     public long BitrateKbps { get; init; }
     public string? Language { get; init; }
     public string? Title { get; init; }
+
+    /// <summary>Timestamp of this stream's first packet; compared with the video's to keep sync.</summary>
+    public TimeSpan StartTime { get; init; }
 }
 
 public sealed class SubtitleStreamInfo

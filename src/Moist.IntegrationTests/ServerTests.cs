@@ -112,15 +112,17 @@ public sealed class ServerTests(MediaFixture media) : PipelineTestBase(media), I
     }
 
     [Fact]
-    public async Task TheTokenCanAlsoBeGivenInTheQueryString()
+    public async Task TheTokenIsRejectedInTheQueryString()
     {
-        // For clients that cannot set headers easily.
+        // A token in the URL leaks into server logs, proxy logs and browser history, so the
+        // query-string fallback was removed — the credential must travel in the Authorization
+        // header only. A ?token= request is unauthenticated and must be refused.
         var (client, _) = Start();
         client.DefaultRequestHeaders.Authorization = null;
 
         var response = await client.GetAsync($"/api/health?token={Token}");
 
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
     }
 
     [Fact]
@@ -205,6 +207,24 @@ public sealed class ServerTests(MediaFixture media) : PipelineTestBase(media), I
         var response = await client.PostAsJsonAsync("/api/encode", new { options = new { crf = 20 } });
 
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    /// <summary>--ffmpeg names the program the server runs: over the API that is remote code execution.</summary>
+    [Fact]
+    public async Task AToolPathOptionIsRefused_AndNothingIsQueued()
+    {
+        var (client, services) = Start();
+
+        var response = await client.PostAsJsonAsync("/api/encode", new
+        {
+            input = Media.SampleVideo,
+            output = Media.Output("api_refused.mkv"),
+            options = new Dictionary<string, object> { ["ffmpeg"] = "/bin/sh", ["crf"] = 30 },
+        });
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Contains("ffmpeg", await response.Content.ReadAsStringAsync());
+        Assert.Empty(services.JobQueue.Jobs);
     }
 
     [Fact]

@@ -11,15 +11,28 @@ permissions:
 jobs:
   build-windows:
     name: Build Windows Release
-    runs-on:
-      group: Default
-      labels: [Windows]
-
-    env:
-      DOTNET_INSTALL_DIR: ${{ github.workspace }}\.dotnet
+    # GitHub-hosted on purpose: SignPath (code signing for open-source projects) only signs
+    # builds it can attest came from a GitHub-hosted runner, and it keeps the release token
+    # off our own machines.
+    runs-on: windows-latest
 
     steps:
       - uses: actions/checkout@v4
+
+      # Directory.Build.props is the single source of truth for <Version> (it stamps
+      # the whole solution), while the tag names the release/archives. If they drift,
+      # the shipped binary reports the wrong version via `moist --version` and
+      # `GET /api/health`. Fail fast rather than publish a mislabelled release.
+      - name: Verify version matches tag
+        working-directory: src
+        shell: bash
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          VER=$(grep -oPm1 '(?<=<Version>)[^<]+' Directory.Build.props)
+          if [ "$TAG" != "$VER" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME (=$TAG) != Directory.Build.props <Version> ($VER). Bump Directory.Build.props before tagging."
+            exit 1
+          fi
 
       - name: Setup .NET 8
         uses: actions/setup-dotnet@v4
@@ -66,12 +79,59 @@ jobs:
           -p:EnableCompressionInSingleFile=true
           --output ../publish/win-x64-cli
 
-      - name: Create ZIP archives
+      # ---- Code signing (SignPath Foundation) --------------------------------------------
+      # Runs only once the project is set up with SignPath: set repository variable
+      # SIGNPATH_ORGANIZATION_ID and secret SIGNPATH_API_TOKEN (see SECURITY.md, "Release
+      # signing"). Until then releases ship unsigned and Windows SmartScreen will warn.
+      # What gets signed inside the artifact is defined by .signpath/artifact-configuration.xml,
+      # which must be uploaded to the SignPath project as its artifact configuration.
+      - name: Upload unsigned binaries for signing
+        id: unsigned
+        if: ${{ vars.SIGNPATH_ORGANIZATION_ID != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-unsigned
+          path: |
+            publish/win-x64
+            publish/win-x64-fdd
+            publish/win-x64-cli
+
+      - name: Sign with SignPath
+        if: ${{ vars.SIGNPATH_ORGANIZATION_ID != '' }}
+        uses: signpath/github-action-submit-signing-request@c92b958760219087e01f8d67a1669ed57afe2627 # v2
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG || 'moist' }}
+          signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG || 'release-signing' }}
+          github-artifact-id: ${{ steps.unsigned.outputs.artifact-id }}
+          wait-for-completion: true
+          output-artifact-directory: publish-signed
+
+      - name: Use the signed binaries
+        if: ${{ vars.SIGNPATH_ORGANIZATION_ID != '' }}
         shell: pwsh
         run: |
-          Compress-Archive -Path publish/win-x64/* -DestinationPath publish/moist-${{ github.ref_name }}-win-x64.zip
-          Compress-Archive -Path publish/win-x64-fdd/* -DestinationPath publish/moist-${{ github.ref_name }}-win-x64-fdd.zip
-          Compress-Archive -Path publish/win-x64-cli/* -DestinationPath publish/moist-cli-${{ github.ref_name }}-win-x64.zip
+          foreach ($d in 'win-x64', 'win-x64-fdd', 'win-x64-cli') {
+            if (-not (Test-Path "publish-signed/$d")) { throw "SignPath returned no $d folder" }
+            Remove-Item -Recurse -Force "publish/$d"
+            Move-Item "publish-signed/$d" "publish/$d"
+          }
+          # Fail rather than ship an unsigned exe labelled as signed.
+          Get-ChildItem publish -Recurse -Include moist.exe, Moist.App.exe | ForEach-Object {
+            $sig = Get-AuthenticodeSignature $_.FullName
+            if ($sig.Status -ne 'Valid') { throw "$($_.FullName) is not validly signed: $($sig.Status)" }
+            Write-Host "signed: $($_.FullName) ($($sig.SignerCertificate.Subject))"
+          }
+
+      - name: Create ZIP archives
+        shell: pwsh
+        env:
+          TAG: ${{ github.ref_name }}   # via env, not interpolated into the script
+        run: |
+          Compress-Archive -Path publish/win-x64/* -DestinationPath "publish/moist-$env:TAG-win-x64.zip"
+          Compress-Archive -Path publish/win-x64-fdd/* -DestinationPath "publish/moist-$env:TAG-win-x64-fdd.zip"
+          Compress-Archive -Path publish/win-x64-cli/* -DestinationPath "publish/moist-cli-$env:TAG-win-x64.zip"
 
       - name: Upload Windows artifacts
         uses: actions/upload-artifact@v4
@@ -90,6 +150,21 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+
+      # Directory.Build.props is the single source of truth for <Version> (it stamps
+      # the whole solution), while the tag names the release/archives. If they drift,
+      # the shipped binary reports the wrong version via `moist --version` and
+      # `GET /api/health`. Fail fast rather than publish a mislabelled release.
+      - name: Verify version matches tag
+        working-directory: src
+        shell: bash
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          VER=$(grep -oPm1 '(?<=<Version>)[^<]+' Directory.Build.props)
+          if [ "$TAG" != "$VER" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME (=$TAG) != Directory.Build.props <Version> ($VER). Bump Directory.Build.props before tagging."
+            exit 1
+          fi
 
       - name: Setup .NET 8
         uses: actions/setup-dotnet@v4
@@ -128,11 +203,13 @@ jobs:
           --output ../publish/linux-x64-cli
 
       - name: Create tar.gz archives
+        env:
+          TAG: ${{ github.ref_name }}   # via env, not interpolated into the script
         run: |
           cd publish/linux-x64
-          tar -czf ../moist-${{ github.ref_name }}-linux-x64.tar.gz *
+          tar -czf "../moist-$TAG-linux-x64.tar.gz" *
           cd ../linux-x64-cli
-          tar -czf ../moist-cli-${{ github.ref_name }}-linux-x64.tar.gz *
+          tar -czf "../moist-cli-$TAG-linux-x64.tar.gz" *
 
       - name: Upload Linux artifacts
         uses: actions/upload-artifact@v4
@@ -206,13 +283,23 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           path: artifacts
+          pattern: '*-release'
+
+      # Published beside the archives so downloads can be verified (sha256sum -c SHA256SUMS.txt).
+      - name: Checksums
+        run: |
+          cd artifacts
+          find . -type f \( -name '*.zip' -o -name '*.tar.gz' \) -exec mv {} . \;
+          sha256sum *.zip *.tar.gz > SHA256SUMS.txt
+          cat SHA256SUMS.txt
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           generate_release_notes: true
           draft: false
           prerelease: ${{ contains(github.ref_name, '-') }}
           files: |
-            artifacts/**/*.zip
-            artifacts/**/*.tar.gz
+            artifacts/*.zip
+            artifacts/*.tar.gz
+            artifacts/SHA256SUMS.txt

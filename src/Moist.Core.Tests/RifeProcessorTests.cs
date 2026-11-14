@@ -48,5 +48,19 @@ public class RifeProcessorTests
         var args = RifeVideoProcessor.BuildEncodeArgs(Job(targetFps: 60), "f/%06d.png");
         Assert.Equal("60", args[Array.IndexOf(args, "-framerate") + 1]);
         Assert.Equal("libx265", args[Array.IndexOf(args, "-c:v") + 1]);
+        // Non-VP9 encoders take -crf directly; no -b:v.
+        Assert.DoesNotContain("-b:v", args);
+    }
+
+    [Fact]
+    public void BuildEncodeArgs_Vp9AddsBv0SoCrfIsTrueConstantQuality()
+    {
+        var job = Job(targetFps: 60);
+        job.EncoderId = "ffmpeg-vp9";
+        var args = RifeVideoProcessor.BuildEncodeArgs(job, "f/%06d.png");
+        Assert.Equal("libvpx-vp9", args[Array.IndexOf(args, "-c:v") + 1]);
+        // -b:v 0 must accompany -crf, or libvpx-vp9 caps the stream at its ~256 kbps default target.
+        var bv = Array.IndexOf(args, "-b:v");
+        Assert.True(bv >= 0 && args[bv + 1] == "0");
     }
 }
