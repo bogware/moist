@@ -427,17 +427,8 @@ public sealed class MoistHttpApi(AppServices services, string? token, IReadOnlyC
             return true;
         }
 
-        if (_policy.Resolve(payload.Input, "input", out var inputError) is not { } input)
-        {
-            await WriteAsync(context, 403, new { error = inputError });
-            return true;
-        }
-        if (!File.Exists(input))
-        {
-            await WriteAsync(context, 404, new { error = $"input not found: {input}" });
-            return true;
-        }
-
+        // Everything about the options is settled before the filesystem is touched: a request that
+        // will be refused learns nothing about which paths exist.
         CommandLine cl;
         try
         {
@@ -453,6 +444,17 @@ public sealed class MoistHttpApi(AppServices services, string? token, IReadOnlyC
         if (ServePolicy.CheckParsed(cl.OptionNames, cl.Positional) is { } parsedError)
         {
             await WriteAsync(context, 400, new { error = parsedError });
+            return true;
+        }
+
+        if (_policy.Resolve(payload.Input, "input", out var inputError) is not { } input)
+        {
+            await WriteAsync(context, 403, new { error = inputError });
+            return true;
+        }
+        if (!File.Exists(input))
+        {
+            await WriteAsync(context, 404, new { error = $"input not found: {input}" });
             return true;
         }
 

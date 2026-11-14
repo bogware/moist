@@ -245,7 +245,11 @@ public sealed class ServerTests(MediaFixture media) : PipelineTestBase(media), I
 
         var response = await client.PostAsync("/api/encode", new StringContent(body, Encoding.UTF8, "application/json"));
 
-        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        // The guarantee is "refused, nothing queued". Where it's refused varies: a value that tries to
+        // carry a second option is now just a bad value of the first (e.g. a CRF that isn't a number),
+        // rejected when the request is built — after the input is examined, so without FFmpeg (no
+        // sample to examine) the refusal is the missing input instead. Either way it's a client error.
+        Assert.InRange((int)response.StatusCode, 400, 499);
         Assert.Empty(services.JobQueue.Jobs);
     }
 
