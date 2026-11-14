@@ -11,4 +11,12 @@
     <Copyright>Copyright (c) 2024-2026 moist contributors</Copyright>
   </PropertyGroup>
 
+  <!--
+    On CI, normalise source paths to /_/ so release binaries and their PDBs don't carry the
+    runner's working directory (and with it the runner account's home path).
+  -->
+  <PropertyGroup Condition="'$(GITHUB_ACTIONS)' == 'true'">
+    <ContinuousIntegrationBuild>true</ContinuousIntegrationBuild>
+  </PropertyGroup>
+
 </Project>

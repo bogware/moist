@@ -449,6 +449,13 @@ public sealed class MoistHttpApi(AppServices services, string? token, IReadOnlyC
             return true;
         }
 
+        // Belt and braces: check what the parser actually produced, not just the JSON keys.
+        if (ServePolicy.CheckParsed(cl.OptionNames, cl.Positional) is { } parsedError)
+        {
+            await WriteAsync(context, 400, new { error = parsedError });
+            return true;
+        }
+
         var output = payload.Output is { } requested
             ? requested
             : EncodeOptions.DefaultOutputPath(cl, services, input, null, "_encoded");
@@ -526,18 +533,17 @@ public sealed class MoistHttpApi(AppServices services, string? token, IReadOnlyC
                 case JsonValueKind.Null:
                     break;
 
+                // A value always travels in the same token as its name (--name=value). Sent as a
+                // separate token, a value after a no-value flag was parsed as an option of its own:
+                // {"overwrite": "--video-args=…"} slipped a forbidden option past the allow-list.
                 case JsonValueKind.Array:
                     // Repeatable options such as --audio-track.
                     foreach (var item in value.EnumerateArray())
-                    {
-                        yield return name;
-                        yield return item.ToString();
-                    }
+                        yield return $"{name}={item}";
                     break;
 
                 default:
-                    yield return name;
-                    yield return value.ToString();
+                    yield return $"{name}={value}";
                     break;
             }
         }

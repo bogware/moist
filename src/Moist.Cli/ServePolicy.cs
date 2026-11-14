@@ -73,15 +73,35 @@ public sealed class ServePolicy
     public static string? CheckOptions(IReadOnlyDictionary<string, JsonElement>? options)
     {
         if (options is null) return null;
-        foreach (var raw in options.Keys)
+        foreach (var (raw, value) in options)
         {
             var key = raw.TrimStart('-');
-            if (AllowedOptions.Contains(key)) continue;
-            return Reasons.TryGetValue(key, out var why)
-                ? $"option '{key}' is not accepted over the API: {why}"
-                : $"option '{key}' is not accepted over the API";
+            if (!AllowedOptions.Contains(key))
+                return Reasons.TryGetValue(key, out var why)
+                    ? $"option '{key}' is not accepted over the API: {why}"
+                    : $"option '{key}' is not accepted over the API";
+
+            // A switch is true or false, nothing else. A string handed to one was how a forbidden
+            // option once rode in ("overwrite": "--video-args=…"); refuse the malformed request.
+            if (CommandLine.IsFlag(key) && value.ValueKind is not (JsonValueKind.True or JsonValueKind.False or JsonValueKind.Null))
+                return $"option '{key}' is a switch: use true or false";
         }
         return null;
+    }
+
+    /// <summary>
+    /// The check that matters: what the parser produced from the request, not what the JSON said.
+    /// Every parsed option must be allowed and there must be no stray positional arguments —
+    /// whatever token sequence a request manages to construct.
+    /// </summary>
+    public static string? CheckParsed(IEnumerable<string> optionNames, IReadOnlyList<string> positional)
+    {
+        foreach (var name in optionNames)
+            if (!AllowedOptions.Contains(name))
+                return Reasons.TryGetValue(name, out var why)
+                    ? $"option '{name}' is not accepted over the API: {why}"
+                    : $"option '{name}' is not accepted over the API";
+        return positional.Count > 0 ? "unexpected positional arguments in options" : null;
     }
 
     /// <summary>
@@ -92,8 +112,8 @@ public sealed class ServePolicy
     {
         error = null;
         string full;
-        try { full = Path.GetFullPath(path); }
-        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+        try { full = RealPath(Path.GetFullPath(path)); }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException or IOException or UnauthorizedAccessException)
         {
             error = $"{what}: invalid path";
             return null;
@@ -120,7 +140,34 @@ public sealed class ServePolicy
 
     private static string Normalize(string dir)
     {
-        var full = Path.GetFullPath(dir);
+        var full = RealPath(Path.GetFullPath(dir));
         return full.EndsWith(Path.DirectorySeparatorChar) ? full : full + Path.DirectorySeparatorChar;
+    }
+
+    /// <summary>
+    /// <paramref name="full"/> with every symbolic link and junction along it resolved. GetFullPath
+    /// only tidies the text, so a link inside a served root ("/media/x" → "/etc") passed the prefix
+    /// check while the file operation landed outside the root. The part of the path that doesn't
+    /// exist yet (a new output file) is appended unchanged to its resolved, existing parent.
+    /// </summary>
+    internal static string RealPath(string full, int depth = 0)
+    {
+        if (depth > 32) throw new IOException("too many levels of symbolic links");
+        var root = Path.GetPathRoot(full) ?? "";
+        var parts = full[root.Length..].Split([Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar], StringSplitOptions.RemoveEmptyEntries);
+        var current = root;
+        for (var i = 0; i < parts.Length; i++)
+        {
+            var next = Path.Combine(current, parts[i]);
+            FileSystemInfo? info = Directory.Exists(next) ? new DirectoryInfo(next)
+                                 : File.Exists(next) ? new FileInfo(next)
+                                 : null;
+            if (info is null)
+                return Path.Combine([current, .. parts[i..]]);   // the rest doesn't exist yet
+            if (info.LinkTarget is not null && info.ResolveLinkTarget(returnFinalTarget: true) is { } target)
+                next = RealPath(Path.GetFullPath(target.FullName), depth + 1);   // the target may sit behind links too
+            current = next;
+        }
+        return current;
     }
 }

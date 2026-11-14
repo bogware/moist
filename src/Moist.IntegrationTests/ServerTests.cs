@@ -227,6 +227,28 @@ public sealed class ServerTests(MediaFixture media) : PipelineTestBase(media), I
         Assert.Empty(services.JobQueue.Jobs);
     }
 
+    /// <summary>
+    /// The allow-list checked JSON keys, but values travelled as separate argv tokens: after a
+    /// no-value flag like "overwrite" the parser read the value as an option of its own, so a
+    /// forbidden option rode in through an allowed key. Every variant must be refused.
+    /// </summary>
+    [Theory]
+    [InlineData("""{"overwrite": "--video-args=-f null"}""")]
+    [InlineData("""{"overwrite": "-video-args=x"}""")]
+    [InlineData("""{"chunked": "--temp-dir=/etc"}""")]
+    [InlineData("""{"audio-track": ["1", "--ffmpeg=/bin/sh"]}""")]
+    [InlineData("""{"crf": "22 --filter-engine vapoursynth"}""")]
+    public async Task OptionsCannotBeSmuggledInsideValues(string options)
+    {
+        var (client, services) = Start();
+        var body = $$"""{"input": {{JsonSerializer.Serialize(Media.SampleVideo)}}, "output": {{JsonSerializer.Serialize(Media.Output("api_smuggle.mkv"))}}, "options": {{options}}}""";
+
+        var response = await client.PostAsync("/api/encode", new StringContent(body, Encoding.UTF8, "application/json"));
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Empty(services.JobQueue.Jobs);
+    }
+
     [Fact]
     public async Task AMalformedBodyIsABadRequestRatherThanAServerError()
     {

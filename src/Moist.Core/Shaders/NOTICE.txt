@@ -2,17 +2,23 @@ Bundled GPU upscaling shaders
 =============================
 
 These GLSL shaders run through FFmpeg's libplacebo filter (custom_shader_path) to give
-moist a GPU, neural-network upscale ("superres" filter). They are third-party works,
-redistributed here under their original MIT licenses.
+moist a GPU, neural-network upscale (the "superres" filter). They are third-party works,
+redistributed here unmodified under their original licenses. Both licenses are compatible
+with moist's own AGPL-3.0.
 
 - FSRCNNX_x2_8-0-4-1.glsl
-  FSRCNNX super-resolution shader by igv.
-  https://github.com/igv/FSRCNN-TensorFlow   (MIT License)
+  FSRCNNX super-resolution shader. Copyright (C) 2017-2021 igv.
+  https://github.com/igv/FSRCNN-TensorFlow
+  License: GNU Lesser General Public License, version 3.0 or (at your option) any later
+  version — see LICENSE.LGPL-3.0.txt, which incorporates the GNU General Public License
+  version 3 (LICENSE.GPL-3.0.txt). The licence notice is retained at the top of the file.
   General / live-action luma upscaler.
 
 - Anime4K_Upscale_CNN_x2_M.glsl
-  Anime4K by bloc97 and contributors.
-  https://github.com/bloc97/Anime4K          (MIT License)
+  Anime4K. Copyright (c) 2019-2021 bloc97 and contributors.
+  https://github.com/bloc97/Anime4K
+  License: MIT — the full licence text is retained at the top of the file.
   Anime / line-art upscaler.
 
-See each project's repository for the full license text and attribution.
+Under the LGPL you may replace FSRCNNX_x2_8-0-4-1.glsl with a modified version: moist loads
+it from this folder by file name at run time.

@@ -85,9 +85,9 @@ docker run -p 7788:7788 -v /media:/media -e MOIST_TOKEN=secret moist
 docker run --rm -v /media:/media moist health /media --deep
 ```
 
-The image is built on Ubuntu 24.04, whose FFmpeg has x264, x265, VP9 and SVT-AV1 but
-**not** libvmaf, so `--target-vmaf` is unavailable in the stock image (the XPSNR, SSIM
-and PSNR targets still work). `moist tools` reports what was actually found.
+The image carries the same pinned, SHA-256-verified FFmpeg 9.0.2 build that moist's own
+installer uses — x264, x265, SVT-AV1, VP9 and libvmaf — rather than the distribution's older
+package, so `--target-vmaf` works in the container too. `moist tools` reports what was found.
 
 - `--dry-run` prints the plan (including the exact FFmpeg commands) without encoding
 - `--json` emits machine-readable results; logs go to stderr so stdout stays clean for pipes

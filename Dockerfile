@@ -29,13 +29,25 @@ RUN dotnet publish Moist.Cli/Moist.Cli.csproj \
 
 FROM mcr.microsoft.com/dotnet/runtime:10.0 AS runtime
 
-# FFmpeg is not one program: what a build contains is decided when it is compiled.
-# The .NET 10 images are Ubuntu 24.04, whose FFmpeg 6.1 has x264, x265, VP9 and SVT-AV1
-# but NOT libvmaf — so --target-vmaf is unavailable in this image (the XPSNR, SSIM and
-# PSNR targets still work) unless you install a build that has it. `moist tools`
-# reports what was found.
+# FFmpeg: the same pinned, SHA-256-verified static build moist's own installer uses (see
+# ToolDiscovery.KnownTools), not the distribution package. Ubuntu 24.04 ships FFmpeg 6.1 with
+# dozens of unpatched CVEs and without libvmaf; this build is current (9.0.2), statically
+# linked, and has x264, x265, SVT-AV1, VP9 and libvmaf — so --target-vmaf works here too.
+# BtbN keeps month-end builds; to update, change both values together.
+ARG FFMPEG_URL=https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-10-31-12-59/ffmpeg-n9.0.2-39-g7adfbe40dc-linux64-gpl-9.0.tar.xz
+ARG FFMPEG_SHA256=73e29a56974ae5a651133a04584c7483b21afe941e17dc91d79814a758b608d3
 RUN apt-get update \
-    && apt-get install --no-install-recommends -y ffmpeg \
+    && apt-get upgrade -y \
+    && apt-get install --no-install-recommends -y ca-certificates curl xz-utils \
+    && curl -fsSL -o /tmp/ffmpeg.tar.xz "$FFMPEG_URL" \
+    && echo "$FFMPEG_SHA256  /tmp/ffmpeg.tar.xz" | sha256sum -c - \
+    && mkdir -p /opt/ffmpeg \
+    && tar -xJf /tmp/ffmpeg.tar.xz -C /opt/ffmpeg --strip-components=1 \
+    && ln -s /opt/ffmpeg/bin/ffmpeg /usr/local/bin/ffmpeg \
+    && ln -s /opt/ffmpeg/bin/ffprobe /usr/local/bin/ffprobe \
+    && rm -f /tmp/ffmpeg.tar.xz \
+    && apt-get purge -y curl xz-utils \
+    && apt-get autoremove -y \
     && rm -rf /var/lib/apt/lists/*
 
 # Encoding as root would write output owned by root into mounted volumes. The service

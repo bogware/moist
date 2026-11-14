@@ -71,6 +71,38 @@ public class ServePolicyTests
         Assert.Contains("configuration", error);
     }
 
+    /// <summary>A link inside a served root that points outside it must not carry a request out:
+    /// GetFullPath tidies the text but doesn't follow links.</summary>
+    [Fact]
+    public void ASymlinkInsideARoot_CannotEscapeIt()
+    {
+        var media = Dir("sym_" + Guid.NewGuid().ToString("N")[..6], "media");
+        var outside = Dir("sym_" + Guid.NewGuid().ToString("N")[..6], "outside");
+        Directory.CreateDirectory(media);
+        Directory.CreateDirectory(outside);
+        File.WriteAllText(Path.Combine(outside, "secret.txt"), "x");
+        var link = Path.Combine(media, "escape");
+        try { Directory.CreateSymbolicLink(link, outside); }
+        catch (Exception ex) when (ex is UnauthorizedAccessException or IOException)
+        {
+            return;   // Windows without Developer Mode can't create links; the Linux CI runner can.
+        }
+        try
+        {
+            var policy = new ServePolicy([media], Dir("config"));
+            Assert.Null(policy.Resolve(Path.Combine(link, "secret.txt"), "input", out var error));
+            Assert.Contains("outside", error);
+            Assert.Null(policy.Resolve(Path.Combine(link, "new-output.mkv"), "output", out _));
+            Assert.NotNull(policy.Resolve(Path.Combine(media, "fine.mkv"), "output", out _));
+        }
+        finally
+        {
+            try { Directory.Delete(link); } catch { }
+            try { Directory.Delete(Path.GetDirectoryName(media)!, recursive: true); } catch { }
+            try { Directory.Delete(Path.GetDirectoryName(outside)!, recursive: true); } catch { }
+        }
+    }
+
     [Fact]
     public void Unrestricted_AllowsAnythingButConfig()
         => Assert.NotNull(new ServePolicy(null, Dir("config")).Resolve(Dir("anywhere", "a.mkv"), "input", out _));

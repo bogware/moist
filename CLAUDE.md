@@ -632,11 +632,13 @@ volume so settings, profiles and the queue survive a restart.
 - `release.yml` — **started manually** (`gh workflow run release.yml --ref main -f version=1.0.0`), not by
   pushing a tag: the bogware organisation restricts tag creation to automation, so people can't push
   tags but github-actions[bot] can. The `prepare` job checks the version against `Directory.Build.props`
-  and that `CHANGELOG.md` has a `## [x.y.z]` section (which becomes the release notes), the builds run from
+  that `CHANGELOG.md` has a `## [x.y.z]` section (which becomes the release notes), and that the README's
+  **static** release badge names the version (shields.io can't read a private repo, so the badge is static —
+  this check is what keeps it from going stale), the builds run from
   that one resolved commit, and the tag is created through the API only after every build succeeded. The
   Windows build runs on `windows-latest` because **SignPath
   Foundation** (code signing for OSS) only signs GitHub-hosted builds; signing turns on when the
   `SIGNPATH_ORGANIZATION_ID` variable and `SIGNPATH_API_TOKEN` secret exist (see `SECURITY.md`,
   `.signpath/artifact-configuration.xml`) and fails the release if a shipped exe isn't validly signed.
   Publishes `SHA256SUMS.txt`; third-party actions are pinned to commit SHAs. Self-contained single-file builds of both the GUI and the CLI for Windows x64 (ZIP, plus a framework-dependent GUI ZIP) and Linux x64 (tar.gz), then a GitHub release. CLI archives are named `moist-cli-*`. Tags containing `-` are marked prerelease.
-- `Dockerfile` (repo root) — a two-stage image that publishes **`Moist.Cli` only** and runs `moist serve` as a non-root user on port 7788. The .NET 10 images are **Ubuntu 24.04**: its `ffmpeg` 6.1 has SVT-AV1 but **no libvmaf**, so `--target-vmaf` is unavailable in the stock image. The image also ships an `ubuntu` user at uid 1000 (with `sudo`/`adm` groups), which the Dockerfile deletes before creating `moist` at uid 1000 — renaming it would keep those groups — `moist tools` reports what the build actually has. The version is stamped once for the whole solution from `src/Directory.Build.props` (`<Version>`), not per-project.
+- `Dockerfile` (repo root) — a two-stage image that publishes **`Moist.Cli` only** and runs `moist serve` as a non-root user on port 7788. It runs on the .NET 10 (**Ubuntu 24.04**) runtime image but does **not** use Ubuntu's FFmpeg 6.1 (dozens of unpatched CVEs, no libvmaf): it downloads the same pinned BtbN FFmpeg 9.0.2 build as `ToolDiscovery.KnownTools`, checks it against the same SHA-256 (`FFMPEG_URL`/`FFMPEG_SHA256` build args — update them together with the KnownTools pin), and runs `apt-get upgrade`. Trivy on the result: no HIGH/CRITICAL. The image also ships an `ubuntu` user at uid 1000 (with `sudo`/`adm` groups), which the Dockerfile deletes before creating `moist` at uid 1000 — renaming it would keep those groups — `moist tools` reports what the build actually has. The version is stamped once for the whole solution from `src/Directory.Build.props` (`<Version>`), not per-project.

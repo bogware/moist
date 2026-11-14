@@ -9,6 +9,26 @@ breaking changes bump the major version.
 
 ## [Unreleased]
 
+### Security
+
+- **`moist serve`: options could be smuggled past the allow-list (affects 1.0.0).** The allow-list
+  checked a request's option *names*, but each value was passed to the parser as a separate token, so
+  a value given to a switch — `{"overwrite": "--video-args=…"}` — was parsed as an option of its own.
+  A token holder could reach `--video-args`, `--audio-args`, `--temp-dir` and `--filter-engine`, and
+  through the standalone encoders' shell pipeline execute commands. Values now travel in the same
+  token as their name, switches accept only `true`/`false`, and every option the parser produces is
+  re-checked against the allow-list. Anyone exposing `moist serve` 1.0.0 to untrusted clients should
+  upgrade.
+- **`moist serve`: a symbolic link inside a served root could point a request outside it.** Paths
+  are now resolved through every link and junction before the root check.
+- **Docker image FFmpeg.** The image no longer uses Ubuntu's FFmpeg 6.1 (dozens of unpatched CVEs):
+  it installs the same pinned, SHA-256-verified FFmpeg 9.0.2 build moist's installer uses (which also
+  brings libvmaf, so `--target-vmaf` works in the container), and applies `apt-get upgrade`. Trivy
+  reports no HIGH or CRITICAL findings.
+- Release builds no longer embed the CI runner's paths (`ContinuousIntegrationBuild`); every release
+  archive includes the licence; GitHub-owned actions are pinned to commit SHAs like the third-party
+  ones.
+
 ### Changed
 
 - **Moved to .NET 10.** Every project targets `net10.0` (C# 14), the Microsoft.Extensions logging
@@ -34,6 +54,8 @@ breaking changes bump the major version.
 
 ### Fixed
 
+- The FSRCNNX shader's notice said MIT; it is LGPL-3.0-or-later. The notice is corrected and the
+  LGPL-3.0 and GPL-3.0 texts now ship beside the shader.
 - **The encoder tune was dropped on the Real-ESRGAN path**, so a `tune=grain` profile lost its grain
   exactly where it mattered. `-tune` is now passed for x264 and x265 there too, and is part of the
   resume key.

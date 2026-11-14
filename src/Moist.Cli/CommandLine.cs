@@ -18,6 +18,9 @@ public sealed class CommandLine
     public IReadOnlyList<string> Positional => _positional;
 
     /// <summary>Options that take no value, so "--audio-only input.mp4" doesn't eat the filename.</summary>
+    /// <summary>Whether <paramref name="name"/> is an on/off switch that takes no value.</summary>
+    public static bool IsFlag(string name) => KnownFlags.Contains(name);
+
     private static readonly HashSet<string> KnownFlags = new(StringComparer.OrdinalIgnoreCase)
     {
         "audio-only", "no-subtitles", "no-chapters", "no-attachments", "no-metadata",
@@ -149,6 +152,10 @@ public sealed class CommandLine
     }
 
     /// <summary>Options the command never looked at — almost always a typo worth reporting.</summary>
+    /// <summary>Every option name that was parsed, consumed or not. The HTTP API re-checks these
+    /// against its allow-list after parsing, so no token sequence can smuggle an option past it.</summary>
+    public IReadOnlyCollection<string> OptionNames => _options.Keys;
+
     public IEnumerable<string> UnknownOptions()
         => _options.Keys.Where(k => !_consumed.Contains(k));
 }
