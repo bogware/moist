@@ -61,7 +61,8 @@ public class RealEsrganProcessorTests
         // Pre-clean filters carried through as the -vf, and passthrough sync for an exact frame count.
         var vf = Array.IndexOf(args, "-vf");
         Assert.True(vf >= 0 && args[vf + 1] == "spp=quality=3:qp=4,hqdn3d=2:1.5:3");
-        Assert.Equal("0", args[Array.IndexOf(args, "-vsync") + 1]);
+        Assert.Equal("passthrough", args[Array.IndexOf(args, "-fps_mode") + 1]);
+        Assert.DoesNotContain("-vsync", args);   // removed in FFmpeg 9 — the build moist itself installs
     }
 
     [Fact]

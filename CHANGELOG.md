@@ -7,7 +7,7 @@ breaking changes bump the major version.
 
 ---
 
-## [1.0.1] — 2026-11-13
+## [1.0.1] — 2026-11-14
 
 ### Security
 
@@ -54,6 +54,10 @@ breaking changes bump the major version.
 
 ### Fixed
 
+- **Real-ESRGAN and RIFE failed on FFmpeg 9** — including the pinned build moist installs and the
+  Docker image ships — because frame extraction used `-vsync`, which FFmpeg 9 removed
+  ("Unrecognized option"). It now uses `-fps_mode passthrough` (FFmpeg 5.1+). The full integration
+  suite passes on FFmpeg 9.0.2 as well as 8.1.
 - The FSRCNNX shader's notice said MIT; it is LGPL-3.0-or-later. The notice is corrected and the
   LGPL-3.0 and GPL-3.0 texts now ship beside the shader.
 - **The encoder tune was dropped on the Real-ESRGAN path**, so a `tune=grain` profile lost its grain

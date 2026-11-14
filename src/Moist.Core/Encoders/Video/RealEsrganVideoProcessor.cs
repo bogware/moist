@@ -253,7 +253,9 @@ public sealed partial class RealEsrganVideoProcessor : IJobProcessor
         else if (vj.TrimDuration is { } trimDuration)
             args.AddRange(["-t", trimDuration.TotalSeconds.ToString("F3", CultureInfo.InvariantCulture)]);
         // Passthrough: exactly one PNG per (filtered) frame, so the count can be verified later.
-        args.AddRange(["-vsync", "0", framesPattern]);
+        // -fps_mode, not -vsync: FFmpeg 9 removed -vsync ("Unrecognized option") — including the
+        // pinned build moist installs and the Docker image ships — and -fps_mode exists since 5.1.
+        args.AddRange(["-fps_mode", "passthrough", framesPattern]);
         return [.. args];
     }
 
@@ -387,7 +389,7 @@ public sealed partial class RealEsrganVideoProcessor : IJobProcessor
             args.AddRange(["-ss", trimStart.TotalSeconds.ToString("F6", CultureInfo.InvariantCulture)]);
         args.AddRange(["-i", vj.InputFile]);
         var chain = string.IsNullOrWhiteSpace(vj.FilterScript) ? "" : vj.FilterScript + ",";
-        args.AddRange(["-vf", chain + "settb=AVTB,showinfo", "-vsync", "0", "-frames:v", RateProbeFrames, "-f", "null", "-"]);
+        args.AddRange(["-vf", chain + "settb=AVTB,showinfo", "-fps_mode", "passthrough", "-frames:v", RateProbeFrames, "-f", "null", "-"]);
         return [.. args];
     }
 
