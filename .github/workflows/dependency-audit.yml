@@ -1,0 +1,71 @@
+name: Dependency audit
+
+# Manual only — the on-demand replacement for Dependabot. It reports; it never changes code or
+# opens pull requests (dependency updates in this project are always made by hand). Start it from
+# the Actions tab, or:  gh workflow run dependency-audit.yml
+#
+#   1. Every NuGet package, transitive ones included, against the GitHub Advisory Database.
+#   2. The Docker image, built from the same commit, scanned with Trivy for HIGH/CRITICAL CVEs.
+# The job fails if either finds anything, so the run's status is the answer.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dependency-audit
+  cancel-in-progress: true
+
+jobs:
+  nuget:
+    name: NuGet packages
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Setup .NET 10
+        uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Restore
+        working-directory: src
+        run: dotnet restore
+
+      - name: Known vulnerabilities (direct and transitive)
+        working-directory: src
+        run: |
+          set -o pipefail
+          dotnet list package --vulnerable --include-transitive | tee vulnerable.txt
+          if grep -q "has the following vulnerable packages" vulnerable.txt; then
+            echo "::error::Vulnerable NuGet packages found (see above)."; exit 1
+          fi
+
+      - name: Deprecated and outdated (informational)
+        working-directory: src
+        run: |
+          dotnet list package --deprecated
+          dotnet list package --outdated
+
+  docker:
+    name: Docker image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Build the image
+        run: docker build -t moist:audit .
+
+      # Trivy runs from its container image rather than an action, so no third-party action needs
+      # allowing. The version is pinned; update it by hand like every other dependency.
+      - name: Scan with Trivy (HIGH, CRITICAL)
+        run: |
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:0.58.2 \
+            image --scanners vuln --severity HIGH,CRITICAL --exit-code 1 --no-progress moist:audit
+
+      - name: Full report (informational)
+        if: always()
+        run: |
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:0.58.2 \
+            image --scanners vuln --no-progress --format table moist:audit | tail -n 60
