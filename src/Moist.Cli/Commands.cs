@@ -230,6 +230,13 @@ public static class EncodeRunner
     {
         var started = DateTime.UtcNow;
 
+        // These are only consulted on paths a dry run never reaches (after a successful encode,
+        // or while planning chunks). Read them up front so `--dry-run` doesn't report real options
+        // as "unknown" — which told people checking a command first that it was wrong.
+        _ = cl.Flag("measure");
+        _ = cl.Flag("per-scene");
+        _ = cl.Flag("per-scene-full");
+
         MediaFileInfo? info = null;
         try
         {

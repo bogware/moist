@@ -20,6 +20,26 @@ public sealed record EncodeRequest
     public required string OutputFile { get; init; }
     public required string TempDirectory { get; init; }
 
+    /// <summary>
+    /// The same request with every path made absolute against the current directory. Jobs can't
+    /// carry relative paths: some processors run their tool in another working directory (GPU
+    /// super-resolution runs FFmpeg in the shader folder so the shader resolves by bare name), and
+    /// a relative <c>--temp-dir tmp</c> then pointed into the shader folder and the encode failed.
+    /// </summary>
+    public EncodeRequest WithAbsolutePaths() => this with
+    {
+        InputFile = Absolute(InputFile)!,
+        OutputFile = Absolute(OutputFile)!,
+        TempDirectory = Absolute(TempDirectory)!,
+        ExternalSubtitleFile = Absolute(ExternalSubtitleFile),
+    };
+
+    private static string? Absolute(string? path)
+        => string.IsNullOrWhiteSpace(path) || IsDevice(path) ? path : Path.GetFullPath(path);
+
+    /// <summary>Null devices are paths too, as far as GetFullPath is concerned ("NUL" -> "C:\…\NUL").</summary>
+    private static bool IsDevice(string path) => path is "NUL" or "/dev/null" or "-";
+
     // Video
     public string VideoEncoderId { get; init; } = "ffmpeg-x265";
     public VideoEncodingMode Mode { get; init; } = VideoEncodingMode.ConstantRateFactor;
@@ -364,6 +384,7 @@ public static class EncodeJobBuilder
         bool verifyChunks = true,
         string? ffprobePath = null)
     {
+        req = req.WithAbsolutePaths();
         Directory.CreateDirectory(req.TempDirectory);
         var outputDir = Path.GetDirectoryName(req.OutputFile);
         if (!string.IsNullOrEmpty(outputDir))

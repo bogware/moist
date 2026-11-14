@@ -160,6 +160,10 @@ public sealed class ChunkedEncode(AppServices services, ILoggerFactory? loggerFa
         EncodeRequest request, ChunkPlan plan, ChunkingOptions options,
         IReadOnlyDictionary<int, double>? perChunkQuality = null)
     {
+        // Chunk files are named from the temp directory before Build runs: make it absolute here
+        // too, or a relative --temp-dir resolves against whichever working directory a chunk's
+        // tool happens to run in.
+        request = request.WithAbsolutePaths();
         // The directory name covers the per-chunk qualities too, so a run at a different
         // target can't reuse chunks encoded for the previous one.
         var chunkDir = Path.Combine(

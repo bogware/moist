@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="220" viewBox="0 0 900 220" role="img" aria-label="moist — the video encoder that checks its own work">
+<defs>
+  <linearGradient id="drop" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#4dd4ff"/><stop offset="1" stop-color="#0b7285"/></linearGradient>
+  <linearGradient id="word" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#22b8cf"/><stop offset="1" stop-color="#3b5bdb"/></linearGradient>
+  <style>@keyframes ripple{0%{r:6;opacity:.8}100%{r:46;opacity:0}}.rip{animation:ripple 3s ease-out infinite;transform-origin:center}.rip2{animation-delay:1.5s}</style>
+</defs>
+<g transform="translate(110 22)">
+  <ellipse cx="60" cy="168" rx="46" ry="9" fill="none" stroke="#22b8cf" stroke-width="2" class="rip" style="opacity:0"/>
+  <ellipse cx="60" cy="168" rx="46" ry="9" fill="none" stroke="#22b8cf" stroke-width="2" class="rip rip2" style="opacity:0"/>
+  <path d="M60 4 C60 4 14 70 14 104 a46 46 0 0 0 92 0 C106 70 60 4 60 4 Z" fill="url(#drop)"/>
+  <!-- a film frame inside the drop -->
+  <rect x="34" y="92" width="52" height="34" rx="4" fill="none" stroke="#e6faff" stroke-width="4"/>
+  <path d="M54 101 L68 109 L54 117 Z" fill="#e6faff"/>
+  <ellipse cx="42" cy="70" rx="7" ry="13" fill="#ffffff" opacity=".35" transform="rotate(25 42 70)"/>
+</g>
+<text x="250" y="132" fill="url(#word)" style="font:800 104px 'Segoe UI',Inter,'Helvetica Neue',Arial,sans-serif;letter-spacing:-3px">moist</text>
+<text x="256" y="176" fill="#57606a" style="font:500 22px 'Segoe UI',Inter,'Helvetica Neue',Arial,sans-serif">the video encoder that checks its own work</text>
+<text x="256" y="58" fill="#0d1117" opacity=".0">.</text>
+</svg>

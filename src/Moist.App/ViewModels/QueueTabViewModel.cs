@@ -115,7 +115,22 @@ public partial class QueueTabViewModel : ViewModelBase
 
     private void RefreshLog(Job job)
     {
-        LogText = string.Join('\n', job.OutputLog);
+        LogText = string.Join('\n', job.OutputLog.Where(l => !IsProgressKeyValue(l)));
+    }
+
+    /// <summary>
+    /// FFmpeg's machine-readable <c>-progress pipe:1</c> output ("frame=120", "out_time=00:00:05.0",
+    /// "progress=continue"). It's the heartbeat the stall watchdog and the progress bar run on, but
+    /// to a person it's noise that buries the real messages. Hidden here only; job log files keep it.
+    /// </summary>
+    internal static bool IsProgressKeyValue(string line)
+    {
+        var eq = line.IndexOf('=');
+        if (eq <= 0 || line.IndexOf(' ') is >= 0 and var sp && sp < eq) return false;
+        var key = line[..eq];
+        return key is "frame" or "fps" or "bitrate" or "total_size" or "out_time_us" or "out_time_ms"
+                   or "out_time" or "dup_frames" or "drop_frames" or "speed" or "progress"
+               || key.StartsWith("stream_", StringComparison.Ordinal);
     }
 
     [RelayCommand]
@@ -294,6 +309,9 @@ public partial class JobViewModel : ObservableObject
 
     public bool IsCompleted => Status == "Completed";
 
+    /// <summary>Still cancellable: queued, waiting on a dependency, or running.</summary>
+    public bool IsActive => Status is "Pending" or "Queued" or "Running";
+
     /// <summary>Running but with no measurable percentage yet (unknown frame count, or the brief
     /// audio/mux phase) — drives an indeterminate progress bar so the row still shows motion.</summary>
     public bool IsIndeterminate => Status == "Running" && Percentage <= 0;
@@ -311,6 +329,15 @@ public partial class JobViewModel : ObservableObject
     {
         Status = job.Status.ToString();
         OnPropertyChanged(nameof(IsCompleted));
+        OnPropertyChanged(nameof(IsActive));
+
+        // Some jobs (the mux, a stream copy) finish without ever reporting a percentage; a
+        // completed job's bar should read full, not empty.
+        if (job.Status == JobStatus.Completed)
+        {
+            Percentage = 100;
+            Eta = "";
+        }
         if (job.ErrorMessage is not null)
             StatusLine = job.ErrorMessage;
 
