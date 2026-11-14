@@ -7,7 +7,7 @@ breaking changes bump the major version.
 
 ---
 
-## [Unreleased]
+## [1.0.1] — 2026-11-13
 
 ### Security
 

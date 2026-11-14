@@ -6,7 +6,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/bogware/moist/releases/latest"><img alt="Release v1.0.0" src="https://img.shields.io/badge/release-v1.0.0-0b7285"></a>
+  <a href="https://github.com/bogware/moist/releases/latest"><img alt="Release v1.0.1" src="https://img.shields.io/badge/release-v1.0.1-0b7285"></a>
   <a href="https://github.com/bogware/moist/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/bogware/moist/actions/workflows/ci.yml/badge.svg"></a>
   <img alt=".NET 10" src="https://img.shields.io/badge/.NET-10-512bd4">
   <img alt="Windows and Linux" src="https://img.shields.io/badge/platform-Windows%20%7C%20Linux-3b5bdb">

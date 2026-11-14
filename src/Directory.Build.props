@@ -6,7 +6,7 @@
     report different versions of the same build.
   -->
   <PropertyGroup>
-    <Version>1.0.0</Version>
+    <Version>1.0.1</Version>
     <Product>moist</Product>
     <Copyright>Copyright (c) 2024-2026 moist contributors</Copyright>
   </PropertyGroup>
