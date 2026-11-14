@@ -623,7 +623,12 @@ volume so settings, profiles and the queue survive a restart.
 - `ci.yml` — push/PR to `main`. **Pull requests from forks run on GitHub-hosted runners** (and
   install FFmpeg there); only pushes and same-repo PRs use the self-hosted ones, because on a public
   repo a fork PR is arbitrary code that would otherwise run on a maintainer's machine. Builds Debug + Release and runs tests on **self-hosted** runners (group `Default`, labels `Windows`/`Linux`). `DOTNET_INSTALL_DIR` is pinned into the workspace because the runners are self-hosted. A non-blocking step reports whether FFmpeg is present; if it isn't, the integration suite skips and CI still passes — install FFmpeg on the runners to actually exercise it. macOS jobs exist but are commented out.
-- `release.yml` — on `v*` tags. The Windows build runs on `windows-latest` because **SignPath
+- `release.yml` — **started manually** (`gh workflow run release.yml --ref main -f version=1.0.0`), not by
+  pushing a tag: the bogware organisation restricts tag creation to automation, so people can't push
+  tags but github-actions[bot] can. The `prepare` job checks the version against `Directory.Build.props`
+  and that `CHANGELOG.md` has a `## [x.y.z]` section (which becomes the release notes), the builds run from
+  that one resolved commit, and the tag is created through the API only after every build succeeded. The
+  Windows build runs on `windows-latest` because **SignPath
   Foundation** (code signing for OSS) only signs GitHub-hosted builds; signing turns on when the
   `SIGNPATH_ORGANIZATION_ID` variable and `SIGNPATH_API_TOKEN` secret exist (see `SECURITY.md`,
   `.signpath/artifact-configuration.xml`) and fails the release if a shipped exe isn't validly signed.

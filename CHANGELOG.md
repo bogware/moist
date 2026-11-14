@@ -7,7 +7,7 @@ breaking changes bump the major version.
 
 ---
 
-## [1.0.0] — unreleased
+## [1.0.0] — 2026-11-13
 
 The first stable release: a release-hardening pass over the whole codebase (a full audit:
 80 confirmed issues, 0 critical, all addressed), a pre-publication security and privacy

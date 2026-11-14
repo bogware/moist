@@ -186,4 +186,4 @@ Both front-ends pick these up automatically — there's nothing to add to the GU
 ## CI/CD
 
 - **CI** (`.github/workflows/ci.yml`): builds Debug + Release and runs the full test suite on Windows and Linux for every push and pull request to `main`. Pull requests from forks run on GitHub-hosted runners; only trusted branches use the project's self-hosted ones.
-- **Release** (`.github/workflows/release.yml`): triggered by `v*` tags. Self-contained Windows x64 (ZIP) and Linux x64 (tar.gz) builds of the GUI and the CLI, a `SHA256SUMS.txt`, and — once the project is enrolled with SignPath Foundation — Authenticode-signed Windows binaries.
+- **Release** (`.github/workflows/release.yml`): started by hand — `gh workflow run release.yml --ref main -f version=1.2.3` — after bumping `src/Directory.Build.props` and adding a `## [1.2.3]` section to `CHANGELOG.md` (it becomes the release notes). The workflow tags the commit itself once every build has passed. Self-contained Windows x64 (ZIP) and Linux x64 (tar.gz) builds of the GUI and the CLI, a `SHA256SUMS.txt`, and — once the project is enrolled with SignPath Foundation — Authenticode-signed Windows binaries.
