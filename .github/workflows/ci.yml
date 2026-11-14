@@ -1,13 +1,13 @@
 name: CI
 
+# Manual only, on GitHub-hosted runners only. Nothing here triggers by itself, and moist never
+# runs on self-hosted machines: on a public repository, anything that runs automatically — or on
+# a maintainer's own hardware — is reachable by a fork's pull request. Start a run from the
+# Actions tab, or:  gh workflow run ci.yml --ref <branch>
 on:
-  push:
-    branches: [main]
-  pull_request:
-    branches: [main]
+  workflow_dispatch:
 
-# Self-hosted runners are scarce; superseded pushes to the same ref should not
-# tie up a runner running a build nobody is waiting on.
+# A newer run for the same ref supersedes an older one.
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
@@ -18,13 +18,8 @@ permissions:
 jobs:
   build-and-test-windows:
     name: Build & Test (Windows)
-    # Pull requests from forks run on GitHub-hosted runners, never on ours: on a public repo a
-    # fork PR is arbitrary code (MSBuild targets, tests), and a self-hosted runner would execute
-    # it on our machine. Pushes and same-repo PRs need write access, so they stay self-hosted.
-    runs-on: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) && 'windows-latest' || fromJSON('{"group":"Default","labels":["Windows"]}') }}
+    runs-on: windows-latest
 
-    env:
-      DOTNET_INSTALL_DIR: ${{ github.workspace }}\.dotnet
 
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -34,8 +29,7 @@ jobs:
           dotnet-version: 10.0.x
 
       # GitHub-hosted runners have no FFmpeg; without it the integration suite skips itself.
-      - name: Install FFmpeg (GitHub-hosted)
-        if: runner.environment == 'github-hosted'
+      - name: Install FFmpeg
         run: choco install ffmpeg -y --no-progress
 
       - name: Restore dependencies
@@ -81,11 +75,8 @@ jobs:
 
   build-and-test-linux:
     name: Build & Test (Linux)
-    # See the Windows job: fork PRs run on GitHub-hosted runners only.
-    runs-on: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) && 'ubuntu-latest' || fromJSON('{"group":"Default","labels":["Linux"]}') }}
+    runs-on: ubuntu-latest
 
-    env:
-      DOTNET_INSTALL_DIR: ${{ github.workspace }}/.dotnet
 
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -94,8 +85,7 @@ jobs:
         with:
           dotnet-version: 10.0.x
 
-      - name: Install FFmpeg (GitHub-hosted)
-        if: runner.environment == 'github-hosted'
+      - name: Install FFmpeg
         run: sudo apt-get update && sudo apt-get install -y ffmpeg x264 x265 mkvtoolnix
 
       - name: Restore dependencies

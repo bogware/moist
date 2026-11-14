@@ -7,6 +7,9 @@ name: Release
 # Why not "push a tag"? The organisation restricts tag creation to automation — people can't push
 # tags, github-actions[bot] can — so the tag is created here, through the API, only after every
 # build has succeeded. A failed run therefore leaves no stray tag behind.
+#
+# Every job runs on GitHub-hosted runners: nothing that publishes a release, or holds a token that
+# can write to the repository, runs on a maintainer's own machine.
 on:
   workflow_dispatch:
     inputs:
@@ -32,9 +35,7 @@ concurrency:
 jobs:
   prepare:
     name: Check inputs
-    runs-on:
-      group: Default
-      labels: [Linux]
+    runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.check.outputs.version }}
       tag: ${{ steps.check.outputs.tag }}
@@ -215,12 +216,8 @@ jobs:
   build-linux:
     name: Build Linux
     needs: prepare
-    runs-on:
-      group: Default
-      labels: [Linux]
+    runs-on: ubuntu-latest
 
-    env:
-      DOTNET_INSTALL_DIR: ${{ github.workspace }}/.dotnet
 
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -286,9 +283,7 @@ jobs:
   publish:
     name: Tag and publish
     needs: [prepare, build-windows, build-linux]
-    runs-on:
-      group: Default
-      labels: [Linux]
+    runs-on: ubuntu-latest
     permissions:
       contents: write
 

@@ -626,10 +626,8 @@ volume so settings, profiles and the queue survive a restart.
 
 ## CI/CD
 
-- `ci.yml` — push/PR to `main`. **Pull requests from forks run on GitHub-hosted runners** (and
-  install FFmpeg there); only pushes and same-repo PRs use the self-hosted ones, because on a public
-  repo a fork PR is arbitrary code that would otherwise run on a maintainer's machine. Builds Debug + Release and runs tests on **self-hosted** runners (group `Default`, labels `Windows`/`Linux`). `DOTNET_INSTALL_DIR` is pinned into the workspace because the runners are self-hosted. A non-blocking step reports whether FFmpeg is present; if it isn't, the integration suite skips and CI still passes — install FFmpeg on the runners to actually exercise it. macOS jobs exist but are commented out.
-- `release.yml` — **started manually** (`gh workflow run release.yml --ref main -f version=1.0.0`), not by
+- `ci.yml` — **manual only** (`gh workflow run ci.yml --ref <branch>`), on **GitHub-hosted** runners (`windows-latest`, `ubuntu-latest`, FFmpeg installed by the job). Nothing triggers automatically and no moist workflow uses the org's self-hosted runners: on a public repo, anything automatic or self-hosted is reachable from a fork's pull request. Keep it that way. Note a fork can still add its *own* workflow file — the real barrier is that moist has no access to the self-hosted runner group, plus approval for outside contributors' workflow runs. Builds Debug + Release and runs both test suites. macOS jobs exist but are commented out.
+- `release.yml` — **started manually**, every job on GitHub-hosted runners (`gh workflow run release.yml --ref main -f version=1.0.0`), not by
   pushing a tag: the bogware organisation restricts tag creation to automation, so people can't push
   tags but github-actions[bot] can. The `prepare` job checks the version against `Directory.Build.props`
   that `CHANGELOG.md` has a `## [x.y.z]` section (which becomes the release notes), and that the README's

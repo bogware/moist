@@ -184,5 +184,5 @@ Both front-ends pick these up automatically — there's nothing to add to the GU
 
 ## CI/CD
 
-- **CI** (`.github/workflows/ci.yml`): builds Debug + Release and runs the full test suite on Windows and Linux for every push and pull request to `main`. Pull requests from forks run on GitHub-hosted runners; only trusted branches use the project's self-hosted ones.
+- **CI** (`.github/workflows/ci.yml`): run by hand — `gh workflow run ci.yml --ref <branch>` — on GitHub-hosted Windows and Linux runners. It builds Debug and Release and runs both test suites with FFmpeg installed. Nothing runs automatically: on a public repository, automatic workflows are reachable from a fork's pull request.
 - **Release** (`.github/workflows/release.yml`): started by hand — `gh workflow run release.yml --ref main -f version=1.2.3` — after bumping `src/Directory.Build.props`, the README's release badge (`img.shields.io/badge/release-v1.2.3-…`), and adding a `## [1.2.3]` section to `CHANGELOG.md` (it becomes the release notes). The workflow refuses to run if any of the three disagree. The workflow tags the commit itself once every build has passed. Self-contained Windows x64 (ZIP) and Linux x64 (tar.gz) builds of the GUI and the CLI, a `SHA256SUMS.txt`, and — once the project is enrolled with SignPath Foundation — Authenticode-signed Windows binaries.
