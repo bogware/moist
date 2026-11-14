@@ -41,10 +41,24 @@ public partial class App : Application
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
         {
             DisableAvaloniaDataAnnotationValidation();
+            var mainVm = new MainWindowViewModel();
             desktop.MainWindow = new MainWindow
             {
-                DataContext = new MainWindowViewModel(),
+                DataContext = mainVm,
             };
+
+            // `moist-gui <file>` (and "Open with…", or dropping a file on the exe) opens it in the
+            // Encode tab, exactly as dragging it onto the window would. Deferred to Opened so the
+            // preview has a window to render into.
+            if (desktop.Args is { Length: > 0 } args && File.Exists(args[0]))
+            {
+                var path = Path.GetFullPath(args[0]);
+                desktop.MainWindow.Opened += async (_, _) =>
+                {
+                    try { await mainVm.EncodeTab.HandleDroppedFile(path); }
+                    catch (Exception ex) { mainVm.EncodeTab.StatusMessage = $"Could not open {Path.GetFileName(path)}: {ex.Message}"; }
+                };
+            }
 
             desktop.ShutdownRequested += (_, _) =>
             {

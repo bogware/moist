@@ -1,38 +1,100 @@
 name: Release
 
+# One manual run makes a release: check the inputs, build every artifact from one resolved commit,
+# tag that commit, and publish. Start it from the Actions tab, or:
+#   gh workflow run release.yml --ref main -f version=1.0.0
+#
+# Why not "push a tag"? The organisation restricts tag creation to automation — people can't push
+# tags, github-actions[bot] can — so the tag is created here, through the API, only after every
+# build has succeeded. A failed run therefore leaves no stray tag behind.
 on:
-  push:
-    tags:
-      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version to release, e.g. 1.0.0 or 1.1.0-rc.1 (no leading v; a "-" marks a pre-release). Must match src/Directory.Build.props.
+        required: true
+        type: string
+      ref:
+        description: Branch, tag or full commit SHA to release. Leave as main unless you mean otherwise.
+        required: true
+        default: main
+        type: string
 
+# Read-only unless a job says otherwise; only the publish job can write.
 permissions:
-  contents: write
+  contents: read
+
+# One release at a time, and never cancelled halfway.
+concurrency:
+  group: release
+  cancel-in-progress: false
 
 jobs:
+  prepare:
+    name: Check inputs
+    runs-on:
+      group: Default
+      labels: [Linux]
+    outputs:
+      version: ${{ steps.check.outputs.version }}
+      tag: ${{ steps.check.outputs.tag }}
+      sha: ${{ steps.check.outputs.sha }}
+      prerelease: ${{ steps.check.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+
+      # Inputs reach the script only as environment variables, and are validated before use.
+      - name: Validate version, commit and tag
+        id: check
+        env:
+          VERSION: ${{ inputs.version }}
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]]; then
+            echo "::error::version must look like 1.2.3 or 1.2.3-rc.1 (no leading v), got '$VERSION'"; exit 1
+          fi
+          # Directory.Build.props stamps the whole solution, so `moist --version` and
+          # GET /api/health report it. A release named differently would be mislabelled.
+          PROPS=$(grep -oPm1 '(?<=<Version>)[^<]+' src/Directory.Build.props)
+          if [[ "$PROPS" != "$VERSION" ]]; then
+            echo "::error::Directory.Build.props says $PROPS, not $VERSION. Bump it first."; exit 1
+          fi
+          SHA=$(git rev-parse HEAD)
+          TAG="v$VERSION"
+          # A tag left by an earlier failed run is fine on the same commit, never on another.
+          if existing=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$TAG" --jq .object.sha 2>/dev/null); then
+            [[ "$existing" == "$SHA" ]] || { echo "::error::$TAG already exists on $existing, not $SHA"; exit 1; }
+          fi
+          if [[ "$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft 2>/dev/null || true)" == "false" ]]; then
+            echo "::error::$TAG is already published"; exit 1
+          fi
+          # The release notes are the changelog's section for this version; insist it exists.
+          if ! grep -qE "^## \[$VERSION\]" CHANGELOG.md; then
+            echo "::error::CHANGELOG.md has no '## [$VERSION]' section"; exit 1
+          fi
+          {
+            echo "version=$VERSION"
+            echo "tag=$TAG"
+            echo "sha=$SHA"
+            echo "prerelease=$([[ "$VERSION" == *-* ]] && echo true || echo false)"
+          } >> "$GITHUB_OUTPUT"
+          echo "Releasing $TAG from $SHA"
+
   build-windows:
-    name: Build Windows Release
+    name: Build Windows
+    needs: prepare
     # GitHub-hosted on purpose: SignPath (code signing for open-source projects) only signs
-    # builds it can attest came from a GitHub-hosted runner, and it keeps the release token
-    # off our own machines.
+    # builds it can attest came from a GitHub-hosted runner.
     runs-on: windows-latest
 
     steps:
       - uses: actions/checkout@v4
-
-      # Directory.Build.props is the single source of truth for <Version> (it stamps
-      # the whole solution), while the tag names the release/archives. If they drift,
-      # the shipped binary reports the wrong version via `moist --version` and
-      # `GET /api/health`. Fail fast rather than publish a mislabelled release.
-      - name: Verify version matches tag
-        working-directory: src
-        shell: bash
-        run: |
-          TAG="${GITHUB_REF_NAME#v}"
-          VER=$(grep -oPm1 '(?<=<Version>)[^<]+' Directory.Build.props)
-          if [ "$TAG" != "$VER" ]; then
-            echo "::error::Tag $GITHUB_REF_NAME (=$TAG) != Directory.Build.props <Version> ($VER). Bump Directory.Build.props before tagging."
-            exit 1
-          fi
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
 
       - name: Setup .NET 8
         uses: actions/setup-dotnet@v4
@@ -127,7 +189,7 @@ jobs:
       - name: Create ZIP archives
         shell: pwsh
         env:
-          TAG: ${{ github.ref_name }}   # via env, not interpolated into the script
+          TAG: ${{ needs.prepare.outputs.tag }}   # via env, not interpolated into the script
         run: |
           Compress-Archive -Path publish/win-x64/* -DestinationPath "publish/moist-$env:TAG-win-x64.zip"
           Compress-Archive -Path publish/win-x64-fdd/* -DestinationPath "publish/moist-$env:TAG-win-x64-fdd.zip"
@@ -140,7 +202,8 @@ jobs:
           path: publish/moist-*.zip
 
   build-linux:
-    name: Build Linux Release
+    name: Build Linux
+    needs: prepare
     runs-on:
       group: Default
       labels: [Linux]
@@ -150,21 +213,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
-
-      # Directory.Build.props is the single source of truth for <Version> (it stamps
-      # the whole solution), while the tag names the release/archives. If they drift,
-      # the shipped binary reports the wrong version via `moist --version` and
-      # `GET /api/health`. Fail fast rather than publish a mislabelled release.
-      - name: Verify version matches tag
-        working-directory: src
-        shell: bash
-        run: |
-          TAG="${GITHUB_REF_NAME#v}"
-          VER=$(grep -oPm1 '(?<=<Version>)[^<]+' Directory.Build.props)
-          if [ "$TAG" != "$VER" ]; then
-            echo "::error::Tag $GITHUB_REF_NAME (=$TAG) != Directory.Build.props <Version> ($VER). Bump Directory.Build.props before tagging."
-            exit 1
-          fi
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
 
       - name: Setup .NET 8
         uses: actions/setup-dotnet@v4
@@ -204,12 +254,12 @@ jobs:
 
       - name: Create tar.gz archives
         env:
-          TAG: ${{ github.ref_name }}   # via env, not interpolated into the script
+          TAG: ${{ needs.prepare.outputs.tag }}   # via env, not interpolated into the script
         run: |
           cd publish/linux-x64
-          tar -czf "../moist-$TAG-linux-x64.tar.gz" *
+          tar -czf "../moist-$TAG-linux-x64.tar.gz" ./*
           cd ../linux-x64-cli
-          tar -czf "../moist-cli-$TAG-linux-x64.tar.gz" *
+          tar -czf "../moist-cli-$TAG-linux-x64.tar.gz" ./*
 
       - name: Upload Linux artifacts
         uses: actions/upload-artifact@v4
@@ -217,68 +267,20 @@ jobs:
           name: linux-release
           path: publish/moist-*-linux-*.tar.gz
 
-  # build-macos:
-  #   name: Build macOS Release
-  #   runs-on: macos-latest
-  #
-  #   steps:
-  #     - uses: actions/checkout@v4
-  #
-  #     - name: Setup .NET 8
-  #       uses: actions/setup-dotnet@v4
-  #       with:
-  #         dotnet-version: 8.0.x
-  #
-  #     - name: Restore dependencies
-  #       working-directory: src
-  #       run: dotnet restore
-  #
-  #     - name: Publish (macOS x64, self-contained)
-  #       working-directory: src
-  #       run: >
-  #         dotnet publish Moist.App/Moist.App.csproj
-  #         --configuration Release
-  #         --runtime osx-x64
-  #         --self-contained true
-  #         -p:PublishSingleFile=true
-  #         -p:IncludeNativeLibrariesForSelfExtract=true
-  #         -p:EnableCompressionInSingleFile=true
-  #         --output ../publish/osx-x64
-  #
-  #     - name: Publish (macOS arm64, self-contained)
-  #       working-directory: src
-  #       run: >
-  #         dotnet publish Moist.App/Moist.App.csproj
-  #         --configuration Release
-  #         --runtime osx-arm64
-  #         --self-contained true
-  #         -p:PublishSingleFile=true
-  #         -p:IncludeNativeLibrariesForSelfExtract=true
-  #         -p:EnableCompressionInSingleFile=true
-  #         --output ../publish/osx-arm64
-  #
-  #     - name: Create ZIP archives
-  #       run: |
-  #         cd publish/osx-x64 && zip -r ../moist-${{ github.ref_name }}-osx-x64.zip * && cd ../..
-  #         cd publish/osx-arm64 && zip -r ../moist-${{ github.ref_name }}-osx-arm64.zip * && cd ../..
-  #
-  #     - name: Upload macOS artifacts
-  #       uses: actions/upload-artifact@v4
-  #       with:
-  #         name: macos-release
-  #         path: publish/moist-*-osx-*.zip
-
-  create-release:
-    name: Create GitHub Release
-    needs: [build-windows, build-linux]  # Add build-macos when enabled
+  publish:
+    name: Tag and publish
+    needs: [prepare, build-windows, build-linux]
     runs-on:
       group: Default
       labels: [Linux]
-
-    env:
-      DOTNET_INSTALL_DIR: ${{ github.workspace }}/.dotnet
+    permissions:
+      contents: write
 
     steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
+
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
@@ -290,15 +292,45 @@ jobs:
         run: |
           cd artifacts
           find . -type f \( -name '*.zip' -o -name '*.tar.gz' \) -exec mv {} . \;
-          sha256sum *.zip *.tar.gz > SHA256SUMS.txt
+          sha256sum -- *.zip *.tar.gz > SHA256SUMS.txt
           cat SHA256SUMS.txt
 
-      - name: Create GitHub Release
+      - name: Release notes from the changelog
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          awk -v v="$VERSION" '
+            $0 ~ "^## \\[" v "\\]" { on = 1; next }
+            on && /^## \[/        { exit }
+            on                    { print }
+          ' CHANGELOG.md > release-notes.md
+          test -s release-notes.md
+
+      # The tag is created only now, after every build succeeded, and by github-actions[bot] —
+      # the identity the organisation lets create tags.
+      - name: Tag the built commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+          SHA: ${{ needs.prepare.outputs.sha }}
+        run: |
+          set -euo pipefail
+          if existing=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$TAG" --jq .object.sha 2>/dev/null); then
+            [[ "$existing" == "$SHA" ]] || { echo "::error::$TAG already exists on $existing"; exit 1; }
+            echo "$TAG already points at $SHA"
+          else
+            gh api --method POST "repos/$GITHUB_REPOSITORY/git/refs" -f "ref=refs/tags/$TAG" -f "sha=$SHA" > /dev/null
+            echo "Tagged $SHA as $TAG"
+          fi
+
+      - name: Publish the release
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
-          generate_release_notes: true
+          tag_name: ${{ needs.prepare.outputs.tag }}
+          name: moist ${{ needs.prepare.outputs.tag }}
+          body_path: release-notes.md
           draft: false
-          prerelease: ${{ contains(github.ref_name, '-') }}
+          prerelease: ${{ needs.prepare.outputs.prerelease == 'true' }}
           files: |
             artifacts/*.zip
             artifacts/*.tar.gz

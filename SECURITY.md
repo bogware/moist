@@ -83,5 +83,6 @@ sha256sum -c SHA256SUMS.txt --ignore-missing
    `SIGNPATH_ORGANIZATION_ID`. Optional variables `SIGNPATH_PROJECT_SLUG` (default `moist`) and
    `SIGNPATH_SIGNING_POLICY_SLUG` override the defaults.
 
-The release workflow signs whenever `SIGNPATH_ORGANIZATION_ID` is set and fails if any shipped
+Releases are made by running the *Release* workflow (`gh workflow run release.yml --ref main -f version=x.y.z`).
+It signs whenever `SIGNPATH_ORGANIZATION_ID` is set and fails if any shipped
 executable isn't validly signed afterwards. Without it, releases build unsigned.

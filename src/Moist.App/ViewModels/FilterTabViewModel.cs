@@ -405,11 +405,16 @@ public partial class FilterParameterViewModel : ObservableObject
         }
     }
 
-    partial void OnIntValueChanged(int value) => Value = value;
-    partial void OnDoubleValueChanged(double value) => Value = value;
-    partial void OnBoolValueChanged(bool value) => Value = value;
-    partial void OnStringValueChanged(string value) => Value = value;
-    partial void OnSelectedOptionChanged(string? value) { if (value is not null) Value = value; }
+    // Only the editor for this parameter's own type may write its value. The Filters tab builds an
+    // editor of every type for every parameter and merely hides the others — and a hidden decimal
+    // editor bound to an int parameter starts at 0, gets clamped up to the parameter's Minimum by
+    // its NumericUpDown/Slider, and pushes that back. Opening the Filters tab turned Deblock's
+    // strength 4 into 1 that way (its minimum), silently changing every later encode.
+    partial void OnIntValueChanged(int value) { if (IsInt) Value = value; }
+    partial void OnDoubleValueChanged(double value) { if (IsDouble) Value = value; }
+    partial void OnBoolValueChanged(bool value) { if (IsBool) Value = value; }
+    partial void OnStringValueChanged(string value) { if (IsString) Value = value; }
+    partial void OnSelectedOptionChanged(string? value) { if (IsChoice && value is not null) Value = value; }
 }
 
 /// <summary>

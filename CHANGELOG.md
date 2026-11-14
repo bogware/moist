@@ -7,7 +7,7 @@ breaking changes bump the major version.
 
 ---
 
-## [1.0.0] — unreleased
+## [1.0.0] — 2026-11-13
 
 The first stable release: a release-hardening pass over the whole codebase (a full audit:
 80 confirmed issues, 0 critical, all addressed), a pre-publication security and privacy
@@ -55,6 +55,14 @@ review, and a set of enhancements.
 - `SECURITY.md` describes how to report a vulnerability and the security model.
 
 ### Added
+
+**A new front page.** The README was rewritten as a proper tour with real screenshots, a
+before/after restoration comparison, an animated target-quality demo built from real CLI output, and
+a candid account of what restoration can and can't do. The deep reference moved, intact and
+corrected, into `docs/` (feature guide, command line, FAQ, development).
+
+**Open a file from the command line or "Open with…"** — `Moist.App video.mkv` loads it into the
+Encode tab exactly as dragging it onto the window would.
 
 **Preview overhaul.** The Encode-tab preview panel is now **resizable** (drag the divider)
 and shows **source and output together** — the output rendered through the *entire* pipeline
@@ -121,6 +129,22 @@ at 2%.
 
 ### Fixed
 
+- **Opening the Filters tab could silently change your encode.** Every parameter got an editor
+  of every type, with the unused ones merely hidden. A hidden decimal editor bound to an integer
+  parameter started at 0, was clamped up to the parameter's minimum by its control, and wrote that
+  back: loading the *AI Upscale SD to HD* profile and glancing at the Filters tab turned Deblock's
+  strength 4 into 1 for every later encode. Only the editor matching the parameter's type can write
+  it now.
+- **A relative `--temp-dir` (or output) broke GPU super-resolution.** That filter runs FFmpeg in the
+  shader folder so the shader resolves by bare name, and relative paths then pointed into it. Every
+  path in a request is made absolute before any job is built.
+- **`--dry-run` called real options unknown.** `--measure`, `--per-scene` and `--per-scene-full` are
+  only read on paths a dry run never reaches, so checking a command first reported it as wrong.
+- **Queue tab:** a completed mux showed an empty progress bar, finished jobs still offered *Cancel*,
+  and the job log was buried in FFmpeg's machine-readable progress lines and scrolled sideways
+  mid-word. All fixed; log files on disk still keep everything.
+- **Settings → Prerequisites** showed a line of help text as the "version" of Real-ESRGAN and RIFE,
+  which have no version flag. They now read *installed*.
 - **Dolby Vision / HDR10+ passthrough never actually worked.** The metadata was extracted and
   re-injected correctly, but the enriched raw HEVC couldn't be put back in a container: FFmpeg 8
   refuses untimed packets, and libx265's B-frames rule out numbering them. The step failed safely

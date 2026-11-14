@@ -583,7 +583,15 @@ public sealed class ToolDiscovery
 
         // Common patterns: "ffmpeg version N6-...", "x264 0.164.x", "mkvmerge v82.0"
         // Just return the first line trimmed, up to 80 chars
-        return firstLine.Length > 80 ? firstLine[..80] : firstLine.Trim();
+        firstLine = firstLine.Trim();
+
+        // Tools with no version flag (Real-ESRGAN, RIFE) are probed with -h, whose first line is
+        // usage text or an option ("Usage: realesrgan-ncnn-vulkan -i …", "-x  enable spatial tta
+        // mode") — which the Settings tab then showed as the "version".
+        if (firstLine.StartsWith('-') || firstLine.StartsWith("usage", StringComparison.OrdinalIgnoreCase))
+            return "installed";
+
+        return firstLine.Length > 80 ? firstLine[..80] : firstLine;
     }
 
     private static IEnumerable<string> GetCommonPaths(string binaryName)
